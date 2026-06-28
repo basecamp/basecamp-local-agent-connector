@@ -14,7 +14,7 @@ The bridge has two halves:
    server to the internet (via Tailscale Funnel), registers it as a Basecamp
    webhook, filters + verifies incoming events, and prints trusted events to
    STDOUT.
-2. **`/basecamp` skill** — a Claude Code skill that runs the script, watches its
+2. **`/basecamp-connect` skill** — a Claude Code skill that runs the script, watches its
    STDOUT, and dispatches each trusted event to an in-session background agent
    with full Basecamp context attached.
 
@@ -85,15 +85,15 @@ basecamp-local-agent-connector/
 │       ├── verifier.rb                # authoritative Basecamp API verification
 │       └── emitter.rb                 # NDJSON STDOUT writer
 ├── skills/
-│   └── basecamp/
-│       └── SKILL.md                   # the /basecamp skill (Component 2)
+│   └── basecamp-connect/
+│       └── SKILL.md                   # the /basecamp-connect skill (Component 2)
 ├── test/                              # minitest, mirrors lib/ structure
 ├── docs/
 │   └── spec.md
 └── README.md
 ```
 
-The `/basecamp` skill is itself a deliverable: a `SKILL.md` under `skills/basecamp/`
+The `/basecamp-connect` skill is itself a deliverable: a `SKILL.md` under `skills/basecamp-connect/`
 (Claude Code project-skill format — YAML frontmatter with `name`, `description`,
 trigger keywords, then the instructions). It is the human/agent entry point that
 runs `bin/connect`, watches its STDOUT, and dispatches background agents per the
@@ -227,18 +227,18 @@ full context and resolve the working repo.
 
 ---
 
-## Component 2: `/basecamp` skill
+## Component 2: `/basecamp-connect` skill
 
-**Artifact**: `skills/basecamp/SKILL.md` — a Claude Code project skill (YAML
-frontmatter: `name: basecamp`, `description`, trigger keywords; body: the
+**Artifact**: `skills/basecamp-connect/SKILL.md` — a Claude Code project skill (YAML
+frontmatter: `name: basecamp-connect`, `description`, trigger keywords; body: the
 operating instructions below). This is a first-class deliverable of the project,
 not just runtime glue.
 
 ### Invocation
 
 ```
-/basecamp @agent                       # watch all accessible projects
-/basecamp @agent --project "BC5 Calendar"   # narrow to one (or more)
+/basecamp-connect @agent --project "BC5 Calendar"               # one project
+/basecamp-connect @agent --project "BC5 Calendar" --project HEY  # several
 ```
 
 `<trigger>` and flags pass through to `bin/connect`.

@@ -25,7 +25,7 @@ surrounding context from Basecamp.
                                       • prints trusted events to STDOUT (NDJSON)
                                               │
                                               ▼
-                              /basecamp skill (Claude Code)
+                          /basecamp-connect skill (Claude Code)
                                       • resolves the local repo from the project
                                       • gathers context via the `basecamp` CLI
                                       • dispatches a background agent in that repo
@@ -37,7 +37,7 @@ Two halves:
 1. **`bin/connect`** — the bridge. Exposes a local webhook endpoint to the
    internet, registers it as a Basecamp webhook (one per watched project),
    filters and verifies deliveries, and emits only trusted events to STDOUT.
-2. **`/basecamp` skill** — the driver. Runs `bin/connect`, watches its STDOUT,
+2. **`/basecamp-connect` skill** — the driver. Runs `bin/connect`, watches its STDOUT,
    and turns each trusted event into a background agent task with full Basecamp
    context.
 
@@ -53,7 +53,7 @@ See [`docs/spec.md`](docs/spec.md) for the complete design.
 npx skills add jorgemanrubia/basecamp-local-agent-connector
 ```
 
-This installs the `/basecamp` skill content into your agent's skills directory
+This installs the `/basecamp-connect` skill content into your agent's skills directory
 (follows the [Agent Skills](https://agentskills.io/specification) spec).
 
 ### 2. The runtime
@@ -86,8 +86,8 @@ Running Claude Code from the clone auto-discovers the skill (via the bundled
 From the skill:
 
 ```
-/basecamp @agent --project "BC5 Calendar"               # one project
-/basecamp @agent --project "BC5 Calendar" --project HEY  # several
+/basecamp-connect @agent --project "BC5 Calendar"               # one project
+/basecamp-connect @agent --project "BC5 Calendar" --project HEY  # several
 ```
 
 Or run the bridge directly (it just prints trusted events as NDJSON):
@@ -141,7 +141,7 @@ the raw POST body.
   target and as the reply identity. Defaults to the `basecamp` CLI's
   authenticated account.
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)
-  maps Basecamp project-name tokens to local repo paths. The `/basecamp` skill
+  maps Basecamp project-name tokens to local repo paths. The `/basecamp-connect` skill
   uses it to decide where to run each agent; if no mapping matches, it asks you.
 
 ---
@@ -166,7 +166,7 @@ bin/connect                          # executable shim → CLI.start
 lib/basecamp_agent_connector/        # one class per concern
   command_runner  basecamp_cli  identity  projects
   tunnel  webhooks  server  event  verifier  pipeline  emitter  cli
-skills/basecamp/SKILL.md             # the /basecamp skill
+skills/basecamp-connect/SKILL.md     # the /basecamp-connect skill
 config/project_repos.toml            # project → repo mapping
 test/                                # minitest, mirrors lib/
 docs/spec.md                         # full design

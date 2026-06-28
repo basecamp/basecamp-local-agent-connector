@@ -1,5 +1,5 @@
 ---
-name: basecamp
+name: basecamp-connect
 description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted, self-authored, trigger-matched
@@ -7,7 +7,7 @@ description: |
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
   agent commands.
 triggers:
-  - /basecamp
+  - /basecamp-connect
   - manage agents from basecamp
   - watch basecamp for agent commands
   - basecamp connector
@@ -15,7 +15,7 @@ triggers:
   - run agent from basecamp comment
 ---
 
-# /basecamp — drive local agents from Basecamp
+# /basecamp-connect — drive local agents from Basecamp
 
 This skill turns a Basecamp comment/message/card into a local Claude Code task.
 You write `@agent do X` in Basecamp; a background agent on this machine picks it
@@ -30,8 +30,8 @@ repo.
 ## Invocation
 
 ```
-/basecamp @agent --project "BC5 Calendar"               # one project
-/basecamp @agent --project "BC5 Calendar" --project HEY  # several
+/basecamp-connect @agent --project "BC5 Calendar"               # one project
+/basecamp-connect @agent --project "BC5 Calendar" --project HEY  # several
 ```
 
 `--project` is **required** (Basecamp has no global webhook). Pass a project

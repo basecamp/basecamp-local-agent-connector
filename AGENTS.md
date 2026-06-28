@@ -1,7 +1,7 @@
 # basecamp-local-agent-connector — Skills
 
 Skills for AI coding assistants following the [Agent Skills](https://agentskills.io/specification)
-spec. This repo ships the `/basecamp` skill, which drives local Claude Code
+spec. This repo ships the `/basecamp-connect` skill, which drives local Claude Code
 agents from Basecamp via the connector bridge (`bin/connect`).
 
 ## Install
