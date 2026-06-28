@@ -8,7 +8,18 @@ class BasecampAgentConnector::Event
   # The webhook delivers a mention as an unexpanded attachment carrying only an
   # SGID and content-type — no rendered name. The agent's account-scoped Person
   # id is encoded inside the SGID, so match on that id rather than a display name.
-  MENTION_ATTACHMENT = /<bc-attachment\b[^>]*content-type="#{Regexp.escape(MENTION_CONTENT_TYPE)}"[^>]*>/i
+  #
+  # Match the whole opening tag quote-aware: a mention attachment also carries a
+  # `content="…"` attribute whose value is embedded markup full of `>` characters,
+  # and webhooks order the attributes sgid, content, content-type (the API renders
+  # them sgid, content-type, content). A `[^>]*` matcher would stop at the first
+  # `>` inside that content value and miss a trailing content-type, so consume
+  # quoted values whole and test the attributes against the captured tag instead.
+  BC_ATTACHMENT_TAG = /<bc-attachment\b(?:"[^"]*"|'[^']*'|[^"'>])*>/i
+
+  MENTION_CONTENT_TYPE_ATTRIBUTE = /content-type="#{Regexp.escape(MENTION_CONTENT_TYPE)}"/i
+
+  SGID_ATTRIBUTE = /\bsgid="([^"]+)"/
 
   PERSON_GID = %r{gid://bc3/Person/(\d+)}
 
@@ -95,7 +106,10 @@ class BasecampAgentConnector::Event
     end
 
     def mention_attachment_sgids
-      content.to_s.scan(MENTION_ATTACHMENT).map { |attachment| attachment[/\bsgid="([^"]+)"/, 1] }.compact
+      content.to_s.scan(BC_ATTACHMENT_TAG)
+        .select { |tag| tag.match?(MENTION_CONTENT_TYPE_ATTRIBUTE) }
+        .map { |tag| tag[SGID_ATTRIBUTE, 1] }
+        .compact
     end
 
     def person_ids_in(sgid)
