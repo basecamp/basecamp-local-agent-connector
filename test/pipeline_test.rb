@@ -2,7 +2,8 @@ require "test_helper"
 
 class PipelineTest < Minitest::Test
   def setup
-    @identity = BasecampAgentConnector::Identity.new(id: 123, email: "clawdito@example.com")
+    @operator = operator_identity
+    @agent = agent_identity
     @output = StringIO.new
     @logs = StringIO.new
   end
@@ -25,7 +26,7 @@ class PipelineTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
-  def test_ignores_event_from_another_user
+  def test_ignores_event_from_a_non_operator
     runner = FakeCommandRunner.new
 
     pipeline(runner).process(sample_payload("creator" => { "email_address" => "someone@example.com" }))
@@ -40,9 +41,9 @@ class PipelineTest < Minitest::Test
     assert_empty @output.string
   end
 
-  def test_ignores_event_without_the_trigger
+  def test_ignores_event_that_does_not_mention_the_agent
     payload = sample_payload
-    payload["recording"]["content"] = "<div>just a normal comment</div>"
+    payload["recording"]["content"] = "<p>just a normal comment, no mention</p>"
 
     pipeline(FakeCommandRunner.new).process(payload)
 
@@ -68,8 +69,8 @@ class PipelineTest < Minitest::Test
 
     def pipeline(runner)
       BasecampAgentConnector::Pipeline.new \
-        trigger: "@agent",
-        identity: @identity,
+        operator: @operator,
+        agent: @agent,
         verifier: BasecampAgentConnector::Verifier.new(basecamp_cli: build_cli(runner)),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         logger: @logs

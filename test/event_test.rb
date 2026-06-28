@@ -9,20 +9,19 @@ class EventTest < Minitest::Test
   end
 
   def test_authored_by_matches_on_email
-    identity = BasecampAgentConnector::Identity.new(id: 123, email: "clawdito@example.com")
-
-    assert BasecampAgentConnector::Event.from_payload(sample_payload).authored_by?(identity)
-    assert BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "CLAWDITO@example.com" })).authored_by?(identity)
-    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(identity)
-    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => {})).authored_by?(identity)
+    assert BasecampAgentConnector::Event.from_payload(sample_payload).authored_by?(operator_identity)
+    assert BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "OPERATOR@example.com" })).authored_by?(operator_identity)
+    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(operator_identity)
+    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => {})).authored_by?(operator_identity)
   end
 
-  def test_mentions_trigger
-    assert with_content("<div>hey @agent please</div>").mentions?("@agent")
-    assert with_content("<div>@AGENT now</div>").mentions?("@agent")
-    refute with_content("<div>ping @agentsmith</div>").mentions?("@agent")
-    refute with_content("<div>nothing here</div>").mentions?("@agent")
-    refute with_content(nil).mentions?("@agent")
+  def test_mentions_the_agent
+    agent = agent_identity(name: "Clawdito")
+
+    assert with_content("<p>Hey #{mention_html('Clawdito')} please</p>").mentions?(agent)
+    refute with_content("<p>Hey #{mention_html('Someone')} please</p>").mentions?(agent)
+    refute with_content("<p>plain text saying Clawdito without a mention</p>").mentions?(agent)
+    refute with_content(nil).mentions?(agent)
   end
 
   def test_to_emitted_hash_keeps_only_known_fields

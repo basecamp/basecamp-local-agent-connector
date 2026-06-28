@@ -11,7 +11,7 @@ class EmitterTest < Minitest::Test
     parsed = JSON.parse(output.string)
     assert_equal 99001, parsed["event_id"]
     assert_equal "comment_created", parsed["kind"]
-    assert_equal({ "id" => 123, "name" => "Clawdito", "email_address" => "clawdito@example.com" }, parsed["creator"])
+    assert_equal({ "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" }, parsed["creator"])
     assert_equal 456, parsed["recording"]["id"]
   end
 end

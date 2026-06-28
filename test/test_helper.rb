@@ -49,7 +49,7 @@ module PayloadHelpers
       "id" => 99001,
       "kind" => "comment_created",
       "created_at" => "2026-06-28T12:00:00Z",
-      "creator" => { "id" => 123, "name" => "Clawdito", "email_address" => "clawdito@example.com" },
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
       "recording" => sample_recording
     }.merge(overrides)
   end
@@ -61,11 +61,25 @@ module PayloadHelpers
       "title" => "Re: a card",
       "app_url" => "https://3.basecamp.com/000/buckets/222/comments/456",
       "url" => "https://3.basecamp.com/000/buckets/222/comments/456.json",
-      "content" => "<div>@agent please take a look</div>",
-      "creator" => { "id" => 123, "name" => "Clawdito", "email_address" => "clawdito@example.com" },
+      "content" => "<p>Hey #{mention_html("Clawdito")} please take a look</p>",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
       "parent" => { "id" => 789, "type" => "Kanban::Card", "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789" },
       "bucket" => { "id" => 222, "name" => "BC5 Calendar", "type" => "Project" }
     }.merge(overrides)
+  end
+
+  def mention_html(name, person_id: 51177542)
+    %(<bc-attachment sgid="SGID" content-type="application/vnd.basecamp.mention"><figure>) +
+      %(<img data-avatar-for-person-id="#{person_id}" alt="#{name}" title="#{name}, Agent" class="avatar">) +
+      %(<figcaption>#{name}</figcaption></figure></bc-attachment>)
+  end
+
+  def operator_identity
+    BasecampAgentConnector::Identity.new(id: 100, email: "operator@example.com")
+  end
+
+  def agent_identity(name: "Clawdito")
+    BasecampAgentConnector::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name)
   end
 
   def envelope(data)

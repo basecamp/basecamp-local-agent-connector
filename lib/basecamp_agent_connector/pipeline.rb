@@ -1,7 +1,7 @@
 class BasecampAgentConnector::Pipeline
-  def initialize(trigger:, identity:, verifier:, emitter:, logger: $stderr)
-    @trigger = trigger
-    @identity = identity
+  def initialize(operator:, agent:, verifier:, emitter:, logger: $stderr)
+    @operator = operator
+    @agent = agent
     @verifier = verifier
     @emitter = emitter
     @logger = logger
@@ -18,7 +18,7 @@ class BasecampAgentConnector::Pipeline
 
   private
     def actionable?(event)
-      event.actionable_kind? && event.authored_by?(@identity) && event.mentions?(@trigger)
+      event.actionable_kind? && event.authored_by?(@operator) && event.mentions?(@agent)
     end
 
     def fresh?(event)

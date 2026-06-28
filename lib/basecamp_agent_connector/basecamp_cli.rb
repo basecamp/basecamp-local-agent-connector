@@ -8,12 +8,12 @@ class BasecampAgentConnector::BasecampCLI
     @executable = executable
   end
 
-  def me
-    json "me"
+  def me(profile: nil)
+    json "me", *profile_flag(profile)
   end
 
-  def refresh_auth
-    run("auth", "refresh").success?
+  def refresh_auth(profile: nil)
+    run("auth", "refresh", *profile_flag(profile)).success?
   end
 
   def show(url_or_id)
@@ -47,6 +47,10 @@ class BasecampAgentConnector::BasecampCLI
       else
         parsed
       end
+    end
+
+    def profile_flag(profile)
+      profile ? [ "--profile", profile ] : []
     end
 
     def run(*arguments)

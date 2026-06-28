@@ -1,9 +1,12 @@
 # basecamp-local-agent-connector
 
-Manage local Claude Code agents from Basecamp. Write `@agent do X` in a Basecamp
-comment, message, or card, and a background agent on **your** machine picks it
-up, gathers context from Basecamp, and acts on it — then replies where you wrote
-the trigger.
+Manage local Claude Code agents from Basecamp. **@mention a real agent user**
+(e.g. `@Clawdito do X`) in a Basecamp comment, message, or card, and a background
+agent on **your** machine picks it up, gathers context from Basecamp, acts on it,
+and replies **as that agent user**.
+
+The agent is a real Basecamp user backed by a local `basecamp` CLI profile of the
+same name — both the mention target and the reply identity.
 
 Basecamp is a great place to *capture context*: a comment lives inside a card,
 inside a project, with a creator and a thread. Instead of re-typing all that
@@ -17,10 +20,10 @@ surrounding context from Basecamp.
 ```
   You, in Basecamp                 Your machine
   ────────────────                 ─────────────────────────────────────────
-  comment "@agent fix         ┌──>  bin/connect (Ruby)
-  the calendar bug"  ──webhook┘       • WEBrick server on a secret local path
+  "@Clawdito fix the      ┌──>  bin/connect (Ruby)
+  calendar bug"      ──webhook┘       • WEBrick server on a secret local path
                                       • exposed via Tailscale Funnel (public URL)
-                                      • filters: self-authored + trigger match
+                                      • filters: operator-authored + mentions agent
                                       • verifies the event against Basecamp API
                                       • prints trusted events to STDOUT (NDJSON)
                                               │
@@ -29,7 +32,7 @@ surrounding context from Basecamp.
                                       • resolves the local repo from the project
                                       • gathers context via the `basecamp` CLI
                                       • dispatches a background agent in that repo
-                                      • replies on the card as the linked identity
+                                      • replies on the card as the agent (--profile)
 ```
 
 Two halves:
@@ -86,26 +89,28 @@ Running Claude Code from the clone auto-discovers the skill (via the bundled
 From the skill:
 
 ```
-/basecamp-connect @agent --project "BC5 Calendar"               # one project
-/basecamp-connect @agent --project "BC5 Calendar" --project HEY  # several
+/basecamp-connect @Clawdito --project "BC5 Calendar"               # one project
+/basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY  # several
 ```
 
 Or run the bridge directly (it just prints trusted events as NDJSON):
 
 ```bash
-bin/connect @agent --project "BC5 Calendar"
-bin/connect @agent --project "BC5 Calendar" --project "HEY Triage"
-bin/connect @agent --project Queenbee --types Comment,Message --port 4567
+bin/connect @Clawdito --project "BC5 Calendar"
+bin/connect @Clawdito --project "BC5 Calendar" --project "HEY Triage"
+bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 ```
 
-`--project` is **required** — Basecamp webhooks are per-project (there is no
-account-level webhook in the API). Pass a project **name, URL, or ID**; the
-`basecamp` CLI resolves it. Repeat `--project` to watch several.
+`<agent>` is a real Basecamp user backed by a **local `basecamp` CLI profile** of
+the same name (validated at startup; the leading `@` is optional). `--project` is
+**required** — Basecamp webhooks are per-project (there is no account-level
+webhook in the API); pass a **name, URL, or ID** and the CLI resolves it.
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `<trigger>` | The token to watch for (required) | — |
+| `@AGENT` | Agent user / local profile to watch for & reply as (required) | — |
 | `--project` | Project name/URL/ID, **required**, repeatable | — |
+| `--operator` | Profile whose user is allowed to trigger | CLI default profile |
 | `--types` | Comma-separated Basecamp event types | `Comment,Message,Kanban::Card` |
 | `--port` | Local server port | an unused high port |
 
@@ -119,12 +124,11 @@ Funnel is reset. Nothing is left running.
 A webhook payload is attacker-influenceable text flowing into an agent that can
 run commands. `bin/connect` only emits an event when **all** of these hold:
 
-1. **Self-authored** — the event's creator is the *linked Basecamp identity*
-   (by default, whoever the `basecamp` CLI is authenticated as). A third party
+1. **Operator-authored** — the event's creator is the *operator* (you — the CLI
+   default profile, or `--operator <profile>`), matched by email. A third party
    who can comment in the project cannot inject instructions into your agent.
-2. **Trigger-matched** — the trigger token (e.g. `@agent`) appears in the
-   content, matched on a word boundary, case-insensitive (so `@agent` matches
-   but `@agentsmith` does not).
+2. **Mentions the agent** — `recording.content` contains a real @mention of the
+   agent user (a mention attachment naming the agent), not just loose text.
 3. **Corroborated** — the recording is re-fetched from the Basecamp API and
    confirmed (it exists, with the claimed creator). The Funnel URL is public and
    Basecamp sends no signature, so a forged POST is possible — but it can't
@@ -137,9 +141,13 @@ the raw POST body.
 
 ## Configuration
 
-- **Linked identity** — the Basecamp user used both as the self-authored filter
-  target and as the reply identity. Defaults to the `basecamp` CLI's
-  authenticated account.
+- **Agent** — a real Basecamp user backed by a local `basecamp` CLI profile of
+  the same name. It's the mention target *and* the reply identity (replies post
+  via `--profile <agent>`). Authenticate it as the bot: `basecamp auth login
+  --profile <agent>`.
+- **Operator** — the user allowed to trigger (the anti-injection boundary).
+  Defaults to the CLI default profile; override with `--operator <profile>`.
+  Must be a *different* user than the agent, or replies would re-trigger.
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)
   maps Basecamp project-name tokens to local repo paths. The `/basecamp-connect` skill
   uses it to decide where to run each agent; if no mapping matches, it asks you.

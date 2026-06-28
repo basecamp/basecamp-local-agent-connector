@@ -3,13 +3,23 @@ require "test_helper"
 class IdentityTest < Minitest::Test
   def test_resolves_current_user
     runner = FakeCommandRunner.new
-    runner.stub "basecamp me", stdout: identity_envelope("id" => 123, "email_address" => "clawdito@example.com", "first_name" => "Claw", "last_name" => "Dito")
+    runner.stub "basecamp me", stdout: identity_envelope("id" => 123, "email_address" => "clawdito@example.com", "first_name" => "Clawdito", "last_name" => "Agent")
 
     identity = BasecampAgentConnector::Identity.resolve(basecamp_cli: build_cli(runner))
 
     assert_equal 123, identity.id
     assert_equal "clawdito@example.com", identity.email
-    assert_equal "Claw Dito", identity.name
+    assert_equal "Clawdito", identity.name
+  end
+
+  def test_resolves_a_named_profile
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: identity_envelope("id" => 200, "first_name" => "Clawdito")
+
+    identity = BasecampAgentConnector::Identity.resolve(basecamp_cli: build_cli(runner), profile: "clawdito")
+
+    assert_equal "clawdito", identity.profile
+    assert_match(/--profile clawdito/, runner.commands.last.join(" "))
   end
 
   def test_refreshes_once_when_token_expired_then_succeeds

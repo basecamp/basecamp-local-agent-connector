@@ -1,6 +1,8 @@
 class BasecampAgentConnector::Event
   ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed" ]
 
+  MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
+
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]
 
@@ -62,9 +64,11 @@ class BasecampAgentConnector::Event
     creator_email.casecmp?(identity.email)
   end
 
-  def mentions?(trigger)
-    text = stripped_content
-    !text.empty? && text.match?(trigger_pattern(trigger))
+  def mentions?(agent)
+    return false if agent.name.nil?
+
+    body = content.to_s
+    body.include?(MENTION_CONTENT_TYPE) && body.match?(/<img[^>]*\balt="#{Regexp.escape(agent.name)}"/i)
   end
 
   def to_emitted_hash
@@ -76,13 +80,4 @@ class BasecampAgentConnector::Event
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS)
     }
   end
-
-  private
-    def stripped_content
-      content.to_s.gsub(/<[^>]+>/, " ")
-    end
-
-    def trigger_pattern(trigger)
-      /#{Regexp.escape(trigger)}(?!\w)/i
-    end
 end

@@ -4,9 +4,9 @@
 
 Manage local Claude Code agents from Basecamp. This project bridges Basecamp
 webhooks to local Claude agents: you write a comment / message / card in
-Basecamp that mentions a trigger token (e.g. `@agent`), and a background Claude
-agent running on your machine picks it up, gathers context from Basecamp, and
-acts on it.
+Basecamp that @mentions a real agent user (e.g. `@Clawdito`), and a background
+Claude agent running on your machine picks it up, gathers context from Basecamp,
+acts on it, and replies as that agent user.
 
 The bridge has two halves:
 
@@ -30,30 +30,32 @@ treated as a *notification + pointer*, not as a source of truth (see Security).
 
 ## Identity model (the trust boundary)
 
-The connector is bound to a single **linked Basecamp identity**. That identity
-serves two roles at once:
+The connector distinguishes **two** Basecamp users:
 
-- **Filter target** — the agent acts *only* on events authored by this identity.
-  This is the anti-prompt-injection boundary: a third party who can comment in
-  the project cannot inject instructions into the local agent.
-- **Reply identity** — the agent posts results back to Basecamp *as* this same
-  identity.
+- **Agent** — a real Basecamp user (e.g. `@Clawdito`) backed by a **local
+  `basecamp` CLI profile** of the same name. It is the **mention target** (the
+  connector only fires when this user is @mentioned) and the **reply identity**
+  (replies post as it via `--profile <agent>`). The agent name is passed as the
+  positional argument; the connector **validates the profile exists locally at
+  startup** (`basecamp me --profile <agent>`) and aborts with setup guidance if
+  not.
+- **Operator** — the user allowed to *trigger* the agent. This is the
+  anti-prompt-injection boundary: only events authored by the operator are acted
+  on, so a third party who can comment cannot inject instructions. Defaults to
+  the `basecamp` CLI default profile; override with `--operator <profile>`.
 
-Resolution:
+The agent must be a **different** user than the operator. Because replies are
+posted as the agent, and the trust filter requires the *operator* to be the
+author, agent replies are never re-ingested — this is the structural fix for the
+reply feedback loop. The connector warns at startup if the two resolve to the
+same user.
 
-- **Default** — whatever account the `basecamp` CLI is currently authenticated
-  as (today: `clawdito`). The Basecamp CLI supports multiple accounts/roles
-  (`--account`, profiles); the connector validates against the default profile's
-  user.
-- **Configurable** — the linked identity can be set explicitly (by Basecamp user
-  id and/or email) so you can point the connector at a dedicated operator role.
-  A dedicated role (e.g. `clawdito`) used consistently for this channel keeps the
-  filter target and the posting identity identical.
-
-The creator match is keyed on **email address**, not id. Basecamp has two id
+The author match is keyed on **email address**, not id. Basecamp has two id
 spaces — a webhook's `creator.id` is an account-scoped **Person** id, while
 `basecamp me` returns a global **identity** id; they differ for the same human.
 The email address is consistent across both, so it is the reliable trust key.
+The mention match looks for a mention attachment
+(`application/vnd.basecamp.mention`) naming the agent.
 
 ---
 
@@ -75,7 +77,7 @@ basecamp-local-agent-connector/
 │   └── basecamp_agent_connector/
 │       ├── version.rb
 │       ├── cli.rb                     # arg parsing, wires startup → listen → teardown
-│       ├── identity.rb                # resolve + auto-refresh linked Basecamp identity
+│       ├── identity.rb                # resolve a Basecamp identity by profile (agent / operator)
 │       ├── basecamp_cli.rb            # thin wrapper over the `basecamp` CLI (JSON in/out)
 │       ├── tunnel.rb                  # Tailscale Funnel lifecycle (start/reset)
 │       ├── webhooks.rb                # register/delete webhooks across all projects
@@ -119,25 +121,31 @@ behavior in Component 2. Discovery follows the standard Claude Code mechanism
 ### Invocation
 
 ```
-bin/connect <trigger> [--project <project>...] [--types <types>] [--port <port>]
+bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types>] [--port <port>]
 ```
 
-- `<trigger>` — text token to filter on, e.g. `@agent`. Required.
+- `@AGENT` — the agent user / local profile name (e.g. `@Clawdito` or
+  `clawdito`; the leading `@` is optional, lowercased to the profile name).
+  Required. Validated against local profiles at startup.
 - `--project` — Basecamp project (name, URL, or ID). **Required and repeatable.**
   Basecamp webhooks are per-project and there is **no account-level/global
   webhook** in the API, so at least one project must be named. The `basecamp`
   CLI resolves a project name or URL to its ID under the hood, so you can pass
   `--project "Queenbee"` directly.
+- `--operator` — profile whose user is allowed to trigger (default: CLI default
+  profile).
 - `--types` — optional comma-separated Basecamp event types
   (default: `Comment, Message, Kanban::Card`).
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence
 
-1. **Resolve identity** — read the linked Basecamp identity (default: CLI-authed
-   user). If the token is expired/invalid, attempt `basecamp auth refresh` once;
-   if that still fails, exit with a clear message (no `login` attempted
-   automatically).
+1. **Resolve agent + operator** — validate the agent name maps to a usable local
+   profile (`basecamp me --profile <agent>`); if not, exit with guidance to run
+   `basecamp auth login --profile <agent>`. Resolve the operator identity
+   (default profile, or `--operator`). If a token is expired, attempt `basecamp
+   auth refresh` once before failing (no `login` attempted automatically). Warn
+   if agent and operator resolve to the same user (reply-loop risk).
 2. **Resolve projects** — the explicit `--project` list (required). Names/URLs
    are resolved to IDs by the `basecamp` CLI when registering. This is the
    project set to subscribe.
@@ -165,14 +173,15 @@ For each delivered event:
 
 1. **Cheap pre-filter** (on the raw payload, no API calls):
    - Path matches the secret path.
-   - `kind` is a `*_created` **or** `*_content_changed` event (edits to add the
-     trigger count).
-   - `creator.email_address` matches the linked identity (case-insensitive).
-     Email, not id — a webhook's `creator.id` is an account-scoped Person id
-     while `basecamp me` returns a global identity id; the email bridges them.
-   - The trigger token appears in `recording.content` — matched **word-boundary,
-     case-insensitive** (so `@agent` matches as a whole token, not inside
-     `@agentsmith`), against the text with HTML stripped.
+   - `kind` is a `*_created` **or** `*_content_changed` event (edits that add the
+     mention count).
+   - `creator.email_address` matches the **operator** (case-insensitive). Email,
+     not id — a webhook's `creator.id` is an account-scoped Person id while
+     `basecamp me` returns a global identity id; the email bridges them.
+   - `recording.content` **@mentions the agent** — it contains a mention
+     attachment (`application/vnd.basecamp.mention`) whose rendered name matches
+     the agent. (A real Basecamp mention is an attachment carrying the person's
+     SGID, not literal `@name` text, so a plain text match would miss it.)
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
    set; at-least-once delivery means duplicates are expected).
 3. **Authoritative verification** (the real trust gate): re-fetch the recording
@@ -215,7 +224,7 @@ One JSON object per line (NDJSON), built from the **verified** recording:
     "title": "...",
     "app_url": "https://3.basecamp.com/000/buckets/222/comments/456",
     "url": "https://3.basecamp.com/000/buckets/222/comments/456.json",
-    "content": "<div>@agent please ...</div>",
+    "content": "<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…Clawdito…</bc-attachment> please ...</p>",
     "parent": { "id": 789, "type": "Kanban::Card", "app_url": "..." },
     "bucket": { "id": 222, "name": "BC5 Calendar", "type": "Project" }
   }
@@ -237,15 +246,15 @@ not just runtime glue.
 ### Invocation
 
 ```
-/basecamp-connect @agent --project "BC5 Calendar"               # one project
-/basecamp-connect @agent --project "BC5 Calendar" --project HEY  # several
+/basecamp-connect @Clawdito --project "BC5 Calendar"               # one project
+/basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY  # several
 ```
 
-`<trigger>` and flags pass through to `bin/connect`.
+`@AGENT` and flags pass through to `bin/connect`.
 
 ### Behavior
 
-1. **Launch the bridge** — run `bin/connect @agent --project ...`
+1. **Launch the bridge** — run `bin/connect @Clawdito --project ...`
    and tail its STDOUT. The skill watches continuously until the user stops it
    (which triggers the teardown above).
 2. **Per trusted event** (one NDJSON line):
@@ -261,16 +270,19 @@ not just runtime glue.
       is the trigger + pointer.
    c. **Dispatch an in-session background agent** — hand the instruction plus the
       gathered context to a background agent running in the resolved repo. The
-      instruction is the recording's **raw HTML content with only the trigger
-      token removed** (no HTML→text stripping — the agent sees the exact markup,
-      including links/mentions). Agents appear in the current Claude session.
-      **No concurrency cap** — every trusted event is dispatched immediately.
-   d. **Reply** — post results back to the originating recording **as the linked
-      identity** (default: clawdito), via `basecamp comment`:
-      - **Success** — a results comment where the trigger was written.
+      instruction is the recording's **raw HTML content with the agent mention
+      removed** (the rest of the markup — links, other mentions — kept intact).
+      Agents appear in the current Claude session. **No concurrency cap** — every
+      trusted event is dispatched immediately.
+   d. **Reply as the agent** — post results to the originating recording with
+      `basecamp comment <recording> "<body>" --profile <agent>` so the reply is
+      authored by the agent user:
+      - **Success** — a results comment where the mention was written.
       - **Failure** (agent errors / can't complete) — a short error summary
-        comment that **@mentions the event's creator** so it surfaces as a
-        notification. You always learn when a dispatch failed.
+        comment that **@mentions the operator (event creator)** so it surfaces as
+        a notification. You always learn when a dispatch failed.
+      Replying as the agent (a distinct user from the operator) is what stops the
+      reply from re-triggering the connector.
 
 ---
 
@@ -292,9 +304,9 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   types `content` is **HTML**; for `Todo` it's the plain todo title.
 - **`creator`** (person): `id`, `name`, `email_address`, `personable_type`
   (`User`/`Client`), `admin`, `owner`, `client`, `employee`, `time_zone`,
-  `avatar_url`, etc. `email_address` is the match key for the linked identity
-  (the `id` here is an account-scoped Person id, distinct from the identity id
-  returned by `basecamp me`).
+  `avatar_url`, etc. `email_address` is the match key for the operator (the `id`
+  here is an account-scoped Person id, distinct from the identity id returned by
+  `basecamp me`).
 - **HTTP headers on delivery**: `Content-Type: application/json`,
   `User-Agent: Basecamp3 Webhook`, `X-Request-Id: <uuid>`. **No HMAC signature**
   — there is no shared-secret signature to verify, which is *why* authoritative
@@ -371,8 +383,8 @@ Coverage the suite must include:
 
 | Unit | What to assert |
 |------|----------------|
-| Trigger matching | `@agent` matches word-boundary, case-insensitive; does *not* match `@agentsmith`; HTML stripped before matching |
-| Creator filter | events from the linked identity pass; events from any other user are dropped |
+| Mention matching | a mention attachment naming the agent matches; a mention of a different user does not; plain text naming the agent does not |
+| Operator filter | events authored by the operator pass; events from any other user are dropped |
 | Kind filter | `*_created` and `*_content_changed` pass; other kinds dropped |
 | Dedup | a repeated `event.id` is dropped; distinct ids pass |
 | Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected |
@@ -386,15 +398,15 @@ Coverage the suite must include:
 
 - **Forged POST is the real threat**, not just a wrong author. The funnel URL is
   public and Basecamp sends no signature, so anyone could POST a payload claiming
-  `creator = <linked identity>`. The creator filter alone cannot stop this.
+  `creator = <operator>`. The author filter alone cannot stop this.
   **Mitigation: authoritative verification** — every event is re-fetched from
   Basecamp and only acted on if Basecamp corroborates it (existence + creator +
   content). A secret URL path is a cheap first gate on top.
 - **Prompt injection** — payload text flows into an agent that can run commands.
-  Two layers defend it: (1) only events authored by the linked identity are
-  acted on, and (2) the content is re-fetched from Basecamp (not taken from the
-  POST body). Treat all content as untrusted regardless; keep agents scoped to
-  the resolved repo.
+  Two layers defend it: (1) only events authored by the **operator** (and
+  @mentioning the agent) are acted on, and (2) the content is re-fetched from
+  Basecamp (not taken from the POST body). Treat all content as untrusted
+  regardless; keep agents scoped to the resolved repo.
 - **Public endpoint hygiene** — the server only honors `POST /hook/<secret>` and
   ignores everything else.
 - **Teardown** — webhook + funnel are removed on exit, minimizing the window in
@@ -404,15 +416,17 @@ Coverage the suite must include:
 
 ## Decisions resolved
 
-- Reply: post results back as the linked identity (default clawdito). On
-  failure, post an error summary that @mentions the event's creator.
+- Trigger: a real @mention of the **agent** user (a local CLI profile of the
+  same name, validated at startup), authored by the **operator**.
+- Reply: post results back **as the agent** (`basecamp comment --profile
+  <agent>`). On failure, post an error summary that @mentions the operator.
 - Dedup: in-memory, keyed on `event.id`; always 200-OK fast.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
 - Triggers: both `*_created` and `*_content_changed`.
-- Token match: word-boundary, case-insensitive.
-- Instruction form: raw HTML content with only the trigger token removed (no
-  HTML→text stripping).
+- Mention match: a mention attachment (`application/vnd.basecamp.mention`) naming
+  the agent — not a plain-text token.
+- Instruction form: raw HTML content with the agent mention removed.
 - Scope: `--project` is required (BC3 has no global webhook); repeatable for
   several projects. One funnel + one server + one secret path; one webhook
   registered per watched project. The `basecamp` CLI resolves project names to

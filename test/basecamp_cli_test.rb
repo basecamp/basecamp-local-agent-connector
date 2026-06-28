@@ -8,6 +8,15 @@ class BasecampCLITest < Minitest::Test
     assert_equal 123, build_cli(runner).me.fetch("id")
   end
 
+  def test_me_passes_profile_flag
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: envelope("id" => 200)
+
+    build_cli(runner).me(profile: "clawdito")
+
+    assert_includes runner.commands.last.join(" "), "--profile clawdito"
+  end
+
   def test_create_webhook_passes_project_and_types
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
