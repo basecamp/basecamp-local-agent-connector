@@ -60,12 +60,14 @@ email is a secondary signal.
 ### Invocation
 
 ```
-bin/start-basecamp-tunnel <trigger> --project <project> [--types <types>] [--port <port>]
+bin/start-basecamp-tunnel <trigger> [--project <project>...] [--types <types>] [--port <port>]
 ```
 
 - `<trigger>` — text token to filter on, e.g. `@agent`. Required.
-- `--project` — Basecamp project (name, URL, or ID). **Required** — webhooks are
-  per-project in Basecamp.
+- `--project` — Basecamp project (name, URL, or ID). **Optional and repeatable.**
+  If omitted, the connector watches **all projects the linked identity has access
+  to** (auto-discovered via `basecamp projects -j`). Pass one or more `--project`
+  to narrow.
 - `--types` — optional comma-separated Basecamp event types
   (default: `Comment, Message, Kanban::Card`).
 - `--port` — local port for the Ruby server (default: an unused high port).
@@ -73,18 +75,26 @@ bin/start-basecamp-tunnel <trigger> --project <project> [--types <types>] [--por
 ### Startup sequence
 
 1. **Resolve identity** — read the linked Basecamp identity (default: CLI-authed
-   user). Fail fast if the token is expired / unauthenticated.
-2. **Start the local HTTP server** — a minimal **WEBrick** (Ruby stdlib, zero
+   user). If the token is expired/invalid, attempt `basecamp auth refresh` once;
+   if that still fails, exit with a clear message (no `login` attempted
+   automatically).
+2. **Enumerate projects** — the explicit `--project` list, or all accessible
+   projects via `basecamp projects -j`. This is the project set to subscribe.
+3. **Start the local HTTP server** — a minimal **WEBrick** (Ruby stdlib, zero
    dependencies) server on `127.0.0.1:<port>` accepting `POST /hook/<secret>`.
    A random unguessable path segment is generated per run (defense-in-depth; see
-   Security). All other paths return 404.
-3. **Expose via Tailscale Funnel** — `tailscale funnel <port>` publishes the
+   Security). All other paths return 404. **One server + one funnel + one secret
+   path serve every project**; the payload's `recording.bucket.id` identifies
+   which project an event came from.
+4. **Expose via Tailscale Funnel** — `tailscale funnel <port>` publishes the
    server on the public internet at a stable `*.ts.net` HTTPS URL. `serve`
    (tailnet-only) is insufficient — Basecamp's servers must reach the endpoint,
    so `funnel` (public) is required.
-4. **Register the webhook** — `basecamp webhooks create <funnel-url>/hook/<secret>
-   --project <project> --types <types>`. Capture the webhook ID for cleanup.
-5. **Listen** — for each incoming POST, run the pipeline below. Always respond
+5. **Register webhooks** — for **each** project in the set, `basecamp webhooks
+   create <funnel-url>/hook/<secret> --project <project> --types <types>`. Capture
+   every created webhook ID for cleanup. Surface per-project registration
+   failures without aborting the rest.
+6. **Listen** — for each incoming POST, run the pipeline below. Always respond
    **200 OK quickly** (so Basecamp does not retry); filtering/verification/
    dispatch happen out of band.
 
@@ -117,11 +127,13 @@ For each delivered event:
 
 Tear everything down — no orphaned public endpoints or stale Basecamp webhooks:
 
-1. Delete the registered webhook (`basecamp webhooks delete`).
+1. Delete **every** registered webhook (one per watched project) via
+   `basecamp webhooks delete`. Best-effort: keep deleting the rest even if one
+   fails, and report any that couldn't be removed.
 2. Stop the Tailscale Funnel for our port (`tailscale funnel reset` / scoped off).
 3. Stop the WEBrick server.
 
-The funnel + webhook live only for the lifetime of the process; each run
+The funnel + webhooks live only for the lifetime of the process; each run
 re-registers fresh.
 
 ### Emitted STDOUT format
@@ -157,7 +169,8 @@ full context and resolve the working repo.
 ### Invocation
 
 ```
-/basecamp @agent --project "BC5 Calendar"
+/basecamp @agent                       # watch all accessible projects
+/basecamp @agent --project "BC5 Calendar"   # narrow to one (or more)
 ```
 
 `<trigger>` and flags pass through to `bin/start-basecamp-tunnel`.
@@ -178,14 +191,18 @@ full context and resolve the working repo.
       `basecamp` CLI: the recording itself, its `parent` (card/message), the
       thread/comments, and the project. Basecamp is the context store; the event
       is the trigger + pointer.
-   c. **Dispatch an in-session background agent** — hand the instruction (the
-      content text with the trigger token stripped) plus the gathered context to
-      a background agent running in the resolved repo. Agents appear in the
-      current Claude session. **No concurrency cap** — every trusted event is
-      dispatched immediately.
-   d. **Reply** — when the agent finishes, post the results back to the
-      originating recording **as the linked identity** (default: clawdito), via
-      `basecamp comment`. Results land where the trigger was written.
+   c. **Dispatch an in-session background agent** — hand the instruction plus the
+      gathered context to a background agent running in the resolved repo. The
+      instruction is the recording's **raw HTML content with only the trigger
+      token removed** (no HTML→text stripping — the agent sees the exact markup,
+      including links/mentions). Agents appear in the current Claude session.
+      **No concurrency cap** — every trusted event is dispatched immediately.
+   d. **Reply** — post results back to the originating recording **as the linked
+      identity** (default: clawdito), via `basecamp comment`:
+      - **Success** — a results comment where the trigger was written.
+      - **Failure** (agent errors / can't complete) — a short error summary
+        comment that **@mentions the event's creator** so it surfaces as a
+        notification. You always learn when a dispatch failed.
 
 ---
 
@@ -225,6 +242,7 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Key | What | Default |
 |-----|------|---------|
 | Linked identity | Basecamp user id (+ email) for the filter target & reply identity | CLI-authed user (`clawdito`) |
+| Watched projects | Explicit `--project` list, or all accessible | all accessible projects |
 | Project→repo map | Maps Basecamp project names / app tokens to local repo paths under `~/Work/<org>/<repo>` | heuristic + ask-on-miss |
 | Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card` |
 | Local port | WEBrick bind port | unused high port |
@@ -253,26 +271,21 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 
 ## Decisions resolved
 
-- Reply: post results back as the linked identity (default clawdito).
+- Reply: post results back as the linked identity (default clawdito). On
+  failure, post an error summary that @mentions the event's creator.
 - Dedup: in-memory, keyed on `event.id`; always 200-OK fast.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
 - Triggers: both `*_created` and `*_content_changed`.
 - Token match: word-boundary, case-insensitive.
-- Lifecycle: tear down funnel + webhook on exit.
+- Instruction form: raw HTML content with only the trigger token removed (no
+  HTML→text stripping).
+- Scope: all accessible projects by default; `--project` narrows. One funnel +
+  one server + one secret path; one webhook registered per watched project.
+- Lifecycle: tear down all webhooks + funnel on exit.
 - Forgery defense: authoritative Basecamp API verification (+ secret URL path).
+- Token expiry: auto `basecamp auth refresh` once at startup, then fail with a
+  clear message (no auto `login`).
 - Dispatch: in-session background agents.
 - Concurrency: unbounded.
 - Server: WEBrick (stdlib, zero deps).
-
-## Remaining open questions
-
-1. **Stripped-trigger semantics** — when stripping `@agent` from the instruction,
-   keep the rest verbatim, or also strip surrounding HTML to plain text before
-   handing to the agent?
-2. **Multi-project** — one connector run is one project. Do we ever want a single
-   run to register webhooks across several projects?
-3. **Agent failure reply** — if the background agent errors, what gets posted
-   back (error summary? nothing? @mention the human)?
-4. **Token refresh** — auto-`basecamp auth refresh` on expiry at startup, or fail
-   and let the user refresh?
