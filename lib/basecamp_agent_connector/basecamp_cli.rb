@@ -12,6 +12,10 @@ class BasecampAgentConnector::BasecampCLI
     json "me", *profile_flag(profile)
   end
 
+  def person(profile: nil)
+    json "people", "show", "me", *profile_flag(profile)
+  end
+
   def refresh_auth(profile: nil)
     run("auth", "refresh", *profile_flag(profile)).success?
   end

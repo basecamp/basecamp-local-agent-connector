@@ -16,14 +16,14 @@ class EventTest < Minitest::Test
   end
 
   def test_mentions_the_agent
-    agent = agent_identity(name: "Clawdito")
+    agent = agent_identity(person_id: 200)
 
-    assert with_content("<p>Hey #{mention_html('Clawdito')} please</p>").mentions?(agent)
-    assert with_content("<p>Hey #{mention_html('Clawdito', display_name: 'Clawdito')} please</p>").mentions?(agent)
-    refute with_content("<p>Hey #{mention_html('Someone')} please</p>").mentions?(agent)
-    refute with_content("<p>Hey #{mention_html('Clawdito', display_name: 'Clawditolina')} please</p>").mentions?(agent)
-    refute with_content("<p>plain text saying Clawdito without a mention</p>").mentions?(agent)
+    assert with_content("<p>Hey #{mention_html(person_id: 200)} please</p>").mentions?(agent)
+    assert with_content("<p>#{mention_html(person_id: 111)} and #{mention_html(person_id: 200)}</p>").mentions?(agent)
+    refute with_content("<p>Hey #{mention_html(person_id: 999)} please</p>").mentions?(agent)
+    refute with_content("<p>plain text naming the agent without a mention attachment</p>").mentions?(agent)
     refute with_content(nil).mentions?(agent)
+    refute with_content("<p>#{mention_html(person_id: 200)}</p>").mentions?(agent_identity(person_id: nil))
   end
 
   def test_to_emitted_hash_keeps_only_known_fields

@@ -2,6 +2,7 @@ $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "basecamp_agent_connector"
 require "minitest/autorun"
+require "base64"
 require "json"
 require "stringio"
 
@@ -61,28 +62,26 @@ module PayloadHelpers
       "title" => "Re: a card",
       "app_url" => "https://3.basecamp.com/000/buckets/222/comments/456",
       "url" => "https://3.basecamp.com/000/buckets/222/comments/456.json",
-      "content" => "<p>Hey #{mention_html("Clawdito")} please take a look</p>",
+      "content" => "<p>Hey #{mention_html(person_id: 200)} please take a look</p>",
       "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
       "parent" => { "id" => 789, "type" => "Kanban::Card", "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789" },
       "bucket" => { "id" => 222, "name" => "BC5 Calendar", "type" => "Project" }
     }.merge(overrides)
   end
 
-  # Basecamp renders the avatar alt/title with the person's full display name
-  # while the visible figcaption shows the first name, so default display_name to
-  # a full name distinct from the first name the agent is matched on.
-  def mention_html(name, person_id: 51177542, display_name: "#{name} Bot (Agent)")
-    %(<bc-attachment sgid="SGID" content-type="application/vnd.basecamp.mention"><figure>) +
-      %(<img data-avatar-for-person-id="#{person_id}" alt="#{display_name}" title="#{display_name}, Agent" class="avatar">) +
-      %(<figcaption>#{name}</figcaption></figure></bc-attachment>)
+  # A webhook delivers a mention as an unexpanded attachment: just the SGID
+  # (which encodes the Person gid) and content-type, with no rendered name.
+  def mention_html(person_id:)
+    sgid = "#{Base64.strict_encode64("gid://bc3/Person/#{person_id}")}--signature"
+    %(<bc-attachment sgid="#{sgid}" content-type="application/vnd.basecamp.mention"></bc-attachment>)
   end
 
   def operator_identity
     BasecampAgentConnector::Identity.new(id: 100, email: "operator@example.com")
   end
 
-  def agent_identity(name: "Clawdito")
-    BasecampAgentConnector::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name)
+  def agent_identity(name: "Clawdito", person_id: 200)
+    BasecampAgentConnector::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name, person_id: person_id)
   end
 
   def envelope(data)

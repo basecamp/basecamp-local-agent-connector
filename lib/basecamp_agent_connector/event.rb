@@ -1,7 +1,16 @@
+require "base64"
+
 class BasecampAgentConnector::Event
   ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed" ]
 
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
+
+  # The webhook delivers a mention as an unexpanded attachment carrying only an
+  # SGID and content-type — no rendered name. The agent's account-scoped Person
+  # id is encoded inside the SGID, so match on that id rather than a display name.
+  MENTION_ATTACHMENT = /<bc-attachment\b[^>]*content-type="#{Regexp.escape(MENTION_CONTENT_TYPE)}"[^>]*>/i
+
+  PERSON_GID = %r{gid://bc3/Person/(\d+)}
 
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]
@@ -65,13 +74,9 @@ class BasecampAgentConnector::Event
   end
 
   def mentions?(agent)
-    return false if agent.name.nil?
+    return false if agent.person_id.nil?
 
-    # Basecamp renders the mention avatar's alt as the full display name
-    # ("Marie Chef (Agent)"), while agent.name is the first name ("Marie"), so
-    # match the name as the leading token of alt rather than the whole value.
-    body = content.to_s
-    body.include?(MENTION_CONTENT_TYPE) && body.match?(/<img[^>]*\balt="#{Regexp.escape(agent.name)}(?: |")/i)
+    mentioned_person_ids.include?(agent.person_id)
   end
 
   def to_emitted_hash
@@ -83,4 +88,21 @@ class BasecampAgentConnector::Event
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS)
     }
   end
+
+  private
+    def mentioned_person_ids
+      mention_attachment_sgids.flat_map { |sgid| person_ids_in(sgid) }
+    end
+
+    def mention_attachment_sgids
+      content.to_s.scan(MENTION_ATTACHMENT).map { |attachment| attachment[/\bsgid="([^"]+)"/, 1] }.compact
+    end
+
+    def person_ids_in(sgid)
+      decode(sgid).scan(PERSON_GID).flatten.map(&:to_i)
+    end
+
+    def decode(sgid)
+      Base64.decode64(sgid.split("--").first.to_s.tr("-_", "+/"))
+    end
 end

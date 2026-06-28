@@ -1,9 +1,14 @@
 class BasecampAgentConnector::Identity
-  attr_reader :profile, :id, :email, :name
+  attr_reader :profile, :id, :email, :name, :person_id
 
   def self.resolve(basecamp_cli:, profile: nil)
     identity = authenticated_user(basecamp_cli, profile).fetch("identity")
-    new(profile: profile, id: identity.fetch("id"), email: identity["email_address"], name: identity["first_name"])
+    new \
+      profile: profile,
+      id: identity.fetch("id"),
+      email: identity["email_address"],
+      name: identity["first_name"],
+      person_id: account_person_id(basecamp_cli, profile)
   end
 
   def self.authenticated_user(basecamp_cli, profile)
@@ -14,11 +19,19 @@ class BasecampAgentConnector::Identity
   end
   private_class_method :authenticated_user
 
-  def initialize(id:, profile: nil, email: nil, name: nil)
+  # `me` returns the global identity id, but a webhook mention encodes the
+  # account-scoped Person id; resolve that here so mentions match on a stable id.
+  def self.account_person_id(basecamp_cli, profile)
+    basecamp_cli.person(profile: profile)["id"]
+  end
+  private_class_method :account_person_id
+
+  def initialize(id:, profile: nil, email: nil, name: nil, person_id: nil)
     @id = id
     @profile = profile
     @email = email
     @name = name
+    @person_id = person_id
   end
 
   def same_user_as?(other)
