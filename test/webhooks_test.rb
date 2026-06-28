@@ -22,6 +22,29 @@ class WebhooksTest < Minitest::Test
     assert_match(/failed to register webhook for project 2/, logs.string)
   end
 
+  def test_retries_a_transient_failure_then_succeeds
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}', once: true
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+
+    registrations = webhooks(runner).register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_equal [ 1 ], registrations.map(&:project)
+    assert_equal 2, runner.commands_matching(/webhooks create/).length
+  end
+
+  def test_gives_up_after_exhausting_attempts
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}'
+    logs = StringIO.new
+
+    registrations = webhooks(runner, logs).register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_empty registrations
+    assert_equal 3, runner.commands_matching(/webhooks create/).length
+    assert_match(/after 3 attempts/, logs.string)
+  end
+
   def test_deletes_every_registered_webhook
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
@@ -49,7 +72,7 @@ class WebhooksTest < Minitest::Test
 
   private
     def webhooks(runner, logs = StringIO.new)
-      BasecampAgentConnector::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs)
+      BasecampAgentConnector::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })
     end
 
     def hook_url
