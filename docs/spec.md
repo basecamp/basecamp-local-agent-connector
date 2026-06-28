@@ -10,7 +10,7 @@ acts on it.
 
 The bridge has two halves:
 
-1. **`bin/start-basecamp-tunnel`** — a Ruby process that exposes a local webhook
+1. **`bin/connect`** — a Ruby process that exposes a local webhook
    server to the internet (via Tailscale Funnel), registers it as a Basecamp
    webhook, filters + verifies incoming events, and prints trusted events to
    STDOUT.
@@ -55,12 +55,59 @@ email is a secondary signal.
 
 ---
 
-## Component 1: `bin/start-basecamp-tunnel`
+## Project structure (rubygem layout)
+
+The Ruby server and its supporting code are organized as a proper gem so logic
+lives in `lib/` (testable, requireable) and `bin/` holds only thin executables.
+
+```
+basecamp-local-agent-connector/
+├── basecamp_agent_connector.gemspec   # gem metadata + deps (stdlib-only runtime)
+├── Gemfile                            # bundler entry (dev deps: test, rubocop)
+├── Rakefile                           # test + lint tasks
+├── bin/
+│   └── connect                        # executable shim: requires lib, runs CLI
+├── lib/
+│   ├── basecamp_agent_connector.rb    # top-level require + version + autoloads
+│   └── basecamp_agent_connector/
+│       ├── version.rb
+│       ├── cli.rb                     # arg parsing, wires startup → listen → teardown
+│       ├── identity.rb                # resolve + auto-refresh linked Basecamp identity
+│       ├── basecamp_cli.rb            # thin wrapper over the `basecamp` CLI (JSON in/out)
+│       ├── projects.rb                # enumerate watched projects (explicit or all)
+│       ├── tunnel.rb                  # Tailscale Funnel lifecycle (start/reset)
+│       ├── webhooks.rb                # register/delete webhooks across all projects
+│       ├── server.rb                  # WEBrick server, secret path, POST handler
+│       ├── event.rb                   # payload value object (kind, creator, recording)
+│       ├── pipeline.rb                # pre-filter → dedup → verify → emit orchestration
+│       ├── verifier.rb                # authoritative Basecamp API verification
+│       └── emitter.rb                 # NDJSON STDOUT writer
+├── test/                              # minitest, mirrors lib/ structure
+├── docs/
+│   └── spec.md
+└── README.md
+```
+
+- **Top-level module**: `BasecampAgentConnector`. Each file above defines one
+  class/module under that namespace (e.g. `BasecampAgentConnector::Server`).
+- **`bin/connect`** is a minimal shim — it adds `lib/` to the load path, requires
+  `basecamp_agent_connector`, and calls `BasecampAgentConnector::CLI.start(ARGV)`.
+  All real logic lives in `lib/` so it is unit-testable without spawning the
+  process.
+- **Runtime dependencies**: stdlib only (`webrick`, `json`, `securerandom`,
+  `open3` for shelling out to `basecamp`/`tailscale`). Dev dependencies
+  (minitest, rubocop) live in the Gemfile.
+- The gem is not intended for publication to RubyGems.org — the structure is for
+  organization and testability, run locally from a clone.
+
+---
+
+## Component 1: `bin/connect`
 
 ### Invocation
 
 ```
-bin/start-basecamp-tunnel <trigger> [--project <project>...] [--types <types>] [--port <port>]
+bin/connect <trigger> [--project <project>...] [--types <types>] [--port <port>]
 ```
 
 - `<trigger>` — text token to filter on, e.g. `@agent`. Required.
@@ -173,11 +220,11 @@ full context and resolve the working repo.
 /basecamp @agent --project "BC5 Calendar"   # narrow to one (or more)
 ```
 
-`<trigger>` and flags pass through to `bin/start-basecamp-tunnel`.
+`<trigger>` and flags pass through to `bin/connect`.
 
 ### Behavior
 
-1. **Launch the bridge** — run `bin/start-basecamp-tunnel @agent --project ...`
+1. **Launch the bridge** — run `bin/connect @agent --project ...`
    and tail its STDOUT. The skill watches continuously until the user stops it
    (which triggers the teardown above).
 2. **Per trusted event** (one NDJSON line):
