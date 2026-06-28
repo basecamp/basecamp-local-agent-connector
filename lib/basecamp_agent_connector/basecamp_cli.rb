@@ -33,7 +33,9 @@ class BasecampAgentConnector::BasecampCLI
       result = run(*arguments, "-j")
 
       unless result.success?
-        raise Error, "`basecamp #{arguments.join(' ')}` failed: #{result.stderr.strip}"
+        detail = result.stderr.strip
+        detail = result.stdout.strip if detail.empty?
+        raise Error, "`basecamp #{arguments.join(' ')}` failed: #{detail}"
       end
 
       unwrap JSON.parse(result.stdout)

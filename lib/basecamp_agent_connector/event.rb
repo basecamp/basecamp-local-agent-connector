@@ -32,6 +32,10 @@ class BasecampAgentConnector::Event
     creator["id"]
   end
 
+  def creator_email
+    creator["email_address"]
+  end
+
   def recording
     @payload["recording"] || {}
   end
@@ -53,7 +57,9 @@ class BasecampAgentConnector::Event
   end
 
   def authored_by?(identity)
-    !creator_id.nil? && creator_id == identity.id
+    return false if creator_email.nil? || identity.email.nil?
+
+    creator_email.casecmp?(identity.email)
   end
 
   def mentions?(trigger)

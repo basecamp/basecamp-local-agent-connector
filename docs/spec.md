@@ -50,8 +50,10 @@ Resolution:
   A dedicated role (e.g. `clawdito`) used consistently for this channel keeps the
   filter target and the posting identity identical.
 
-The linked identity's `user id` is the stable key used for the creator match;
-email is a secondary signal.
+The creator match is keyed on **email address**, not id. Basecamp has two id
+spaces — a webhook's `creator.id` is an account-scoped **Person** id, while
+`basecamp me` returns a global **identity** id; they differ for the same human.
+The email address is consistent across both, so it is the reliable trust key.
 
 ---
 
@@ -165,7 +167,9 @@ For each delivered event:
    - Path matches the secret path.
    - `kind` is a `*_created` **or** `*_content_changed` event (edits to add the
      trigger count).
-   - `creator.id` matches the linked identity.
+   - `creator.email_address` matches the linked identity (case-insensitive).
+     Email, not id — a webhook's `creator.id` is an account-scoped Person id
+     while `basecamp me` returns a global identity id; the email bridges them.
    - The trigger token appears in `recording.content` — matched **word-boundary,
      case-insensitive** (so `@agent` matches as a whole token, not inside
      `@agentsmith`), against the text with HTML stripped.
@@ -288,7 +292,9 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   types `content` is **HTML**; for `Todo` it's the plain todo title.
 - **`creator`** (person): `id`, `name`, `email_address`, `personable_type`
   (`User`/`Client`), `admin`, `owner`, `client`, `employee`, `time_zone`,
-  `avatar_url`, etc. `id` is the match key for the linked identity.
+  `avatar_url`, etc. `email_address` is the match key for the linked identity
+  (the `id` here is an account-scoped Person id, distinct from the identity id
+  returned by `basecamp me`).
 - **HTTP headers on delivery**: `Content-Type: application/json`,
   `User-Agent: Basecamp3 Webhook`, `X-Request-Id: <uuid>`. **No HMAC signature**
   — there is no shared-secret signature to verify, which is *why* authoritative

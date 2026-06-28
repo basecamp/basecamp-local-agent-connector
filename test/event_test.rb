@@ -8,11 +8,12 @@ class EventTest < Minitest::Test
     refute from_kind(nil).actionable_kind?
   end
 
-  def test_authored_by
-    identity = BasecampAgentConnector::Identity.new(id: 123)
+  def test_authored_by_matches_on_email
+    identity = BasecampAgentConnector::Identity.new(id: 123, email: "clawdito@example.com")
 
     assert BasecampAgentConnector::Event.from_payload(sample_payload).authored_by?(identity)
-    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "id" => 999 })).authored_by?(identity)
+    assert BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "CLAWDITO@example.com" })).authored_by?(identity)
+    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(identity)
     refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => {})).authored_by?(identity)
   end
 
