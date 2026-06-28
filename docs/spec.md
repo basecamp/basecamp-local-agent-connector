@@ -63,8 +63,9 @@ lives in `lib/` (testable, requireable) and `bin/` holds only thin executables.
 ```
 basecamp-local-agent-connector/
 ├── basecamp_agent_connector.gemspec   # gem metadata + deps (stdlib-only runtime)
-├── Gemfile                            # bundler entry (dev deps: test, rubocop)
+├── Gemfile                            # bundler entry (dev deps: minitest, rubocop-37signals)
 ├── Rakefile                           # test + lint tasks
+├── .rubocop.yml                       # inherits 37signals house style (copied from bc3)
 ├── bin/
 │   └── connect                        # executable shim: requires lib, runs CLI
 ├── lib/
@@ -82,11 +83,21 @@ basecamp-local-agent-connector/
 │       ├── pipeline.rb                # pre-filter → dedup → verify → emit orchestration
 │       ├── verifier.rb                # authoritative Basecamp API verification
 │       └── emitter.rb                 # NDJSON STDOUT writer
+├── skills/
+│   └── basecamp/
+│       └── SKILL.md                   # the /basecamp skill (Component 2)
 ├── test/                              # minitest, mirrors lib/ structure
 ├── docs/
 │   └── spec.md
 └── README.md
 ```
+
+The `/basecamp` skill is itself a deliverable: a `SKILL.md` under `skills/basecamp/`
+(Claude Code project-skill format — YAML frontmatter with `name`, `description`,
+trigger keywords, then the instructions). It is the human/agent entry point that
+runs `bin/connect`, watches its STDOUT, and dispatches background agents per the
+behavior in Component 2. Discovery follows the standard Claude Code mechanism
+(e.g. a `.claude/skills` symlink to `skills/`).
 
 - **Top-level module**: `BasecampAgentConnector`. Each file above defines one
   class/module under that namespace (e.g. `BasecampAgentConnector::Server`).
@@ -213,6 +224,11 @@ full context and resolve the working repo.
 
 ## Component 2: `/basecamp` skill
 
+**Artifact**: `skills/basecamp/SKILL.md` — a Claude Code project skill (YAML
+frontmatter: `name: basecamp`, `description`, trigger keywords; body: the
+operating instructions below). This is a first-class deliverable of the project,
+not just runtime glue.
+
 ### Invocation
 
 ```
@@ -295,6 +311,69 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Local port | WEBrick bind port | unused high port |
 
 ---
+
+## Code style
+
+Follow Basecamp's house style — `~/Work/basecamp/bc3/STYLE.md` is the reference,
+and bc3's `.rubocop.yml` is adopted as the lint baseline. This is a plain Ruby
+gem (no Rails), so the Rails/Active Record sections don't apply, but the general
+Ruby rules do:
+
+- **No comments** unless they flag genuinely non-obvious behavior. The code
+  should read on its own.
+- **Expanded conditionals over guard clauses**, with the documented exceptions
+  (early return at the very top of a method, or when the body is non-trivial).
+  **No ternaries** — prefer `if`/`else`.
+- **Method ordering**: class methods, then public methods (`initialize` first),
+  then private. Order methods vertically by invocation order so the flow reads
+  top-to-bottom.
+- **Visibility modifiers**: no blank line under `private`; indent the methods
+  beneath it. For a module that is all private methods, `private` at the top with
+  a blank line after and no indent.
+- **`!` suffix** only for methods with a non-bang counterpart — never to flag
+  "destructive."
+- **Fail fast and loud.** Don't paper over unexpected `nil`/missing state with
+  `&.` or silent fallbacks; let it raise so bugs surface. (e.g. a missing
+  webhook id on teardown is worth reporting, not swallowing.)
+
+## Testing
+
+We value tests highly and keep the code tight: **aim for ≥2 lines of test per
+line of production code.** The bc3 testing philosophy (`STYLE.md` §Tests)
+applies, adapted to a non-Rails gem:
+
+- **Minitest only** — Ruby's stdlib `minitest`, no extra frameworks, helpers, or
+  DSLs unless genuinely necessary.
+- **One test file per class**, mirroring `lib/` under `test/` (e.g.
+  `lib/basecamp_agent_connector/pipeline.rb` → `test/pipeline_test.rb`).
+- **Test the public interface only** — never test private methods directly.
+  Drive them through the public API so tests survive refactoring.
+- **Group related assertions** in one test case rather than splitting every
+  assertion into its own `test` block.
+- **Never mock our own code.** The external boundary here is the **`basecamp` and
+  `tailscale` CLI subprocesses** — that's the equivalent of HTTP in a Rails app.
+  To make it testable without mocking our classes, the components that shell out
+  (`basecamp_cli`, `tunnel`, `webhooks`) take an injectable **command runner**;
+  tests pass a fake runner returning canned CLI output/exit status. Reach for
+  Mocha only as a last resort, and never metaprogram stubs (`define_method`).
+- **Test behavior, not implementation** — assert on emitted output and observable
+  effects, not on internal structure.
+- **Fake data** uses `example.com` / `example.org` for any URLs or emails.
+
+Coverage the suite must include:
+
+| Unit | What to assert |
+|------|----------------|
+| Trigger matching | `@agent` matches word-boundary, case-insensitive; does *not* match `@agentsmith`; HTML stripped before matching |
+| Creator filter | events from the linked identity pass; events from any other user are dropped |
+| Kind filter | `*_created` and `*_content_changed` pass; other kinds dropped |
+| Dedup | a repeated `event.id` is dropped; distinct ids pass |
+| Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected |
+| Emitter | one well-formed NDJSON line per verified event |
+| Webhooks | registers one webhook per project; teardown deletes all, continuing past a single failure and reporting it |
+| Identity | expired token triggers a single `auth refresh`; still-failing exits with a clear message |
+| Projects | explicit `--project` list honored; empty list enumerates all accessible projects |
+| CLI/arg parsing | flags map to the right config; required `<trigger>` enforced |
 
 ## Security considerations
 
