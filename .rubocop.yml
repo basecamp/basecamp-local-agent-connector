@@ -10,3 +10,12 @@ AllCops:
   Exclude:
     - "vendor/**/*"
     - "tmp/**/*"
+
+# This is a plain Ruby gem, not a Rails app. The house style bundles
+# rubocop-rails (bc3 is Rails); its cops assume ActiveSupport extensions
+# like assert_not / assert_not_nil that don't exist under plain Minitest.
+Rails:
+  Enabled: false
+
+Rails/RefuteMethods:
+  Enabled: false

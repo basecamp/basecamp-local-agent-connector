@@ -19,7 +19,7 @@ class ServerTest < Minitest::Test
     response = post("/hook/s3cret", '{"hello":"world"}')
 
     assert_equal "200", response.code
-    assert_equal [{ "hello" => "world" }], @received
+    assert_equal [ { "hello" => "world" } ], @received
   end
 
   def test_returns_404_for_other_paths

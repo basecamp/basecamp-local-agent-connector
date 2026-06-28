@@ -1,5 +1,5 @@
 class BasecampAgentConnector::Event
-  ACTIONABLE_KIND_SUFFIXES = ["_created", "_content_changed"]
+  ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed" ]
 
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]

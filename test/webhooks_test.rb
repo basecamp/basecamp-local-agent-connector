@@ -5,9 +5,9 @@ class WebhooksTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
 
-    registrations = webhooks(runner).register_all(projects: [1, 2], url: hook_url, types: "Comment")
+    registrations = webhooks(runner).register_all(projects: [ 1, 2 ], url: hook_url, types: "Comment")
 
-    assert_equal [1, 2], registrations.map(&:project)
+    assert_equal [ 1, 2 ], registrations.map(&:project)
   end
 
   def test_continues_past_a_registration_failure
@@ -16,9 +16,9 @@ class WebhooksTest < Minitest::Test
     runner.stub(/--project 2\b/, exit_status: 1, stderr: "limit reached")
     logs = StringIO.new
 
-    registrations = webhooks(runner, logs).register_all(projects: [1, 2], url: hook_url, types: "Comment")
+    registrations = webhooks(runner, logs).register_all(projects: [ 1, 2 ], url: hook_url, types: "Comment")
 
-    assert_equal [1], registrations.map(&:project)
+    assert_equal [ 1 ], registrations.map(&:project)
     assert_match(/failed to register webhook for project 2/, logs.string)
   end
 
@@ -28,7 +28,7 @@ class WebhooksTest < Minitest::Test
     runner.stub "webhooks delete", exit_status: 0
     webhooks = webhooks(runner)
 
-    webhooks.register_all(projects: [1, 2], url: hook_url, types: "Comment")
+    webhooks.register_all(projects: [ 1, 2 ], url: hook_url, types: "Comment")
     webhooks.delete_all
 
     assert_equal 2, runner.commands_matching(/webhooks delete/).length
@@ -41,7 +41,7 @@ class WebhooksTest < Minitest::Test
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
 
-    webhooks.register_all(projects: [1], url: hook_url, types: "Comment")
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
     webhooks.delete_all
 
     assert_match(/failed to delete webhook 555/, logs.string)

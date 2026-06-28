@@ -10,9 +10,9 @@ class BasecampCLITest < Minitest::Test
 
   def test_projects_returns_array
     runner = FakeCommandRunner.new
-    runner.stub "basecamp projects", stdout: envelope([{ "id" => 1 }, { "id" => 2 }])
+    runner.stub "basecamp projects", stdout: envelope([ { "id" => 1 }, { "id" => 2 } ])
 
-    assert_equal [1, 2], build_cli(runner).projects.map { |project| project["id"] }
+    assert_equal [ 1, 2 ], build_cli(runner).projects.map { |project| project["id"] }
   end
 
   def test_create_webhook_passes_project_and_types
