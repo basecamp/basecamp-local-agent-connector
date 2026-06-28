@@ -9,6 +9,8 @@ class BasecampAgentConnector::CLI
 
   def self.start(argv)
     new(parse_options(argv)).start
+  rescue ArgumentError => error
+    abort error.message
   end
 
   def self.parse_options(argv)

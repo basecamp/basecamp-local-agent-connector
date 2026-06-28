@@ -1,11 +1,18 @@
 ---
 name: basecamp
-description: >
+description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted, self-authored, trigger-matched
   events, and dispatches each to a background agent with Basecamp context.
-  Triggers: "manage agents from basecamp", "/basecamp @agent", "watch basecamp
-  for agent commands", "basecamp connector".
+  Use when asked to drive local agents from Basecamp, or to watch Basecamp for
+  agent commands.
+triggers:
+  - /basecamp
+  - manage agents from basecamp
+  - watch basecamp for agent commands
+  - basecamp connector
+  - drive agents from basecamp
+  - run agent from basecamp comment
 ---
 
 # /basecamp — drive local agents from Basecamp

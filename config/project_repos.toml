@@ -1,0 +1,17 @@
+# Project → repo mapping for the /basecamp skill.
+#
+# When a trusted event arrives, the skill resolves which local repo to run the
+# agent in by matching tokens (case-insensitive) against the Basecamp project
+# name (recording.bucket.name). The first matching token wins. If nothing
+# matches, the skill asks you which repo to use — it never guesses.
+#
+# Paths may use ~ for your home directory.
+
+[mappings]
+"bc5" = "~/Work/basecamp/bc3"
+"bc4" = "~/Work/basecamp/bc3"
+"basecamp" = "~/Work/basecamp/bc3"
+"hey" = "~/Work/basecamp/haystack"
+"fizzy" = "~/Work/basecamp/fizzy"
+"launchpad" = "~/Work/basecamp/launchpad"
+"queenbee" = "~/Work/basecamp/queenbee"

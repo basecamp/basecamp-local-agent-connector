@@ -2,8 +2,8 @@ class BasecampAgentConnector::Identity
   attr_reader :id, :email, :name
 
   def self.resolve(basecamp_cli:)
-    user = authenticated_user(basecamp_cli)
-    new(id: user.fetch("id"), email: user["email_address"], name: user["name"])
+    identity = authenticated_user(basecamp_cli).fetch("identity")
+    new(id: identity.fetch("id"), email: identity["email_address"], name: full_name(identity))
   end
 
   def self.authenticated_user(basecamp_cli)
@@ -13,6 +13,11 @@ class BasecampAgentConnector::Identity
     basecamp_cli.me
   end
   private_class_method :authenticated_user
+
+  def self.full_name(identity)
+    [ identity["first_name"], identity["last_name"] ].compact.join(" ")
+  end
+  private_class_method :full_name
 
   def initialize(id:, email: nil, name: nil)
     @id = id

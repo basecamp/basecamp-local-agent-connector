@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> Installing gem dependencies"
+bundle install
+
+echo "==> Checking prerequisites"
+
+check() {
+  if command -v "$1" >/dev/null 2>&1; then
+    echo "  ok: $1 ($(command -v "$1"))"
+  else
+    echo "  MISSING: $1 — $2"
+    missing=1
+  fi
+}
+
+missing=0
+check basecamp 'install and authenticate the Basecamp CLI (basecamp auth login)'
+check tailscale 'install Tailscale and enable Funnel for your tailnet'
+
+if [ "$missing" = "1" ]; then
+  echo
+  echo "Some prerequisites are missing. Install them, then re-run bin/setup."
+  exit 1
+fi
+
+echo
+echo "Setup complete. Run the connector with:"
+echo "  bin/connect @agent"
