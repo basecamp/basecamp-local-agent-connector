@@ -21,13 +21,14 @@ class BasecampAgentConnector::CLI
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect <trigger> [--project PROJECT]... [--types TYPES] [--port PORT]"
-      parser.on("--project PROJECT", "Basecamp project (repeatable; default: all accessible)") { |value| projects << value }
+      parser.on("--project PROJECT", "Basecamp project name, URL, or ID (required; repeatable)") { |value| projects << value }
       parser.on("--types TYPES", "Comma-separated Basecamp event types") { |value| types = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
     end.parse!(arguments)
 
     trigger = arguments.shift
-    raise ArgumentError, "a trigger is required, e.g. `connect @agent`" if trigger.nil? || trigger.empty?
+    raise ArgumentError, "a trigger is required, e.g. `connect @agent --project \"My Project\"`" if trigger.nil? || trigger.empty?
+    raise ArgumentError, "at least one --project is required (Basecamp webhooks are per-project)" if projects.empty?
 
     Options.new(trigger: trigger, projects: projects, types: types, port: port)
   end
@@ -38,11 +39,10 @@ class BasecampAgentConnector::CLI
 
   def start
     identity = resolve_identity
-    watched = watched_projects
     port = @options.port || free_port
     secret = SecureRandom.hex(16)
 
-    open_bridge(port: port, secret: secret, projects: watched, types: @options.types)
+    open_bridge(port: port, secret: secret, projects: @options.projects, types: @options.types)
     listen(identity: identity, port: port, secret: secret)
   ensure
     teardown
@@ -53,10 +53,6 @@ class BasecampAgentConnector::CLI
       BasecampAgentConnector::Identity.resolve(basecamp_cli: basecamp_cli)
     rescue BasecampAgentConnector::BasecampCLI::Error => error
       abort "Could not authenticate with Basecamp: #{error.message}\nRun `basecamp auth login` and try again."
-    end
-
-    def watched_projects
-      BasecampAgentConnector::Projects.new(basecamp_cli: basecamp_cli).watched(explicit: @options.projects)
     end
 
     def open_bridge(port:, secret:, projects:, types:)

@@ -16,10 +16,6 @@ class BasecampAgentConnector::BasecampCLI
     run("auth", "refresh").success?
   end
 
-  def projects
-    json "projects"
-  end
-
   def show(url_or_id)
     json "show", url_or_id
   end

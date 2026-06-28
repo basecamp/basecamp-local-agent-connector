@@ -30,11 +30,13 @@ repo.
 ## Invocation
 
 ```
-/basecamp @agent                          # watch all accessible projects
-/basecamp @agent --project "BC5 Calendar" # narrow to one or more projects
+/basecamp @agent --project "BC5 Calendar"               # one project
+/basecamp @agent --project "BC5 Calendar" --project HEY  # several
 ```
 
-The `<trigger>` and any flags pass straight through to `bin/connect`.
+`--project` is **required** (Basecamp has no global webhook). Pass a project
+name, URL, or ID — the `basecamp` CLI resolves it. The `<trigger>` and flags
+pass straight through to `bin/connect`.
 
 ## Procedure
 
@@ -43,7 +45,7 @@ The `<trigger>` and any flags pass straight through to `bin/connect`.
 Run the connector in the background from the connector repo and tail its STDOUT:
 
 ```bash
-bin/connect @agent [--project "<project>"]...
+bin/connect @agent --project "<project>" [--project "<project>"]...
 ```
 
 Each STDOUT line is one trusted event as NDJSON:

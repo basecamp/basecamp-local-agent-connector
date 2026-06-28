@@ -1,11 +1,11 @@
 require "test_helper"
 
 class CLITest < Minitest::Test
-  def test_parses_trigger_and_applies_defaults
-    options = BasecampAgentConnector::CLI.parse_options([ "@agent" ])
+  def test_parses_trigger_and_project_with_defaults
+    options = BasecampAgentConnector::CLI.parse_options([ "@agent", "--project", "Queenbee" ])
 
     assert_equal "@agent", options.trigger
-    assert_empty options.projects
+    assert_equal [ "Queenbee" ], options.projects
     assert_equal "Comment,Message,Kanban::Card", options.types
     assert_nil options.port
   end
@@ -20,7 +20,13 @@ class CLITest < Minitest::Test
 
   def test_requires_a_trigger
     assert_raises ArgumentError do
-      BasecampAgentConnector::CLI.parse_options([])
+      BasecampAgentConnector::CLI.parse_options([ "--project", "Queenbee" ])
+    end
+  end
+
+  def test_requires_a_project
+    assert_raises ArgumentError do
+      BasecampAgentConnector::CLI.parse_options([ "@agent" ])
     end
   end
 end

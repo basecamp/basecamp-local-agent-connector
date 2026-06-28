@@ -75,7 +75,6 @@ basecamp-local-agent-connector/
 │       ├── cli.rb                     # arg parsing, wires startup → listen → teardown
 │       ├── identity.rb                # resolve + auto-refresh linked Basecamp identity
 │       ├── basecamp_cli.rb            # thin wrapper over the `basecamp` CLI (JSON in/out)
-│       ├── projects.rb                # enumerate watched projects (explicit or all)
 │       ├── tunnel.rb                  # Tailscale Funnel lifecycle (start/reset)
 │       ├── webhooks.rb                # register/delete webhooks across all projects
 │       ├── server.rb                  # WEBrick server, secret path, POST handler
@@ -122,10 +121,11 @@ bin/connect <trigger> [--project <project>...] [--types <types>] [--port <port>]
 ```
 
 - `<trigger>` — text token to filter on, e.g. `@agent`. Required.
-- `--project` — Basecamp project (name, URL, or ID). **Optional and repeatable.**
-  If omitted, the connector watches **all projects the linked identity has access
-  to** (auto-discovered via `basecamp projects -j`). Pass one or more `--project`
-  to narrow.
+- `--project` — Basecamp project (name, URL, or ID). **Required and repeatable.**
+  Basecamp webhooks are per-project and there is **no account-level/global
+  webhook** in the API, so at least one project must be named. The `basecamp`
+  CLI resolves a project name or URL to its ID under the hood, so you can pass
+  `--project "Queenbee"` directly.
 - `--types` — optional comma-separated Basecamp event types
   (default: `Comment, Message, Kanban::Card`).
 - `--port` — local port for the Ruby server (default: an unused high port).
@@ -136,8 +136,9 @@ bin/connect <trigger> [--project <project>...] [--types <types>] [--port <port>]
    user). If the token is expired/invalid, attempt `basecamp auth refresh` once;
    if that still fails, exit with a clear message (no `login` attempted
    automatically).
-2. **Enumerate projects** — the explicit `--project` list, or all accessible
-   projects via `basecamp projects -j`. This is the project set to subscribe.
+2. **Resolve projects** — the explicit `--project` list (required). Names/URLs
+   are resolved to IDs by the `basecamp` CLI when registering. This is the
+   project set to subscribe.
 3. **Start the local HTTP server** — a minimal **WEBrick** (Ruby stdlib, zero
    dependencies) server on `127.0.0.1:<port>` accepting `POST /hook/<secret>`.
    A random unguessable path segment is generated per run (defense-in-depth; see
@@ -305,7 +306,7 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Key | What | Default |
 |-----|------|---------|
 | Linked identity | Basecamp user id (+ email) for the filter target & reply identity | CLI-authed user (`clawdito`) |
-| Watched projects | Explicit `--project` list, or all accessible | all accessible projects |
+| Watched projects | Explicit `--project` list (name/URL/ID), required | — (at least one) |
 | Project→repo map | Maps Basecamp project names / app tokens to local repo paths under `~/Work/<org>/<repo>` | heuristic + ask-on-miss |
 | Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card` |
 | Local port | WEBrick bind port | unused high port |
@@ -406,8 +407,10 @@ Coverage the suite must include:
 - Token match: word-boundary, case-insensitive.
 - Instruction form: raw HTML content with only the trigger token removed (no
   HTML→text stripping).
-- Scope: all accessible projects by default; `--project` narrows. One funnel +
-  one server + one secret path; one webhook registered per watched project.
+- Scope: `--project` is required (BC3 has no global webhook); repeatable for
+  several projects. One funnel + one server + one secret path; one webhook
+  registered per watched project. The `basecamp` CLI resolves project names to
+  IDs.
 - Lifecycle: tear down all webhooks + funnel on exit.
 - Forgery defense: authoritative Basecamp API verification (+ secret URL path).
 - Token expiry: auto `basecamp auth refresh` once at startup, then fail with a

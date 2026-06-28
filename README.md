@@ -86,22 +86,26 @@ Running Claude Code from the clone auto-discovers the skill (via the bundled
 From the skill:
 
 ```
-/basecamp @agent                          # watch every project you can access
-/basecamp @agent --project "BC5 Calendar" # narrow to one or more projects
+/basecamp @agent --project "BC5 Calendar"               # one project
+/basecamp @agent --project "BC5 Calendar" --project HEY  # several
 ```
 
 Or run the bridge directly (it just prints trusted events as NDJSON):
 
 ```bash
-bin/connect @agent
+bin/connect @agent --project "BC5 Calendar"
 bin/connect @agent --project "BC5 Calendar" --project "HEY Triage"
-bin/connect @agent --types Comment,Message --port 4567
+bin/connect @agent --project Queenbee --types Comment,Message --port 4567
 ```
+
+`--project` is **required** — Basecamp webhooks are per-project (there is no
+account-level webhook in the API). Pass a project **name, URL, or ID**; the
+`basecamp` CLI resolves it. Repeat `--project` to watch several.
 
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `<trigger>` | The token to watch for (required) | — |
-| `--project` | Project name/URL/ID, repeatable | all accessible projects |
+| `--project` | Project name/URL/ID, **required**, repeatable | — |
 | `--types` | Comma-separated Basecamp event types | `Comment,Message,Kanban::Card` |
 | `--port` | Local server port | an unused high port |
 
