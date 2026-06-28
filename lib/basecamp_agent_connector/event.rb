@@ -67,8 +67,11 @@ class BasecampAgentConnector::Event
   def mentions?(agent)
     return false if agent.name.nil?
 
+    # Basecamp renders the mention avatar's alt as the full display name
+    # ("Marie Chef (Agent)"), while agent.name is the first name ("Marie"), so
+    # match the name as the leading token of alt rather than the whole value.
     body = content.to_s
-    body.include?(MENTION_CONTENT_TYPE) && body.match?(/<img[^>]*\balt="#{Regexp.escape(agent.name)}"/i)
+    body.include?(MENTION_CONTENT_TYPE) && body.match?(/<img[^>]*\balt="#{Regexp.escape(agent.name)}(?: |")/i)
   end
 
   def to_emitted_hash

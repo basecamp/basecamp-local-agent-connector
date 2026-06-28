@@ -19,7 +19,9 @@ class EventTest < Minitest::Test
     agent = agent_identity(name: "Clawdito")
 
     assert with_content("<p>Hey #{mention_html('Clawdito')} please</p>").mentions?(agent)
+    assert with_content("<p>Hey #{mention_html('Clawdito', display_name: 'Clawdito')} please</p>").mentions?(agent)
     refute with_content("<p>Hey #{mention_html('Someone')} please</p>").mentions?(agent)
+    refute with_content("<p>Hey #{mention_html('Clawdito', display_name: 'Clawditolina')} please</p>").mentions?(agent)
     refute with_content("<p>plain text saying Clawdito without a mention</p>").mentions?(agent)
     refute with_content(nil).mentions?(agent)
   end

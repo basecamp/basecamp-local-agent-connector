@@ -68,9 +68,12 @@ module PayloadHelpers
     }.merge(overrides)
   end
 
-  def mention_html(name, person_id: 51177542)
+  # Basecamp renders the avatar alt/title with the person's full display name
+  # while the visible figcaption shows the first name, so default display_name to
+  # a full name distinct from the first name the agent is matched on.
+  def mention_html(name, person_id: 51177542, display_name: "#{name} Bot (Agent)")
     %(<bc-attachment sgid="SGID" content-type="application/vnd.basecamp.mention"><figure>) +
-      %(<img data-avatar-for-person-id="#{person_id}" alt="#{name}" title="#{name}, Agent" class="avatar">) +
+      %(<img data-avatar-for-person-id="#{person_id}" alt="#{display_name}" title="#{display_name}, Agent" class="avatar">) +
       %(<figcaption>#{name}</figcaption></figure></bc-attachment>)
   end
 
