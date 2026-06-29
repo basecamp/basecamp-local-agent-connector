@@ -26,6 +26,13 @@ class EventTest < Minitest::Test
     refute with_content("<p>#{mention_html(person_id: 200)}</p>").mentions?(agent_identity(person_id: nil))
   end
 
+  def test_mentions_the_agent_in_a_real_webhook_payload
+    agent = agent_identity(person_id: 200)
+
+    assert with_content("<p>are you listening #{webhook_mention_html(person_id: 200)} ?</p>").mentions?(agent)
+    refute with_content("<p>are you listening #{webhook_mention_html(person_id: 999)} ?</p>").mentions?(agent)
+  end
+
   def test_to_emitted_hash_keeps_only_known_fields
     recording = sample_recording("status" => "active", "bookmark_url" => "https://example.org/b")
     event = BasecampAgentConnector::Event.from_payload(sample_payload("recording" => recording))

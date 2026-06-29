@@ -76,6 +76,14 @@ module PayloadHelpers
     %(<bc-attachment sgid="#{sgid}" content-type="application/vnd.basecamp.mention"></bc-attachment>)
   end
 
+  # The real webhook payload orders the attributes sgid, content, content-type and
+  # carries embedded mention markup (full of `>` characters) in the content value.
+  def webhook_mention_html(person_id:)
+    sgid = "#{Base64.strict_encode64("gid://bc3/Person/#{person_id}")}--signature"
+    embedded = %(<bc-mention class=&quot;mentionable-person&quot; gid=&quot;gid://bc3/Person/#{person_id}&quot;><span><img data-avatar-for-person-id=&quot;#{person_id}&quot;>Marie</span></bc-mention>)
+    %(<bc-attachment sgid="#{sgid}" content="#{embedded}" content-type="application/vnd.basecamp.mention"></bc-attachment>)
+  end
+
   def operator_identity
     BasecampAgentConnector::Identity.new(id: 100, email: "operator@example.com")
   end
