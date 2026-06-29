@@ -3,8 +3,9 @@ name: basecamp-connect
 description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted events — authored by the operator
-  and @mentioning a real Basecamp agent user — and dispatches each to a background
-  agent with Basecamp context, replying as that agent user.
+  and @mentioning a real Basecamp agent user — and hands each off to a background
+  agent that gathers context, does the work, and replies as that agent user, so the
+  watcher thread stays free to keep taking new mentions.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
   agent commands.
 triggers:
@@ -119,47 +120,63 @@ act on them.
 
 Keep watching until the user stops the skill (see Cleanup).
 
-### 2. For each trusted event
+### 2. For each trusted event — hand it off, don't do it yourself
 
-**a. Resolve the working repo.** Infer the local repo from the project name
-(`recording.bucket.name`). Basecamp project names usually carry an app token —
-e.g. a `BC5 …` project maps to the Basecamp repo under `~/Work/<org>/<repo>`.
-A mapping table (see `config/project_repos.toml`, if present) backs the
-heuristic. **If you cannot confidently map the project to a repo, ask the user
-which repo to use — do not guess and do not silently fall back.**
+**The front thread is an orchestrator, not a worker.** Its only job is to keep
+watching for new mentions and to dispatch each one. It must **never** gather
+context, run the requested work, or post the reply itself — every one of those
+blocks it from picking up the next mention. For each event it does just two
+things — resolve the repo, then dispatch a single background agent that owns the
+event end-to-end — and then returns immediately to the monitor.
 
-**b. Gather context from Basecamp.** Basecamp is the context store; the event is
-the trigger + pointer. Pull what the instruction needs:
+**a. Resolve the working repo** (front thread, fast). Infer the local repo from
+the project name (`recording.bucket.name`). Basecamp project names usually carry
+an app token — e.g. a `BC5 …` project maps to the Basecamp repo under
+`~/Work/<org>/<repo>`. A mapping table (see `config/project_repos.toml`, if
+present) backs the heuristic. **If you cannot confidently map the project to a
+repo, ask the user which repo to use — do not guess and do not silently fall
+back.** This is the one step that may need you; everything after it is delegated.
 
-```bash
-basecamp show <recording.app_url> -j          # the recording itself
-basecamp show <recording.parent.app_url> -j   # the card/message it lives in
-# plus the thread/comments and the project as needed
-```
+**b. Dispatch one background agent that owns the whole event.** Use the Agent
+tool with `run_in_background: true`, running in the resolved repo. Give it
+everything it needs to finish **without the front thread**:
 
-**c. Dispatch a background agent.** Hand the instruction plus the gathered
-context to a background agent (the Agent tool, `run_in_background: true`) running
-in the resolved repo. The instruction is `recording.content` with the agent
-mention removed — keep the rest of the raw HTML (links, other mentions) intact.
+- the **instruction** — `recording.content` with the agent mention removed, the
+  rest of the raw HTML (links, other mentions) intact;
+- the **recording** URL/id and its parent URL;
+- the **agent profile name** (its reply identity);
+- the **operator's** name/id (to @mention on failure).
+
+Instruct that background agent to, in order:
+
+1. **Gather context from Basecamp** — it is the context store; the event is just
+   the trigger + pointer:
+   ```bash
+   basecamp show <recording.app_url> -j          # the recording itself
+   basecamp show <recording.parent.app_url> -j   # the card/message it lives in
+   # plus the thread/comments and the project as needed
+   ```
+2. **Do the requested work** in the repo.
+3. **Reply on the originating recording as the agent** — commenting with the
+   agent's profile so the reply posts as the agent user:
+   ```bash
+   basecamp comment <recording.url|id> "<body>" --profile <agent>
+   ```
+   - **Success** — post the results where the mention was written.
+   - **Failure** (it errored or couldn't finish) — post a short error summary and
+     **@mention the operator** so it surfaces as a notification.
+   - **Never put the agent mention in a reply body.**
+
+Because the background agent gathers its own context and posts its own reply, the
+front thread is free the instant it dispatches — it goes straight back to the
+monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
 
-**d. Reply on Basecamp as the agent**, commenting on the originating recording
-**with the agent's profile** so the reply is posted as the agent user:
-
-```bash
-basecamp comment <recording.url|id> "<body>" --profile <agent>
-```
-
-- **Success** — post the results where the mention was written.
-- **Failure** (the agent errored or couldn't finish) — post a short error
-  summary and **@mention the event's creator** (the operator) so it surfaces as a
-  notification.
-
-Posting as the agent (a distinct user from the operator) is what keeps replies
-from re-triggering the connector — the trust filter requires the *operator* to be
-the author, and the agent is not the operator. Still, **never put the agent
-mention in a reply body**, and if you ever see an event whose recording is a
-comment the agent itself just posted, drop it.
+**c. Drop self-authored events.** If an event's recording is a comment the agent
+itself just posted, ignore it. Posting as the agent (a distinct user from the
+operator) already keeps replies from re-triggering the connector — the trust
+filter requires the *operator* to be the author — but this is cheap defense in
+depth.
 
 ## Cleanup / lifecycle — always tear down
 
