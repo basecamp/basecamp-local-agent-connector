@@ -1,6 +1,6 @@
 require "test_helper"
 
-class BasecampCLITest < Minitest::Test
+class BasecampClientTest < Minitest::Test
   def test_me_returns_unwrapped_data
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: envelope("id" => 123, "email_address" => "clawdito@example.com")
@@ -40,7 +40,7 @@ class BasecampCLITest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", exit_status: 1, stderr: "boom"
 
-    assert_raises BasecampAgentConnector::BasecampCLI::Error do
+    assert_raises BasecampAgentConnector::Basecamp::Client::Error do
       build_cli(runner).me
     end
   end

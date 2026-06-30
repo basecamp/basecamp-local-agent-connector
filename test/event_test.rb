@@ -9,10 +9,10 @@ class EventTest < Minitest::Test
   end
 
   def test_authored_by_matches_on_email
-    assert BasecampAgentConnector::Event.from_payload(sample_payload).authored_by?(operator_identity)
-    assert BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "OPERATOR@example.com" })).authored_by?(operator_identity)
-    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(operator_identity)
-    refute BasecampAgentConnector::Event.from_payload(sample_payload("creator" => {})).authored_by?(operator_identity)
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).authored_by?(operator_identity)
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "email_address" => "OPERATOR@example.com" })).authored_by?(operator_identity)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(operator_identity)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => {})).authored_by?(operator_identity)
   end
 
   def test_mentions_the_agent
@@ -35,7 +35,7 @@ class EventTest < Minitest::Test
 
   def test_to_emitted_hash_keeps_only_known_fields
     recording = sample_recording("status" => "active", "bookmark_url" => "https://example.org/b")
-    event = BasecampAgentConnector::Event.from_payload(sample_payload("recording" => recording))
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("recording" => recording))
     emitted = event.to_emitted_hash
 
     refute emitted["recording"].key?("status")
@@ -46,10 +46,10 @@ class EventTest < Minitest::Test
 
   private
     def from_kind(kind)
-      BasecampAgentConnector::Event.from_payload("kind" => kind)
+      BasecampAgentConnector::Basecamp::Event.from_payload("kind" => kind)
     end
 
     def with_content(content)
-      BasecampAgentConnector::Event.from_payload("recording" => { "content" => content })
+      BasecampAgentConnector::Basecamp::Event.from_payload("recording" => { "content" => content })
     end
 end

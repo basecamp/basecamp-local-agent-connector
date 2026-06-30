@@ -1,4 +1,4 @@
-class BasecampAgentConnector::Pipeline
+class BasecampAgentConnector::Basecamp::Pipeline
   def initialize(operator:, agent:, verifier:, emitter:, logger: $stderr)
     @operator = operator
     @agent = agent
@@ -9,7 +9,7 @@ class BasecampAgentConnector::Pipeline
   end
 
   def process(payload)
-    event = BasecampAgentConnector::Event.from_payload(payload)
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
     if actionable?(event) && fresh?(event)
       emit_if_verified(event)

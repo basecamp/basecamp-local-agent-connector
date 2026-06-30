@@ -71,21 +71,32 @@ basecamp-local-agent-connector/
 ├── Rakefile                           # test + lint tasks
 ├── .rubocop.yml                       # inherits 37signals house style (copied from bc3)
 ├── bin/
-│   └── connect                        # executable shim: requires lib, runs CLI
+│   ├── connect                        # executable shim → Basecamp::CLI
+│   └── gh-review                      # executable shim → GitHub::ReviewCLI
 ├── lib/
 │   ├── basecamp_agent_connector.rb    # top-level require + version + autoloads
 │   └── basecamp_agent_connector/
 │       ├── version.rb
-│       ├── cli.rb                     # arg parsing, wires startup → listen → teardown
-│       ├── identity.rb                # resolve a Basecamp identity by profile (agent / operator)
-│       ├── basecamp_cli.rb            # thin wrapper over the `basecamp` CLI (JSON in/out)
-│       ├── tunnel.rb                  # Tailscale Funnel lifecycle (start/reset)
-│       ├── webhooks.rb                # register/delete webhooks across all projects
-│       ├── server.rb                  # WEBrick server, secret path, POST handler
-│       ├── event.rb                   # payload value object (kind, creator, recording)
-│       ├── pipeline.rb                # pre-filter → dedup → verify → emit orchestration
-│       ├── verifier.rb                # authoritative Basecamp API verification
-│       └── emitter.rb                 # NDJSON STDOUT writer
+│       ├── command_runner.rb          # shared: runs subprocesses (the test seam)
+│       ├── server.rb                  # shared: WEBrick server, secret path, raw POST handler
+│       ├── tunnel.rb                  # shared: Tailscale Funnel lifecycle (start/reset)
+│       ├── emitter.rb                 # shared: NDJSON STDOUT writer
+│       ├── basecamp/                  # Basecamp:: — the Basecamp webhook transport
+│       │   ├── cli.rb                 #   arg parsing, wires startup → listen → teardown
+│       │   ├── client.rb              #   thin wrapper over the `basecamp` CLI (JSON in/out)
+│       │   ├── identity.rb            #   resolve a Basecamp identity by profile (agent / operator)
+│       │   ├── webhooks.rb            #   register/delete webhooks across all projects
+│       │   ├── event.rb               #   payload value object (kind, creator, recording)
+│       │   ├── verifier.rb            #   authoritative Basecamp API verification
+│       │   └── pipeline.rb            #   pre-filter → dedup → verify → emit orchestration
+│       └── github/                    # GitHub:: — the PR review-loop transport
+│           ├── review_cli.rb          #   arg parsing, wires startup → listen → teardown
+│           ├── client.rb              #   thin wrapper over the `gh` CLI (JSON in/out)
+│           ├── webhooks.rb            #   register/delete repo webhooks
+│           ├── webhook_signature.rb   #   constant-time X-Hub-Signature-256 HMAC verify
+│           ├── review_event.rb        #   pull_request_review payload value object
+│           ├── review_verifier.rb     #   re-fetch the review + inline comments
+│           └── review_pipeline.rb     #   verify signature → filter → dedup → re-fetch → emit
 ├── skills/
 │   └── basecamp-connect/
 │       └── SKILL.md                   # the /basecamp-connect skill (Component 2)
@@ -105,7 +116,7 @@ behavior in Component 2. Discovery follows the standard Claude Code mechanism
 - **Top-level module**: `BasecampAgentConnector`. Each file above defines one
   class/module under that namespace (e.g. `BasecampAgentConnector::Server`).
 - **`bin/connect`** is a minimal shim — it adds `lib/` to the load path, requires
-  `basecamp_agent_connector`, and calls `BasecampAgentConnector::CLI.start(ARGV)`.
+  `basecamp_agent_connector`, and calls `BasecampAgentConnector::Basecamp::CLI.start(ARGV)`.
   All real logic lives in `lib/` so it is unit-testable without spawning the
   process.
 - **Runtime dependencies**: stdlib only (`webrick`, `json`, `securerandom`,

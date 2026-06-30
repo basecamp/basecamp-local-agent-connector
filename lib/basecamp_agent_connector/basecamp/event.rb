@@ -1,6 +1,6 @@
 require "base64"
 
-class BasecampAgentConnector::Event
+class BasecampAgentConnector::Basecamp::Event
   ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed" ]
 
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
