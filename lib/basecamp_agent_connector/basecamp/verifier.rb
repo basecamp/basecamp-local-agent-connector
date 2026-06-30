@@ -1,4 +1,4 @@
-class BasecampAgentConnector::Verifier
+class BasecampAgentConnector::Basecamp::Verifier
   def initialize(basecamp_cli:)
     @basecamp_cli = basecamp_cli
   end
@@ -17,7 +17,7 @@ class BasecampAgentConnector::Verifier
       return nil if locator.nil?
 
       @basecamp_cli.show(locator)
-    rescue BasecampAgentConnector::BasecampCLI::Error
+    rescue BasecampAgentConnector::Basecamp::Client::Error
       nil
     end
 
@@ -26,7 +26,7 @@ class BasecampAgentConnector::Verifier
     end
 
     def authoritative_event(event, recording)
-      BasecampAgentConnector::Event.from_payload \
+      BasecampAgentConnector::Basecamp::Event.from_payload \
         "id" => event.id,
         "kind" => event.kind,
         "created_at" => event.created_at,

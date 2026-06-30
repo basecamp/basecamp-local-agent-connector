@@ -1,6 +1,6 @@
 require "json"
 
-class BasecampAgentConnector::GithubCLI
+class BasecampAgentConnector::GitHub::Client
   class Error < StandardError; end
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "gh")

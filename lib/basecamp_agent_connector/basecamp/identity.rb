@@ -1,4 +1,4 @@
-class BasecampAgentConnector::Identity
+class BasecampAgentConnector::Basecamp::Identity
   attr_reader :profile, :id, :email, :name, :person_id
 
   def self.resolve(basecamp_cli:, profile: nil)
@@ -13,7 +13,7 @@ class BasecampAgentConnector::Identity
 
   def self.authenticated_user(basecamp_cli, profile)
     basecamp_cli.me(profile: profile)
-  rescue BasecampAgentConnector::BasecampCLI::Error
+  rescue BasecampAgentConnector::Basecamp::Client::Error
     raise unless basecamp_cli.refresh_auth(profile: profile)
     basecamp_cli.me(profile: profile)
   end

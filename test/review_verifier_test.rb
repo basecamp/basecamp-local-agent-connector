@@ -30,10 +30,10 @@ class ReviewVerifierTest < Minitest::Test
 
   private
     def verifier(runner)
-      BasecampAgentConnector::ReviewVerifier.new(github_cli: build_github_cli(runner))
+      BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: build_github_cli(runner))
     end
 
     def event(payload)
-      BasecampAgentConnector::ReviewEvent.from_payload(payload)
+      BasecampAgentConnector::GitHub::ReviewEvent.from_payload(payload)
     end
 end

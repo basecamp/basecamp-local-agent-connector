@@ -3,7 +3,7 @@ require "securerandom"
 require "socket"
 require "json"
 
-class BasecampAgentConnector::CLI
+class BasecampAgentConnector::Basecamp::CLI
   DEFAULT_TYPES = "Comment,Message,Kanban::Card"
 
   Options = Data.define(:agent, :operator, :projects, :types, :port)
@@ -59,15 +59,15 @@ class BasecampAgentConnector::CLI
 
   private
     def resolve_agent
-      BasecampAgentConnector::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.agent)
-    rescue BasecampAgentConnector::BasecampCLI::Error => error
+      BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.agent)
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "No usable local Basecamp profile '#{@options.agent}'.\n" \
         "Run `basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
     end
 
     def resolve_operator
-      BasecampAgentConnector::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.operator)
-    rescue BasecampAgentConnector::BasecampCLI::Error => error
+      BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.operator)
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "Could not resolve the operator identity#{operator_label}: #{error.message}\nRun `basecamp auth login` and try again."
     end
 
@@ -86,7 +86,7 @@ class BasecampAgentConnector::CLI
       @tunnel = BasecampAgentConnector::Tunnel.new(port: port, command_runner: command_runner)
       webhook_url = "#{@tunnel.start}/hook/#{secret}"
 
-      @webhooks = BasecampAgentConnector::Webhooks.new(basecamp_cli: basecamp_cli)
+      @webhooks = BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: basecamp_cli)
       @webhooks.register_all(projects: projects, url: webhook_url, types: types)
 
       warn "Listening for mentions of @#{agent.name || agent.profile} on #{projects.length} project(s) at #{webhook_url}"
@@ -113,10 +113,10 @@ class BasecampAgentConnector::CLI
     end
 
     def build_pipeline(operator, agent)
-      BasecampAgentConnector::Pipeline.new \
+      BasecampAgentConnector::Basecamp::Pipeline.new \
         operator: operator,
         agent: agent,
-        verifier: BasecampAgentConnector::Verifier.new(basecamp_cli: basecamp_cli),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: basecamp_cli),
         emitter: BasecampAgentConnector::Emitter.new
     end
 
@@ -144,6 +144,6 @@ class BasecampAgentConnector::CLI
     end
 
     def basecamp_cli
-      @basecamp_cli ||= BasecampAgentConnector::BasecampCLI.new(command_runner: command_runner)
+      @basecamp_cli ||= BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner)
     end
 end

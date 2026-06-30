@@ -3,7 +3,7 @@ require "test_helper"
 class EmitterTest < Minitest::Test
   def test_emits_a_single_ndjson_line
     output = StringIO.new
-    event = BasecampAgentConnector::Event.from_payload(sample_payload)
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload)
 
     BasecampAgentConnector::Emitter.new(output: output).emit(event)
 

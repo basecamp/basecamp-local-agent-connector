@@ -1,4 +1,4 @@
-class BasecampAgentConnector::ReviewEvent
+class BasecampAgentConnector::GitHub::ReviewEvent
   ACTIONABLE_STATES = %w[approved changes_requested commented]
 
   def self.from_payload(payload)

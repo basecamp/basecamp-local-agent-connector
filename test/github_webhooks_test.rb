@@ -71,7 +71,7 @@ class GithubWebhooksTest < Minitest::Test
 
   private
     def webhooks(runner, logs = StringIO.new)
-      BasecampAgentConnector::GithubWebhooks.new(github_cli: build_github_cli(runner), logger: logs, wait: ->(_seconds) { })
+      BasecampAgentConnector::GitHub::Webhooks.new(github_cli: build_github_cli(runner), logger: logs, wait: ->(_seconds) { })
     end
 
     def hook_url

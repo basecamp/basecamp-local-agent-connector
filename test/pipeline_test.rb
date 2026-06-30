@@ -68,10 +68,10 @@ class PipelineTest < Minitest::Test
     end
 
     def pipeline(runner)
-      BasecampAgentConnector::Pipeline.new \
+      BasecampAgentConnector::Basecamp::Pipeline.new \
         operator: @operator,
         agent: @agent,
-        verifier: BasecampAgentConnector::Verifier.new(basecamp_cli: build_cli(runner)),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner)),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         logger: @logs
     end

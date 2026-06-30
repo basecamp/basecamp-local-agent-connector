@@ -64,30 +64,32 @@ repos and only the operator's approvals are actionable.
 
 ## Connector plumbing (parallels the Basecamp side)
 
-Each GitHub class mirrors its Basecamp counterpart:
+GitHub-specific code lives under the `GitHub::` namespace, Basecamp-specific code
+under `Basecamp::`, and the transport-agnostic pieces stay top-level — each
+GitHub class mirrors its Basecamp counterpart:
 
-| GitHub side | Basecamp counterpart | Role |
+| `GitHub::` | `Basecamp::` counterpart | Role |
 |---|---|---|
 | `ReviewCLI` (`bin/gh-review`) | `CLI` (`bin/connect`) | Orchestrate funnel → register → listen → teardown |
-| `GithubCLI` | `BasecampCLI` | Wrap the `gh` CLI (`gh api …`) |
-| `GithubWebhooks` | `Webhooks` | Register/delete repo hooks (with retry) |
+| `Client` | `Client` | Wrap the external CLI (`gh` / `basecamp`) |
+| `Webhooks` | `Webhooks` | Register/delete hooks (with retry) |
 | `WebhookSignature` | — (Basecamp has none) | Verify the `X-Hub-Signature-256` HMAC |
-| `ReviewEvent` | `Event` | Parse the `pull_request_review` payload |
-| `ReviewVerifier` | `Verifier` | Re-fetch the review + inline comments |
-| `ReviewPipeline` | `Pipeline` | Verify signature → filter → dedup → re-fetch → emit |
-| `Server`, `Tunnel`, `Emitter`, `CommandRunner` | shared | Reused as-is |
+| `ReviewEvent` | `Event` | Parse the delivery payload |
+| `ReviewVerifier` | `Verifier` | Re-fetch the authoritative record |
+| `ReviewPipeline` | `Pipeline` | Verify → filter → dedup → re-fetch → emit |
+| `Server`, `Tunnel`, `Emitter`, `CommandRunner` | shared (top-level) | Reused as-is |
 
 The flow, per delivery:
 
 1. **Register** a repo webhook for `pull_request_review` pointed at the funnel
    (`gh api repos/{o}/{r}/hooks` with a generated HMAC `secret`), recording its
-   id — `GithubWebhooks`.
+   id — `GitHub::Webhooks`.
 2. **Receive** the POST on the server at `/gh/<path-secret>`, respond 200 fast —
    `Server` hands the handler the raw body + headers.
 3. **Verify** `X-Hub-Signature-256` against the HMAC secret (constant-time);
-   reject otherwise — `WebhookSignature`.
+   reject otherwise — `GitHub::WebhookSignature`.
 4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
-   state, repo, PR number, reviewer, body, inline comments) — `ReviewVerifier` +
+   state, repo, PR number, reviewer, body, inline comments) — `GitHub::ReviewVerifier` +
    `Emitter`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.

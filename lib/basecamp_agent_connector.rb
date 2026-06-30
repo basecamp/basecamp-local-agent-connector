@@ -3,8 +3,7 @@ require "zeitwerk"
 loader = Zeitwerk::Loader.for_gem
 loader.inflector.inflect \
   "cli" => "CLI",
-  "basecamp_cli" => "BasecampCLI",
-  "github_cli" => "GithubCLI",
+  "github" => "GitHub",
   "review_cli" => "ReviewCLI"
 loader.setup
 

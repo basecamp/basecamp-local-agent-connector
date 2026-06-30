@@ -86,11 +86,11 @@ module PayloadHelpers
   end
 
   def operator_identity
-    BasecampAgentConnector::Identity.new(id: 100, email: "operator@example.com")
+    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
   end
 
   def agent_identity(name: "Clawdito", person_id: 200)
-    BasecampAgentConnector::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name, person_id: person_id)
+    BasecampAgentConnector::Basecamp::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name, person_id: person_id)
   end
 
   def envelope(data)
@@ -98,11 +98,11 @@ module PayloadHelpers
   end
 
   def build_cli(command_runner)
-    BasecampAgentConnector::BasecampCLI.new(command_runner: command_runner)
+    BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner)
   end
 
   def build_github_cli(command_runner)
-    BasecampAgentConnector::GithubCLI.new(command_runner: command_runner)
+    BasecampAgentConnector::GitHub::Client.new(command_runner: command_runner)
   end
 
   # A GitHub `pull_request_review` webhook payload.

@@ -37,10 +37,10 @@ class VerifierTest < Minitest::Test
 
   private
     def verifier(runner)
-      BasecampAgentConnector::Verifier.new(basecamp_cli: build_cli(runner))
+      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner))
     end
 
     def event(payload)
-      BasecampAgentConnector::Event.from_payload(payload)
+      BasecampAgentConnector::Basecamp::Event.from_payload(payload)
     end
 end

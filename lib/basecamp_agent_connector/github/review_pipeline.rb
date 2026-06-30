@@ -1,6 +1,6 @@
 require "json"
 
-class BasecampAgentConnector::ReviewPipeline
+class BasecampAgentConnector::GitHub::ReviewPipeline
   def initialize(secret:, verifier:, emitter:, logger: $stderr)
     @secret = secret
     @verifier = verifier
@@ -15,7 +15,7 @@ class BasecampAgentConnector::ReviewPipeline
       return
     end
 
-    event = BasecampAgentConnector::ReviewEvent.from_payload(JSON.parse(body))
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(JSON.parse(body))
 
     if actionable?(event) && fresh?(event)
       emit_if_verified(event)
@@ -26,7 +26,7 @@ class BasecampAgentConnector::ReviewPipeline
 
   private
     def authentic?(body, signature)
-      BasecampAgentConnector::WebhookSignature.valid?(body: body, signature: signature, secret: @secret)
+      BasecampAgentConnector::GitHub::WebhookSignature.valid?(body: body, signature: signature, secret: @secret)
     end
 
     def actionable?(event)

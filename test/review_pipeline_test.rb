@@ -65,9 +65,9 @@ class ReviewPipelineTest < Minitest::Test
     end
 
     def pipeline(runner)
-      BasecampAgentConnector::ReviewPipeline.new \
+      BasecampAgentConnector::GitHub::ReviewPipeline.new \
         secret: @secret,
-        verifier: BasecampAgentConnector::ReviewVerifier.new(github_cli: build_github_cli(runner)),
+        verifier: BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: build_github_cli(runner)),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         logger: @logs
     end

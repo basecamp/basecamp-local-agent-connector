@@ -72,7 +72,7 @@ class WebhooksTest < Minitest::Test
 
   private
     def webhooks(runner, logs = StringIO.new)
-      BasecampAgentConnector::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })
+      BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })
     end
 
     def hook_url

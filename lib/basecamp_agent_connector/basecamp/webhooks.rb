@@ -1,4 +1,4 @@
-class BasecampAgentConnector::Webhooks
+class BasecampAgentConnector::Basecamp::Webhooks
   Registration = Data.define(:project, :id)
 
   def initialize(basecamp_cli:, logger: $stderr, attempts: 3, wait: ->(seconds) { sleep seconds })
@@ -27,7 +27,7 @@ class BasecampAgentConnector::Webhooks
     def register(project:, url:, types:)
       webhook = create_with_retries(project: project, url: url, types: types)
       @registrations << Registration.new(project: project, id: webhook.fetch("id"))
-    rescue BasecampAgentConnector::BasecampCLI::Error => error
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "failed to register webhook for project #{project} after #{@attempts} attempts: #{error.message}"
     end
 
@@ -36,7 +36,7 @@ class BasecampAgentConnector::Webhooks
 
       @attempts.times do |attempt|
         return @basecamp_cli.create_webhook(url: url, project: project, types: types)
-      rescue BasecampAgentConnector::BasecampCLI::Error => error
+      rescue BasecampAgentConnector::Basecamp::Client::Error => error
         last_error = error
         @wait.call(attempt + 1) unless attempt == @attempts - 1
       end
@@ -48,7 +48,7 @@ class BasecampAgentConnector::Webhooks
       unless @basecamp_cli.delete_webhook(id: registration.id, project: registration.project)
         log "failed to delete webhook #{registration.id} for project #{registration.project}"
       end
-    rescue BasecampAgentConnector::BasecampCLI::Error => error
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "failed to delete webhook #{registration.id} for project #{registration.project}: #{error.message}"
     end
 

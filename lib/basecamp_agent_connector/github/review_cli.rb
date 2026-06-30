@@ -2,7 +2,7 @@ require "optparse"
 require "securerandom"
 require "socket"
 
-class BasecampAgentConnector::ReviewCLI
+class BasecampAgentConnector::GitHub::ReviewCLI
   DEFAULT_EVENTS = "pull_request_review"
 
   Options = Data.define(:repos, :events, :port)
@@ -49,7 +49,7 @@ class BasecampAgentConnector::ReviewCLI
       @tunnel = BasecampAgentConnector::Tunnel.new(port: port, command_runner: command_runner)
       webhook_url = "#{@tunnel.start}/gh/#{path_secret}"
 
-      @webhooks = BasecampAgentConnector::GithubWebhooks.new(github_cli: github_cli)
+      @webhooks = BasecampAgentConnector::GitHub::Webhooks.new(github_cli: github_cli)
       @webhooks.register_all(repos: @options.repos, url: webhook_url, secret: hmac_secret, events: events_list)
 
       warn "Listening for #{@options.events} on #{@options.repos.length} repo(s) at #{webhook_url}"
@@ -74,9 +74,9 @@ class BasecampAgentConnector::ReviewCLI
     end
 
     def build_pipeline(hmac_secret)
-      BasecampAgentConnector::ReviewPipeline.new \
+      BasecampAgentConnector::GitHub::ReviewPipeline.new \
         secret: hmac_secret,
-        verifier: BasecampAgentConnector::ReviewVerifier.new(github_cli: github_cli),
+        verifier: BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: github_cli),
         emitter: BasecampAgentConnector::Emitter.new
     end
 
@@ -108,6 +108,6 @@ class BasecampAgentConnector::ReviewCLI
     end
 
     def github_cli
-      @github_cli ||= BasecampAgentConnector::GithubCLI.new(command_runner: command_runner)
+      @github_cli ||= BasecampAgentConnector::GitHub::Client.new(command_runner: command_runner)
     end
 end

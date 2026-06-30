@@ -1,6 +1,6 @@
 require "json"
 
-class BasecampAgentConnector::BasecampCLI
+class BasecampAgentConnector::Basecamp::Client
   class Error < StandardError; end
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp")

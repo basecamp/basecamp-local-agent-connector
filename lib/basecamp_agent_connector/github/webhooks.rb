@@ -1,4 +1,4 @@
-class BasecampAgentConnector::GithubWebhooks
+class BasecampAgentConnector::GitHub::Webhooks
   Registration = Data.define(:repo, :id)
 
   def initialize(github_cli:, logger: $stderr, attempts: 3, wait: ->(seconds) { sleep seconds })
@@ -27,7 +27,7 @@ class BasecampAgentConnector::GithubWebhooks
     def register(repo:, url:, secret:, events:)
       hook = create_with_retries(repo: repo, url: url, secret: secret, events: events)
       @registrations << Registration.new(repo: repo, id: hook.fetch("id"))
-    rescue BasecampAgentConnector::GithubCLI::Error => error
+    rescue BasecampAgentConnector::GitHub::Client::Error => error
       log "failed to register webhook for repo #{repo} after #{@attempts} attempts: #{error.message}"
     end
 
@@ -36,7 +36,7 @@ class BasecampAgentConnector::GithubWebhooks
 
       @attempts.times do |attempt|
         return @github_cli.create_webhook(repo: repo, url: url, secret: secret, events: events)
-      rescue BasecampAgentConnector::GithubCLI::Error => error
+      rescue BasecampAgentConnector::GitHub::Client::Error => error
         last_error = error
         @wait.call(attempt + 1) unless attempt == @attempts - 1
       end
@@ -48,7 +48,7 @@ class BasecampAgentConnector::GithubWebhooks
       unless @github_cli.delete_webhook(repo: registration.repo, id: registration.id)
         log "failed to delete webhook #{registration.id} for repo #{registration.repo}"
       end
-    rescue BasecampAgentConnector::GithubCLI::Error => error
+    rescue BasecampAgentConnector::GitHub::Client::Error => error
       log "failed to delete webhook #{registration.id} for repo #{registration.repo}: #{error.message}"
     end
 

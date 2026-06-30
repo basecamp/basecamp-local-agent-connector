@@ -274,25 +274,36 @@ bundle exec rubocop       # 37signals house style
 ```
 
 The code is a small [Zeitwerk](https://github.com/fxn/zeitwerk)-autoloaded gem
-under `lib/basecamp_agent_connector/`. External commands (`basecamp`,
-`tailscale`) are reached through an injectable **command runner**, so the test
-suite stubs that one subprocess boundary rather than mocking the gem’s own
-classes.
+under `lib/basecamp_agent_connector/`. Transport-agnostic pieces live at the top
+level; the two transports are namespaced under `Basecamp::` and `GitHub::`.
+External commands (`basecamp`, `gh`, `tailscale`) are reached through an
+injectable **command runner**, so the test suite stubs that one subprocess
+boundary rather than mocking the gem’s own classes.
 
 ```
-bin/connect                          # executable shim → CLI.start(ARGV)
+bin/connect                          # shim → Basecamp::CLI.start(ARGV)
+bin/gh-review                        # shim → GitHub::ReviewCLI.start(ARGV)
 lib/basecamp_agent_connector/
-  command_runner   # runs subprocesses; the seam tests stub
-  basecamp_cli     # thin wrapper over the `basecamp` CLI (JSON in/out, profiles)
-  identity         # resolve a Basecamp user by profile (agent / operator)
-  tunnel           # Tailscale Funnel lifecycle (start / reset)
-  webhooks         # register / delete webhooks across projects (with retry)
-  server           # WEBrick server on the secret path; 200-fast
-  event            # payload value object + the filter predicates
-  verifier         # authoritative re-fetch + corroboration
-  pipeline         # pre-filter → dedup → verify → emit
-  emitter          # NDJSON writer
-  cli              # arg parsing + orchestration + signal-driven teardown
+  command_runner   # shared: runs subprocesses; the seam tests stub
+  server           # shared: WEBrick server on the secret path; 200-fast, raw body + headers
+  tunnel           # shared: Tailscale Funnel lifecycle (start / reset)
+  emitter          # shared: NDJSON writer
+  basecamp/        # Basecamp:: — the Basecamp webhook transport
+    cli            #   arg parsing + orchestration + signal-driven teardown
+    client         #   thin wrapper over the `basecamp` CLI (JSON in/out, profiles)
+    identity       #   resolve a Basecamp user by profile (agent / operator)
+    webhooks       #   register / delete webhooks across projects (with retry)
+    event          #   payload value object + the filter predicates
+    verifier       #   authoritative re-fetch + corroboration
+    pipeline       #   pre-filter → dedup → verify → emit
+  github/          # GitHub:: — the PR review-loop transport
+    review_cli         #   arg parsing + orchestration + signal-driven teardown
+    client             #   thin wrapper over the `gh` CLI (JSON in/out)
+    webhooks           #   register / delete repo webhooks (with retry)
+    webhook_signature  #   constant-time X-Hub-Signature-256 HMAC verify
+    review_event       #   pull_request_review payload value object
+    review_verifier    #   re-fetch the review + inline comments
+    review_pipeline    #   verify signature → filter → dedup → re-fetch → emit
 skills/basecamp-connect/SKILL.md     # the /basecamp-connect skill
 config/project_repos.toml            # project → repo mapping
 test/                                # minitest, mirrors lib/

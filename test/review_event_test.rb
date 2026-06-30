@@ -2,7 +2,7 @@ require "test_helper"
 
 class ReviewEventTest < Minitest::Test
   def test_reads_review_and_pull_request_fields
-    event = BasecampAgentConnector::ReviewEvent.from_payload(review_payload)
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload)
 
     assert_equal 7001, event.review_id
     assert_equal "changes_requested", event.review_state
@@ -12,24 +12,24 @@ class ReviewEventTest < Minitest::Test
   end
 
   def test_dedup_id_is_the_review_id
-    assert_equal 7001, BasecampAgentConnector::ReviewEvent.from_payload(review_payload).id
+    assert_equal 7001, BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload).id
   end
 
   def test_submitted_review_with_an_actionable_state_is_actionable
-    event = BasecampAgentConnector::ReviewEvent.from_payload(review_payload)
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload)
 
     assert event.actionable_action?
     assert event.actionable_state?
   end
 
   def test_non_submitted_action_is_not_actionable
-    event = BasecampAgentConnector::ReviewEvent.from_payload(review_payload("action" => "dismissed"))
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("action" => "dismissed"))
 
     refute event.actionable_action?
   end
 
   def test_unknown_state_is_not_actionable
-    event = BasecampAgentConnector::ReviewEvent.from_payload(review_payload("review" => review_hash("state" => "pending")))
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("state" => "pending")))
 
     refute event.actionable_state?
   end
@@ -37,7 +37,7 @@ class ReviewEventTest < Minitest::Test
   def test_emitted_hash_carries_review_and_comments
     payload = review_payload("comments" => [ { "path" => "lib/x.rb", "line" => 3, "body" => "rename this" } ])
 
-    emitted = BasecampAgentConnector::ReviewEvent.from_payload(payload).to_emitted_hash
+    emitted = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(payload).to_emitted_hash
 
     assert_equal "acme/widgets", emitted["repo"]
     assert_equal 12, emitted["pull_number"]

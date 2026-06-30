@@ -4,7 +4,7 @@ require "openssl"
 # (`X-Hub-Signature-256: sha256=<hex>`), computed over the raw request body with
 # the shared secret registered on the hook. Basecamp webhooks carry no signature
 # — this is why the GitHub side can verify authenticity cryptographically.
-class BasecampAgentConnector::WebhookSignature
+class BasecampAgentConnector::GitHub::WebhookSignature
   PREFIX = "sha256="
 
   def self.valid?(body:, signature:, secret:)

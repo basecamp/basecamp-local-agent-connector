@@ -1,6 +1,6 @@
 require "test_helper"
 
-class GithubCLITest < Minitest::Test
+class GithubClientTest < Minitest::Test
   def test_create_webhook_posts_config_and_events_and_parses_id
     runner = FakeCommandRunner.new
     runner.stub "repos/acme/widgets/hooks", stdout: '{"id":888}'
@@ -35,7 +35,7 @@ class GithubCLITest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "pulls/12/reviews/7001", exit_status: 1, stderr: "Not Found"
 
-    assert_raises BasecampAgentConnector::GithubCLI::Error do
+    assert_raises BasecampAgentConnector::GitHub::Client::Error do
       build_github_cli(runner).review(repo: "acme/widgets", pull_number: 12, id: 7001)
     end
   end
