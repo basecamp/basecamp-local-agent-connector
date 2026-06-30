@@ -307,7 +307,9 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   `creator`, (`copy` for copied events).
 - **`kind`**: `"<container>_<action>"`, e.g. `comment_created`,
   `message_created`, `kanban_card_created`, `message_content_changed`. The
-  connector subscribes to `*_created` and `*_content_changed`.
+  connector subscribes to `*_created`, `*_content_changed`, and
+  `*_assignment_changed` (assignment events carry `details.added_person_ids` /
+  `removed_person_ids`).
 - **`recording`**: `id`, `status`, `type` (Ruby class: `Comment`, `Message`,
   `Kanban::Card`, `Todo`, …), `title`, `url` (API JSON), `app_url` (browser),
   `bookmark_url`, `parent` {id,title,type,url,app_url}, `bucket` {id,name,type},
@@ -337,7 +339,7 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Linked identity | Basecamp user id (+ email) for the filter target & reply identity | CLI-authed user (`clawdito`) |
 | Watched projects | Explicit `--project` list (name/URL/ID), required | — (at least one) |
 | Project→repo map | Maps Basecamp project names / app tokens to local repo paths under `~/Work/<org>/<repo>` | heuristic + ask-on-miss |
-| Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card` |
+| Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card, Kanban::Step, Todo` |
 | Local port | WEBrick bind port | unused high port |
 
 ---
@@ -428,7 +430,19 @@ Coverage the suite must include:
 ## Decisions resolved
 
 - Trigger: a real @mention of the **agent** user (a local CLI profile of the
-  same name, validated at startup), authored by the **operator**.
+  same name, validated at startup), authored by the **operator** — **or** the
+  operator **assigning** the agent a card/todo.
+- Assignment trigger: the documented-but-previously-undocumented
+  `todo_assignment_changed` / `kanban_card_assignment_changed` /
+  `kanban_step_assignment_changed` events (bc3 PR #12156). Actionable when
+  authored by the operator **and** `details.added_person_ids` includes the agent
+  — corroborated by re-fetching the recording and confirming the agent is among
+  its current `assignees` (the recording has no "who assigned" field, so the
+  assigner identity rests on the operator-author check + the secret URL path,
+  as with mentions). To receive them, the default subscribed types now include
+  `Todo` and `Kanban::Step` (`Kanban::Card` already covered cards). The dispatched
+  agent acknowledges on the card/todo first, then works the card/todo as the
+  instruction.
 - Reply: post results back **as the agent** (`basecamp comment --profile
   <agent>`). On failure, post an error summary that @mentions the operator.
 - Dedup: in-memory, keyed on `event.id`; always 200-OK fast.

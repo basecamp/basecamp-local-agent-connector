@@ -1,7 +1,13 @@
 require "base64"
 
 class BasecampAgentConnector::Basecamp::Event
-  ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed" ]
+  # Assignment events (`todo_assignment_changed`, `kanban_card_assignment_changed`,
+  # `kanban_step_assignment_changed`) are a second way to trigger the agent: the
+  # operator assigns it a card/todo rather than @mentioning it. Their `details`
+  # carry `added_person_ids` / `removed_person_ids`.
+  ASSIGNMENT_KIND_SUFFIX = "_assignment_changed"
+
+  ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed", ASSIGNMENT_KIND_SUFFIX ]
 
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
@@ -25,6 +31,7 @@ class BasecampAgentConnector::Basecamp::Event
 
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]
+  EMITTED_DETAIL_FIELDS = %w[added_person_ids removed_person_ids]
 
   def self.from_payload(payload)
     new(payload)
@@ -74,8 +81,20 @@ class BasecampAgentConnector::Basecamp::Event
     recording["content"]
   end
 
+  def details
+    @payload["details"] || {}
+  end
+
+  def added_person_ids
+    details["added_person_ids"] || []
+  end
+
   def actionable_kind?
     kind.end_with?(*ACTIONABLE_KIND_SUFFIXES)
+  end
+
+  def assignment_changed?
+    kind.end_with?(ASSIGNMENT_KIND_SUFFIX)
   end
 
   def authored_by?(identity)
@@ -90,12 +109,19 @@ class BasecampAgentConnector::Basecamp::Event
     mentioned_person_ids.include?(agent.person_id)
   end
 
+  def assigns?(agent)
+    return false if agent.person_id.nil?
+
+    assignment_changed? && added_person_ids.include?(agent.person_id)
+  end
+
   def to_emitted_hash
     {
       "event_id" => id,
       "kind" => kind,
       "created_at" => created_at,
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
+      "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS)
     }
   end

@@ -4,8 +4,28 @@ class EventTest < Minitest::Test
   def test_actionable_kind
     assert from_kind("comment_created").actionable_kind?
     assert from_kind("message_content_changed").actionable_kind?
+    assert from_kind("kanban_card_assignment_changed").actionable_kind?
+    assert from_kind("todo_assignment_changed").actionable_kind?
     refute from_kind("comment_archived").actionable_kind?
     refute from_kind(nil).actionable_kind?
+  end
+
+  def test_assigns_the_agent
+    agent = agent_identity(person_id: 200)
+
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload).assigns?(agent)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload("details" => { "added_person_ids" => [ 999 ] })).assigns?(agent)
+    # an assignment removing the agent is not a trigger
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload("details" => { "added_person_ids" => [], "removed_person_ids" => [ 200 ] })).assigns?(agent)
+    # a non-assignment kind never "assigns", even if details somehow carry the id
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("details" => { "added_person_ids" => [ 200 ] })).assigns?(agent)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload).assigns?(agent_identity(person_id: nil))
+  end
+
+  def test_to_emitted_hash_carries_assignment_details
+    emitted = BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload).to_emitted_hash
+
+    assert_equal [ 200 ], emitted["details"]["added_person_ids"]
   end
 
   def test_authored_by_matches_on_email

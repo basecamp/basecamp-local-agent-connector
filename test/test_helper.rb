@@ -70,6 +70,28 @@ module PayloadHelpers
     }.merge(overrides)
   end
 
+  # A `*_assignment_changed` webhook: the operator assigned a card/todo to a
+  # person, with the added/removed Person ids in `details`.
+  def assignment_payload(overrides = {})
+    {
+      "id" => 99002,
+      "kind" => "kanban_card_assignment_changed",
+      "created_at" => "2026-06-28T12:00:00Z",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "details" => { "added_person_ids" => [ 200 ], "removed_person_ids" => [] },
+      "recording" => assigned_recording
+    }.merge(overrides)
+  end
+
+  def assigned_recording(overrides = {})
+    sample_recording(
+      "type" => "Kanban::Card",
+      "content" => "<p>Fix the date picker, it is off by one.</p>",
+      "creator" => { "id" => 777, "name" => "Someone Else", "email_address" => "someone@example.com" },
+      "assignees" => [ { "id" => 200, "name" => "Clawdito" } ]
+    ).merge(overrides)
+  end
+
   # A webhook delivers a mention as an unexpanded attachment: just the SGID
   # (which encodes the Person gid) and content-type, with no rendered name.
   def mention_html(person_id:)

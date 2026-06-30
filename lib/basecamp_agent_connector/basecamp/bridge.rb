@@ -48,7 +48,7 @@ class BasecampAgentConnector::Basecamp::Bridge
       @pipeline ||= BasecampAgentConnector::Basecamp::Pipeline.new \
         operator: @operator,
         agent: @agent,
-        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent),
         emitter: @emitter
     end
 

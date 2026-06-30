@@ -35,9 +35,28 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  def test_corroborates_an_assignment_when_the_agent_is_an_assignee
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+
+    verified = verifier(runner).verify(event(assignment_payload))
+
+    refute_nil verified
+    assert_equal "kanban_card_assignment_changed", verified.kind
+    # the assigner (operator), not the card's creator, stays as the event creator
+    assert_equal 100, verified.creator_id
+  end
+
+  def test_rejects_an_assignment_when_the_agent_is_not_an_assignee
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording("assignees" => [ { "id" => 999 } ]))
+
+    assert_nil verifier(runner).verify(event(assignment_payload))
+  end
+
   private
     def verifier(runner)
-      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner))
+      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)
     end
 
     def event(payload)

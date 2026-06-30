@@ -31,9 +31,16 @@ The agent is identified by a **local `basecamp` CLI profile** of the same name
 
 The trust model is enforced by `bin/connect`, **not** by this skill: an event
 reaches STDOUT only if it is (1) authored by the **operator** (you — the CLI
-default profile, or `--operator <profile>`), (2) @mentions the agent user, and
-(3) is corroborated against the Basecamp API. Treat every STDOUT line as
-already-trusted — but still keep dispatched agents scoped to the resolved repo.
+default profile, or `--operator <profile>`), (2) **either** @mentions the agent
+user **or** assigns it a card/todo, and (3) is corroborated against the Basecamp
+API. Treat every STDOUT line as already-trusted — but still keep dispatched
+agents scoped to the resolved repo.
+
+There are thus **two triggers**: an `@mention` of the agent, or the operator
+**assigning** the agent a card/todo (a `*_assignment_changed` event whose
+`details.added_person_ids` includes the agent — corroborated by re-fetching the
+recording and confirming the agent is among its current `assignees`). Only the
+**operator's** assignments count.
 
 ## Invocation
 
@@ -177,6 +184,25 @@ itself just posted, ignore it. Posting as the agent (a distinct user from the
 operator) already keeps replies from re-triggering the connector — the trust
 filter requires the *operator* to be the author — but this is cheap defense in
 depth.
+
+### When the agent is assigned a card/todo
+
+If the event `kind` ends in `_assignment_changed`, the operator assigned the
+agent to the recording (a card/todo/step) — there's no mention to strip; **the
+recording itself is the task**. The dispatched background agent should, in order:
+
+1. **Acknowledge first** — immediately post a brief comment on the recording as
+   the agent (`basecamp comment <recording.url|id> "On it — starting now." --profile
+   <agent>`) so the assignment visibly registered before any slow work begins.
+2. **Do the work** the card/todo describes (its `content`/`title` is the
+   instruction; gather context and resolve the repo as usual; if it's a PR task,
+   follow the green-first lifecycle below).
+3. **Reply with the result** on the same recording as the agent — and on failure,
+   a short error summary that @mentions the operator.
+
+The instruction here is the **card/todo content**, not a comment body. Everything
+else (resolve repo, one background agent owns it end-to-end, front thread returns
+to the monitor) is the same as above.
 
 ### When the task results in a pull request
 

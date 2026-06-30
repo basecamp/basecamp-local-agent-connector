@@ -18,7 +18,11 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
   private
     def actionable?(event)
-      event.actionable_kind? && event.authored_by?(@operator) && event.mentions?(@agent)
+      event.actionable_kind? && event.authored_by?(@operator) && targets_agent?(event)
+    end
+
+    def targets_agent?(event)
+      event.mentions?(@agent) || event.assigns?(@agent)
     end
 
     def fresh?(event)

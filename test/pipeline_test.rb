@@ -60,6 +60,31 @@ class PipelineTest < Minitest::Test
     assert_match(/not corroborated/, @logs.string)
   end
 
+  def test_emits_for_an_assignment_of_the_agent_by_the_operator
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+
+    pipeline(runner).process(assignment_payload)
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "kanban_card_assignment_changed", JSON.parse(@output.string)["kind"]
+  end
+
+  def test_ignores_an_assignment_made_by_a_non_operator
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(assignment_payload("creator" => { "email_address" => "someone@example.com" }))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_ignores_an_assignment_that_does_not_add_the_agent
+    pipeline(FakeCommandRunner.new).process(assignment_payload("details" => { "added_person_ids" => [ 999 ] }))
+
+    assert_empty @output.string
+  end
+
   private
     def corroborating_runner
       runner = FakeCommandRunner.new
@@ -71,7 +96,7 @@ class PipelineTest < Minitest::Test
       BasecampAgentConnector::Basecamp::Pipeline.new \
         operator: @operator,
         agent: @agent,
-        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner)),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         logger: @logs
     end
