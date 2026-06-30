@@ -157,8 +157,10 @@ everything it needs to finish **without the front thread**:
 Instruct that background agent to, in order:
 
 1. **Acknowledge immediately with a boost** — before any slow work, boost the
-   originating recording with `On it!` **as the agent** so the mention visibly
-   registered (a boost is a lightweight reaction, ≤16 chars):
+   originating recording (comment, message, card, **or** todo) with `On it!` **as
+   the agent** so the trigger visibly registered (a boost is a lightweight
+   reaction, ≤16 chars). This is the ack for **every** trigger — mentions and
+   assignments alike:
    ```bash
    basecamp boost create <recording.url|id> "On it!" --profile <agent>
    ```
@@ -197,11 +199,10 @@ If the event `kind` ends in `_assignment_changed`, the operator assigned the
 agent to the recording (a card/todo/step) — there's no mention to strip; **the
 recording itself is the task**. The dispatched background agent should, in order:
 
-1. **Acknowledge first with a comment** — immediately post a brief comment on the
-   recording as the agent (`basecamp comment <recording.url|id> "On it — starting
-   now." --profile <agent>`) so the assignment visibly registered before any slow
-   work begins. (A *comment* here, not a boost — being assigned a card/todo merits
-   a visible acknowledgement on it; a plain @mention gets the lighter boost.)
+1. **Acknowledge first with a boost** — same as for a mention: boost the
+   recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
+   "On it!" --profile <agent>`). Boosts work on todos and cards too, so a boost is
+   the single ack for both triggers.
 2. **Do the work** the card/todo describes (its `content`/`title` is the
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).

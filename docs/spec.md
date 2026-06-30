@@ -441,8 +441,9 @@ Coverage the suite must include:
   assigner identity rests on the operator-author check + the secret URL path,
   as with mentions). To receive them, the default subscribed types now include
   `Todo` and `Kanban::Step` (`Kanban::Card` already covered cards). The dispatched
-  agent acknowledges on the card/todo first, then works the card/todo as the
-  instruction.
+  agent acknowledges by **boosting** the recording with `On it!` (the single ack
+  for both triggers — boosts work on todos and cards too), then works the
+  card/todo as the instruction.
 - Reply: post results back **as the agent** (`basecamp comment --profile
   <agent>`). On failure, post an error summary that @mentions the operator.
 - Dedup: in-memory, keyed on `event.id`; always 200-OK fast.
