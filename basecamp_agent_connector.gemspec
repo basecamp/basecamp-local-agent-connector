@@ -7,7 +7,7 @@ Gem::Specification.new do |spec|
   spec.summary = "Bridge Basecamp webhooks to local Claude Code agents"
   spec.description = "Exposes a local webhook endpoint via Tailscale Funnel, registers it as a " \
     "Basecamp webhook, and emits trusted, self-authored, trigger-matched events for a local agent to act on."
-  spec.homepage = "https://github.com/jorgemanrubia/basecamp-local-agent-connector"
+  spec.homepage = "https://github.com/basecamp/basecamp-local-agent-connector"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.4"
 

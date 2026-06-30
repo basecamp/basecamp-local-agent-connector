@@ -7,7 +7,7 @@ agents from Basecamp via the connector bridge (`bin/connect`).
 ## Install
 
 ```bash
-npx skills add jorgemanrubia/basecamp-local-agent-connector
+npx skills add basecamp/basecamp-local-agent-connector
 ```
 
 This installs the skill content. The skill also needs the connector runtime

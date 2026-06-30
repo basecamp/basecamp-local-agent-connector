@@ -33,7 +33,7 @@ You need three things in place:
 1. **The skill** — install it into Claude Code:
 
    ```bash
-   npx skills add jorgemanrubia/basecamp-local-agent-connector
+   npx skills add basecamp/basecamp-local-agent-connector
    ```
 
    (Or just run Claude Code from a clone of this repo — the skill is
@@ -42,7 +42,7 @@ You need three things in place:
 2. **The runtime** — clone the repo and install dependencies:
 
    ```bash
-   git clone https://github.com/jorgemanrubia/basecamp-local-agent-connector
+   git clone https://github.com/basecamp/basecamp-local-agent-connector
    cd basecamp-local-agent-connector
    bin/setup        # bundle install + checks for the `basecamp` and `tailscale` CLIs
    ```
