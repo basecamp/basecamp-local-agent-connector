@@ -213,6 +213,25 @@ The instruction here is the **card/todo content**, not a comment body. Everythin
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
 
+### Validate a finished body of work with `bin/ci` (in the background)
+
+Whenever a coherent body of work is finished — the initial implementation, a
+round of changes, a fix, a review-feedback pass — validate it by running the
+repo's `bin/ci` **in the background** (non-blocking) before reporting done.
+Aggregate as much as possible into a single run: don't re-run after every small
+edit, but as a general rule run `bin/ci` once at the **end** of the body of work.
+Running it in the background keeps the agent free and surfaces failures without
+stalling; fix anything it flags before you reply "done."
+
+```bash
+bin/ci --force > /tmp/ci-<branch>.log 2>&1; echo "EXIT=$?" >> /tmp/ci-<branch>.log   # background
+```
+
+PR tasks are stricter — they follow the green-first lifecycle below, where
+`bin/ci` must pass (and remote checks too) *before* the work is reported. This
+background-`bin/ci` rule is the baseline for all other work (e.g. a direct change
+that's committed and deployed without a PR): still run `bin/ci` at the end.
+
 ### When the task results in a pull request
 
 Some instructions are "open a PR for X." For these the background agent follows a
