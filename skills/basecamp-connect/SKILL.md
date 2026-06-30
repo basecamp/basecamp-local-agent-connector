@@ -156,15 +156,21 @@ everything it needs to finish **without the front thread**:
 
 Instruct that background agent to, in order:
 
-1. **Gather context from Basecamp** — it is the context store; the event is just
+1. **Acknowledge immediately with a boost** — before any slow work, boost the
+   originating recording with `On it!` **as the agent** so the mention visibly
+   registered (a boost is a lightweight reaction, ≤16 chars):
+   ```bash
+   basecamp boost create <recording.url|id> "On it!" --profile <agent>
+   ```
+2. **Gather context from Basecamp** — it is the context store; the event is just
    the trigger + pointer:
    ```bash
    basecamp show <recording.app_url> -j          # the recording itself
    basecamp show <recording.parent.app_url> -j   # the card/message it lives in
    # plus the thread/comments and the project as needed
    ```
-2. **Do the requested work** in the repo.
-3. **Reply on the originating recording as the agent** — commenting with the
+3. **Do the requested work** in the repo.
+4. **Reply on the originating recording as the agent** — commenting with the
    agent's profile so the reply posts as the agent user:
    ```bash
    basecamp comment <recording.url|id> "<body>" --profile <agent>
@@ -191,9 +197,11 @@ If the event `kind` ends in `_assignment_changed`, the operator assigned the
 agent to the recording (a card/todo/step) — there's no mention to strip; **the
 recording itself is the task**. The dispatched background agent should, in order:
 
-1. **Acknowledge first** — immediately post a brief comment on the recording as
-   the agent (`basecamp comment <recording.url|id> "On it — starting now." --profile
-   <agent>`) so the assignment visibly registered before any slow work begins.
+1. **Acknowledge first with a comment** — immediately post a brief comment on the
+   recording as the agent (`basecamp comment <recording.url|id> "On it — starting
+   now." --profile <agent>`) so the assignment visibly registered before any slow
+   work begins. (A *comment* here, not a boost — being assigned a card/todo merits
+   a visible acknowledgement on it; a plain @mention gets the lighter boost.)
 2. **Do the work** the card/todo describes (its `content`/`title` is the
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).
