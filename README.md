@@ -128,6 +128,31 @@ The bridge is dumb-and-safe; the driver is smart-and-contextual. You can run
 
 ---
 
+## Security mechanisms
+
+What `bin/connect` has in place, at a glance:
+
+- **Operator-only triggering** — an event acts only when its creator is the
+  operator (the CLI default profile, or `--operator <profile>`), matched by email.
+- **Mention gating** — the recording must contain a real Basecamp mention
+  *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
+  the agent's Person id encoded in the mention SGID.
+- **API corroboration** — every event is re-fetched from the Basecamp API and the
+  **authoritative fetched copy is what gets acted on**, never the raw POST body.
+- **Secret webhook path** — the server accepts only `POST /hook/<secret>`, where
+  `<secret>` is a fresh 128-bit random token generated per run; every other path
+  returns 404.
+- **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
+  ingress is the Tailscale Funnel over HTTPS.
+- **Replay de-duplication** — events are de-duplicated by id within a run.
+- **No reply loop** — replies post as the agent (a distinct user), so they fail
+  the operator-author check and can't re-trigger the connector; startup warns if
+  the agent and operator resolve to the same user.
+- **Ephemeral exposure** — the funnel and per-project webhooks exist only while
+  the process runs and are torn down on exit.
+
+---
+
 ## Trust & security model
 
 A webhook payload is attacker-influenceable text that flows into an agent which
