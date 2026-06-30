@@ -71,18 +71,18 @@ basecamp-local-agent-connector/
 ├── Rakefile                           # test + lint tasks
 ├── .rubocop.yml                       # inherits 37signals house style (copied from bc3)
 ├── bin/
-│   ├── connect                        # executable shim → Basecamp::CLI
-│   └── gh-review                      # executable shim → GitHub::ReviewCLI
+│   └── connect                        # executable shim → Connector (Basecamp + GitHub)
 ├── lib/
 │   ├── basecamp_agent_connector.rb    # top-level require + version + autoloads
 │   └── basecamp_agent_connector/
 │       ├── version.rb
+│       ├── connector.rb               # unified orchestrator: one funnel + one multi-route server
 │       ├── command_runner.rb          # shared: runs subprocesses (the test seam)
-│       ├── server.rb                  # shared: WEBrick server, secret path, raw POST handler
+│       ├── server.rb                  # shared: WEBrick server, path→handler routes, raw POST handler
 │       ├── tunnel.rb                  # shared: Tailscale Funnel lifecycle (start/reset)
 │       ├── emitter.rb                 # shared: NDJSON STDOUT writer
 │       ├── basecamp/                  # Basecamp:: — the Basecamp webhook transport
-│       │   ├── cli.rb                 #   arg parsing, wires startup → listen → teardown
+│       │   ├── bridge.rb              #   one route: secret path, register webhooks, handler, teardown
 │       │   ├── client.rb              #   thin wrapper over the `basecamp` CLI (JSON in/out)
 │       │   ├── identity.rb            #   resolve a Basecamp identity by profile (agent / operator)
 │       │   ├── webhooks.rb            #   register/delete webhooks across all projects
@@ -90,7 +90,7 @@ basecamp-local-agent-connector/
 │       │   ├── verifier.rb            #   authoritative Basecamp API verification
 │       │   └── pipeline.rb            #   pre-filter → dedup → verify → emit orchestration
 │       └── github/                    # GitHub:: — the PR review-loop transport
-│           ├── review_cli.rb          #   arg parsing, wires startup → listen → teardown
+│           ├── bridge.rb              #   one route: secret path + HMAC, register repo hooks, handler, teardown
 │           ├── client.rb              #   thin wrapper over the `gh` CLI (JSON in/out)
 │           ├── webhooks.rb            #   register/delete repo webhooks
 │           ├── webhook_signature.rb   #   constant-time X-Hub-Signature-256 HMAC verify

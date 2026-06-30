@@ -203,11 +203,21 @@ green** — getting CI green is part of finishing the task, not a follow-up:
 Once the PR is up and green, reviews are handled **event-driven via a GitHub
 `pull_request_review` webhook**, not by an agent sitting in a poll loop: a human
 review is unbounded latency, an idle LLM agent is the wrong tool for it, and an
-in-session agent would die when the session ends. Run the companion connector
-**`bin/gh-review <owner/repo>`** — it opens a Tailscale Funnel, registers the
-repo webhook, and emits one NDJSON review event per delivery, exactly like
-`bin/connect` does for Basecamp. Watch it the same way (background + persistent
-monitor) and dispatch a fresh agent per event. Branch on `state`:
+in-session agent would die when the session ends. **`bin/connect` is unified** —
+the same process that watches Basecamp also watches GitHub repos, over the
+**same funnel**, when you pass `--repo`:
+
+```bash
+bin/connect @Clawdito --project "<project>" --repo <owner>/<repo>
+```
+
+It emits GitHub review events on the same STDOUT as Basecamp events (a review
+event carries `review_id`/`repo`/`state` instead of `recording`), so the one
+persistent monitor you already armed picks them up too. For a repo created
+**after** the connector started (the common PR case), don't restart it — the
+connector logs a `/gh/<secret>` endpoint + HMAC secret at startup; register a
+`pull_request_review` webhook on the new repo against that endpoint (one webhook
+per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
 
 - **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
@@ -217,8 +227,9 @@ monitor) and dispatch a fresh agent per event. Branch on `state`:
 
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API
-re-fetch. The connector-side plumbing that backs this loop (register the repo
-hook, verify the signature, parse `pull_request_review`, emit) is specced in
+re-fetch. The connector-side plumbing that backs this loop (the unified
+`Connector` + the GitHub `Bridge` route: register the repo hook, verify the
+signature, parse `pull_request_review`, emit) is specced in
 [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md).
 
 ## Cleanup / lifecycle — always tear down

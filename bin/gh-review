@@ -1,5 +1,0 @@
-#!/usr/bin/env ruby
-
-require_relative "../lib/basecamp_agent_connector"
-
-BasecampAgentConnector::GitHub::ReviewCLI.start(ARGV)
