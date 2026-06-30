@@ -80,8 +80,9 @@ the agent runs and replies.
 
 - Watch several projects: repeat `--project`.
 - `--project` takes a **name, URL, or ID** — the CLI resolves it.
-- `--project` is **required**: Basecamp webhooks are per-project; there is no
-  account-wide webhook.
+- Watch GitHub PR reviews too, over the **same** funnel: add `--repo <owner>/<repo>`
+  (repeatable). You need at least one `--project` or `--repo`; `--project` also
+  needs an `@agent`.
 
 ### Stopping (and why it matters)
 
@@ -281,15 +282,15 @@ injectable **command runner**, so the test suite stubs that one subprocess
 boundary rather than mocking the gem’s own classes.
 
 ```
-bin/connect                          # shim → Basecamp::CLI.start(ARGV)
-bin/gh-review                        # shim → GitHub::ReviewCLI.start(ARGV)
+bin/connect                          # shim → Connector.start(ARGV) — Basecamp and/or GitHub
 lib/basecamp_agent_connector/
+  connector        # unified: one funnel + one multi-route server, mounts each transport's bridge
   command_runner   # shared: runs subprocesses; the seam tests stub
-  server           # shared: WEBrick server on the secret path; 200-fast, raw body + headers
+  server           # shared: WEBrick server, path→handler routes; 200-fast, raw body + headers
   tunnel           # shared: Tailscale Funnel lifecycle (start / reset)
   emitter          # shared: NDJSON writer
   basecamp/        # Basecamp:: — the Basecamp webhook transport
-    cli            #   arg parsing + orchestration + signal-driven teardown
+    bridge         #   one route: secret path, register webhooks, handler, teardown
     client         #   thin wrapper over the `basecamp` CLI (JSON in/out, profiles)
     identity       #   resolve a Basecamp user by profile (agent / operator)
     webhooks       #   register / delete webhooks across projects (with retry)
@@ -297,7 +298,7 @@ lib/basecamp_agent_connector/
     verifier       #   authoritative re-fetch + corroboration
     pipeline       #   pre-filter → dedup → verify → emit
   github/          # GitHub:: — the PR review-loop transport
-    review_cli         #   arg parsing + orchestration + signal-driven teardown
+    bridge             #   one route: secret path + HMAC, register repo hooks, handler, teardown
     client             #   thin wrapper over the `gh` CLI (JSON in/out)
     webhooks           #   register / delete repo webhooks (with retry)
     webhook_signature  #   constant-time X-Hub-Signature-256 HMAC verify

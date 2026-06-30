@@ -4,18 +4,28 @@ When a `/basecamp-connect` task opens a pull request, the agent gets it **green
 before reporting done** (see `SKILL.md` → "When the task results in a pull
 request"). After that, the PR's **reviews** drive a follow-up loop: address
 requested changes, or land on approval. This note describes how the connector
-ingests those reviews — **implemented as `bin/gh-review`**.
+ingests those reviews — **implemented as a route on the unified `bin/connect`**.
 
 ## Usage
 
+`bin/connect` is unified: one process, one Tailscale Funnel, one server that
+multiplexes Basecamp and GitHub by path. Watch repos by passing `--repo`,
+alongside (or instead of) Basecamp `--project`:
+
 ```bash
-bin/gh-review <owner/repo> [<owner/repo> ...] [--events EVENTS] [--port PORT]
+bin/connect @Clawdito --project "BC5 Calendar" --repo basecamp/bc3   # both at once
+bin/connect --repo basecamp/bc3 --repo acme/widgets                  # GitHub only
 ```
 
-It opens a Tailscale Funnel, registers a GitHub webhook on each repo, and prints
-one NDJSON line per trusted, corroborated review to STDOUT — watch it exactly
-like `bin/connect` and dispatch a fresh agent per event. It tears the webhooks
-and funnel down on `SIGINT`/`SIGTERM`. Default event: `pull_request_review`.
+It registers a `pull_request_review` webhook on each repo (against the shared
+funnel) and prints one NDJSON line per trusted, corroborated review to STDOUT —
+the same stream as Basecamp events — and tears every webhook + the funnel down on
+`SIGINT`/`SIGTERM`. Default event: `pull_request_review`.
+
+Because it's one funnel for everything, a repo created **after** startup doesn't
+need a second process: the GitHub route logs its `/gh/<secret>` endpoint + HMAC
+secret, and you register a webhook on the new repo against that endpoint (one
+webhook per PR's repo, all multiplexed onto the single funnel).
 
 ## Why webhooks, not polling
 
@@ -64,20 +74,22 @@ repos and only the operator's approvals are actionable.
 
 ## Connector plumbing (parallels the Basecamp side)
 
-GitHub-specific code lives under the `GitHub::` namespace, Basecamp-specific code
-under `Basecamp::`, and the transport-agnostic pieces stay top-level — each
-GitHub class mirrors its Basecamp counterpart:
+The top-level `Connector` owns the one funnel + one server and mounts each
+transport as a `Bridge` (a route: secret path + webhook registration + handler +
+teardown). GitHub-specific code lives under `GitHub::`, Basecamp-specific under
+`Basecamp::`, and the transport-agnostic pieces stay top-level — each GitHub
+class mirrors its Basecamp counterpart:
 
 | `GitHub::` | `Basecamp::` counterpart | Role |
 |---|---|---|
-| `ReviewCLI` (`bin/gh-review`) | `CLI` (`bin/connect`) | Orchestrate funnel → register → listen → teardown |
+| `Bridge` | `Bridge` | One route on the shared server: secret path, register webhooks, handler, teardown |
 | `Client` | `Client` | Wrap the external CLI (`gh` / `basecamp`) |
 | `Webhooks` | `Webhooks` | Register/delete hooks (with retry) |
 | `WebhookSignature` | — (Basecamp has none) | Verify the `X-Hub-Signature-256` HMAC |
 | `ReviewEvent` | `Event` | Parse the delivery payload |
 | `ReviewVerifier` | `Verifier` | Re-fetch the authoritative record |
 | `ReviewPipeline` | `Pipeline` | Verify → filter → dedup → re-fetch → emit |
-| `Server`, `Tunnel`, `Emitter`, `CommandRunner` | shared (top-level) | Reused as-is |
+| `Connector`, `Server`, `Tunnel`, `Emitter`, `CommandRunner` | shared (top-level) | One funnel + one multi-route server for both |
 
 The flow, per delivery:
 

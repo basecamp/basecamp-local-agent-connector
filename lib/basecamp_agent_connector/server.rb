@@ -7,16 +7,17 @@ class BasecampAgentConnector::Server
     end
   end
 
-  def initialize(port:, path:, handler:, logger: $stderr)
+  def initialize(port:, routes:, logger: $stderr)
     @port = port
-    @path = path
-    @handler = handler
+    @routes = routes
     @logger = logger
   end
 
   def start
     @webrick = build_webrick
-    @webrick.mount_proc(@path) { |request, response| handle(request, response) }
+    @routes.each do |path, handler|
+      @webrick.mount_proc(path) { |request, response| handle(request, response, handler) }
+    end
     @webrick.start
   end
 
@@ -33,9 +34,9 @@ class BasecampAgentConnector::Server
         AccessLog: []
     end
 
-    def handle(request, response)
+    def handle(request, response, handler)
       if request.request_method == "POST"
-        @handler.call(Request.new(body: request.body, headers: request.header))
+        handler.call(Request.new(body: request.body, headers: request.header))
         response.status = 200
       else
         response.status = 404

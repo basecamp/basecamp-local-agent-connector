@@ -2,5 +2,5 @@
 
 require_relative "../lib/basecamp_agent_connector"
 
-BasecampAgentConnector::Basecamp::CLI.start(ARGV)
+BasecampAgentConnector::Connector.start(ARGV)
 
