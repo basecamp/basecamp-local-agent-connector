@@ -203,10 +203,11 @@ green** — getting CI green is part of finishing the task, not a follow-up:
 Once the PR is up and green, reviews are handled **event-driven via a GitHub
 `pull_request_review` webhook**, not by an agent sitting in a poll loop: a human
 review is unbounded latency, an idle LLM agent is the wrong tool for it, and an
-in-session agent would die when the session ends. The connector registers a repo
-webhook on the **same Tailscale Funnel it already runs** and emits a review event
-just like it emits Basecamp events; the front thread dispatches a fresh agent per
-event. Branch on `review.state`:
+in-session agent would die when the session ends. Run the companion connector
+**`bin/gh-review <owner/repo>`** — it opens a Tailscale Funnel, registers the
+repo webhook, and emits one NDJSON review event per delivery, exactly like
+`bin/connect` does for Basecamp. Watch it the same way (background + persistent
+monitor) and dispatch a fresh agent per event. Branch on `state`:
 
 - **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
   inline comments) from the API (the webhook is a trigger + pointer, exactly like

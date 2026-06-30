@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir["lib/**/*.rb", "bin/*", "skills/**/*", "README.md", "docs/**/*"]
   spec.bindir = "bin"
-  spec.executables = [ "connect" ]
+  spec.executables = [ "connect", "gh-review" ]
   spec.require_paths = [ "lib" ]
 
   spec.add_dependency "webrick", "~> 1.9"

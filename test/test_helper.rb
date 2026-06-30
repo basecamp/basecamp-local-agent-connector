@@ -4,6 +4,7 @@ require "basecamp_agent_connector"
 require "minitest/autorun"
 require "base64"
 require "json"
+require "openssl"
 require "stringio"
 
 class FakeCommandRunner
@@ -98,6 +99,34 @@ module PayloadHelpers
 
   def build_cli(command_runner)
     BasecampAgentConnector::BasecampCLI.new(command_runner: command_runner)
+  end
+
+  def build_github_cli(command_runner)
+    BasecampAgentConnector::GithubCLI.new(command_runner: command_runner)
+  end
+
+  # A GitHub `pull_request_review` webhook payload.
+  def review_payload(overrides = {})
+    {
+      "action" => "submitted",
+      "review" => review_hash,
+      "pull_request" => { "number" => 12, "html_url" => "https://github.com/acme/widgets/pull/12" },
+      "repository" => { "full_name" => "acme/widgets" }
+    }.merge(overrides)
+  end
+
+  def review_hash(overrides = {})
+    {
+      "id" => 7001,
+      "state" => "changes_requested",
+      "body" => "please fix the naming",
+      "user" => { "login" => "octocat" },
+      "html_url" => "https://github.com/acme/widgets/pull/12#pullrequestreview-7001"
+    }.merge(overrides)
+  end
+
+  def sign(body, secret)
+    "sha256=" + OpenSSL::HMAC.hexdigest("SHA256", secret, body)
   end
 
   def free_port

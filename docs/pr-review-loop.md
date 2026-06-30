@@ -1,10 +1,21 @@
-# PR review loop — GitHub webhook ingestion (design)
+# PR review loop — GitHub webhook ingestion
 
 When a `/basecamp-connect` task opens a pull request, the agent gets it **green
 before reporting done** (see `SKILL.md` → "When the task results in a pull
 request"). After that, the PR's **reviews** drive a follow-up loop: address
-requested changes, or land on approval. This note specs how the connector
-ingests those reviews.
+requested changes, or land on approval. This note describes how the connector
+ingests those reviews — **implemented as `bin/gh-review`**.
+
+## Usage
+
+```bash
+bin/gh-review <owner/repo> [<owner/repo> ...] [--events EVENTS] [--port PORT]
+```
+
+It opens a Tailscale Funnel, registers a GitHub webhook on each repo, and prints
+one NDJSON line per trusted, corroborated review to STDOUT — watch it exactly
+like `bin/connect` and dispatch a fresh agent per event. It tears the webhooks
+and funnel down on `SIGINT`/`SIGTERM`. Default event: `pull_request_review`.
 
 ## Why webhooks, not polling
 
@@ -53,19 +64,42 @@ repos and only the operator's approvals are actionable.
 
 ## Connector plumbing (parallels the Basecamp side)
 
-The shapes already exist in `lib/`; the GitHub path adds analogues:
+Each GitHub class mirrors its Basecamp counterpart:
+
+| GitHub side | Basecamp counterpart | Role |
+|---|---|---|
+| `ReviewCLI` (`bin/gh-review`) | `CLI` (`bin/connect`) | Orchestrate funnel → register → listen → teardown |
+| `GithubCLI` | `BasecampCLI` | Wrap the `gh` CLI (`gh api …`) |
+| `GithubWebhooks` | `Webhooks` | Register/delete repo hooks (with retry) |
+| `WebhookSignature` | — (Basecamp has none) | Verify the `X-Hub-Signature-256` HMAC |
+| `ReviewEvent` | `Event` | Parse the `pull_request_review` payload |
+| `ReviewVerifier` | `Verifier` | Re-fetch the review + inline comments |
+| `ReviewPipeline` | `Pipeline` | Verify signature → filter → dedup → re-fetch → emit |
+| `Server`, `Tunnel`, `Emitter`, `CommandRunner` | shared | Reused as-is |
+
+The flow, per delivery:
 
 1. **Register** a repo webhook for `pull_request_review` pointed at the funnel
-   (`gh api repos/{o}/{r}/hooks` with a generated `secret`), recording its id —
-   like `webhooks.rb` does for Basecamp.
-2. **Receive** the POST on the existing server (a `/gh/<secret>` path), respond
-   200 fast.
-3. **Verify** `X-Hub-Signature-256` against the secret; reject otherwise.
-4. **Re-fetch + emit** the whole review as one NDJSON event (PR number, repo,
-   `review.state`, body, inline comments, author) — a `verifier.rb`/`emitter.rb`
-   analogue.
+   (`gh api repos/{o}/{r}/hooks` with a generated HMAC `secret`), recording its
+   id — `GithubWebhooks`.
+2. **Receive** the POST on the server at `/gh/<path-secret>`, respond 200 fast —
+   `Server` hands the handler the raw body + headers.
+3. **Verify** `X-Hub-Signature-256` against the HMAC secret (constant-time);
+   reject otherwise — `WebhookSignature`.
+4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
+   state, repo, PR number, reviewer, body, inline comments) — `ReviewVerifier` +
+   `Emitter`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.
+
+### Emitted STDOUT format
+
+```json
+{"review_id":7001,"action":"submitted","state":"changes_requested",
+ "repo":"acme/widgets","pull_number":12,"reviewer":"octocat",
+ "body":"please fix the naming","html_url":"https://github.com/acme/widgets/pull/12#pullrequestreview-7001",
+ "comments":[{"path":"lib/x.rb","line":3,"body":"rename this"}]}
+```
 
 ## What the dispatched agent does
 

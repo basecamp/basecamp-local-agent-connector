@@ -1,17 +1,22 @@
 require "webrick"
-require "json"
 
 class BasecampAgentConnector::Server
-  def initialize(port:, secret:, handler:, logger: $stderr)
+  Request = Data.define(:body, :headers) do
+    def header(name)
+      Array(headers[name.downcase]).first
+    end
+  end
+
+  def initialize(port:, path:, handler:, logger: $stderr)
     @port = port
-    @secret = secret
+    @path = path
     @handler = handler
     @logger = logger
   end
 
   def start
     @webrick = build_webrick
-    @webrick.mount_proc("/hook/#{@secret}") { |request, response| handle(request, response) }
+    @webrick.mount_proc(@path) { |request, response| handle(request, response) }
     @webrick.start
   end
 
@@ -30,17 +35,11 @@ class BasecampAgentConnector::Server
 
     def handle(request, response)
       if request.request_method == "POST"
-        accept(request.body)
+        @handler.call(Request.new(body: request.body, headers: request.header))
         response.status = 200
       else
         response.status = 404
       end
-    end
-
-    def accept(body)
-      @handler.call(JSON.parse(body))
-    rescue JSON::ParserError => error
-      log "ignored malformed payload: #{error.message}"
     end
 
     def log(message)

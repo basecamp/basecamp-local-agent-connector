@@ -1,6 +1,7 @@
 require "optparse"
 require "securerandom"
 require "socket"
+require "json"
 
 class BasecampAgentConnector::CLI
   DEFAULT_TYPES = "Comment,Message,Kanban::Card"
@@ -92,7 +93,7 @@ class BasecampAgentConnector::CLI
     end
 
     def listen(operator:, agent:, port:, secret:)
-      @server = BasecampAgentConnector::Server.new(port: port, secret: secret, handler: dispatcher(operator, agent))
+      @server = BasecampAgentConnector::Server.new(port: port, path: "/hook/#{secret}", handler: dispatcher(operator, agent))
       install_signal_handlers
       @server.start
     end
@@ -100,9 +101,11 @@ class BasecampAgentConnector::CLI
     def dispatcher(operator, agent)
       pipeline = build_pipeline(operator, agent)
 
-      lambda do |payload|
+      lambda do |request|
         Thread.new do
-          pipeline.process(payload)
+          pipeline.process(JSON.parse(request.body))
+        rescue JSON::ParserError => error
+          warn "ignored malformed payload: #{error.message}"
         rescue => error
           warn "pipeline error: #{error.message}"
         end
