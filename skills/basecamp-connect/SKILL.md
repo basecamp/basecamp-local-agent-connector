@@ -178,6 +178,48 @@ operator) already keeps replies from re-triggering the connector — the trust
 filter requires the *operator* to be the author — but this is cheap defense in
 depth.
 
+### When the task results in a pull request
+
+Some instructions are "open a PR for X." For these the background agent follows a
+stricter lifecycle and **must not report the work done until the branch is
+green** — getting CI green is part of finishing the task, not a follow-up:
+
+1. **Work in a fresh worktree off `main`** — `git worktree add -b <branch> <path>
+   main` in the resolved repo, so the task is isolated and `main` stays clean. Do
+   all the work there.
+2. **Green locally first** — run `bin/ci` in the worktree and iterate until it
+   passes. Never push red.
+3. **Push and open the PR.**
+4. **Green remotely** — `gh pr checks <n> --watch --fail-fast`; if a check fails,
+   fix it, push, and re-watch. Loop until every check is green (remote can fail
+   what local passed).
+5. **Only now reply "done"** on Basecamp, with the PR link. Never communicate
+   success on a red or unchecked branch. If you cannot get it green after a
+   reasonable effort, reply with **what is failing** and @mention the operator —
+   not a false "done."
+
+#### Review / approval loop (GitHub webhook)
+
+Once the PR is up and green, reviews are handled **event-driven via a GitHub
+`pull_request_review` webhook**, not by an agent sitting in a poll loop: a human
+review is unbounded latency, an idle LLM agent is the wrong tool for it, and an
+in-session agent would die when the session ends. The connector registers a repo
+webhook on the **same Tailscale Funnel it already runs** and emits a review event
+just like it emits Basecamp events; the front thread dispatches a fresh agent per
+event. Branch on `review.state`:
+
+- **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
+  inline comments) from the API (the webhook is a trigger + pointer, exactly like
+  the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
+  push, and reply.
+- **`approved`** — land per the repo's policy and reply done.
+
+GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
+deliveries they are verified cryptographically *and* corroborated by an API
+re-fetch. The connector-side plumbing that backs this loop (register the repo
+hook, verify the signature, parse `pull_request_review`, emit) is specced in
+[`docs/pr-review-loop.md`](../../docs/pr-review-loop.md).
+
 ## Cleanup / lifecycle — always tear down
 
 `bin/connect` opens a **public** Tailscale Funnel URL and registers a **real
