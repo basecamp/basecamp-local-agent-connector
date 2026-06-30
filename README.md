@@ -78,7 +78,14 @@ That starts watching the named project(s). Now go to Basecamp and @mention
 `@Clawdito` in a comment/message/card with what you want done. Each time you do,
 the agent runs and replies.
 
-- Watch several projects: repeat `--project`.
+**Watch several projects at once** — repeat `--project` (name, URL, or ID).
+A single connector run registers one webhook per project and multiplexes them all
+onto one funnel, so the same `@agent` watches every listed project simultaneously:
+
+```
+/basecamp-connect @Clawdito --project "BC5.1" --project "On Call" --project 20361308
+```
+
 - `--project` takes a **name, URL, or ID** — the CLI resolves it.
 - Watch GitHub PR reviews too, over the **same** funnel: add `--repo <owner>/<repo>`
   (repeatable). You need at least one `--project` or `--repo`; `--project` also
