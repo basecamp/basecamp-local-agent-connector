@@ -7,7 +7,7 @@ class ConnectorTest < Minitest::Test
     assert_equal "clawdito", options.agent
     assert_equal [ "Queenbee" ], options.projects
     assert_empty options.repos
-    assert_equal "Comment,Message,Kanban::Card", options.types
+    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo", options.types
     assert_equal [ "pull_request_review" ], options.events
     assert_nil options.port
   end

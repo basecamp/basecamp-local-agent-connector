@@ -6,7 +6,9 @@ require "socket"
 # route on it. Basecamp and GitHub watching therefore run simultaneously over a
 # single funnel — the per-machine funnel is no longer a bottleneck.
 class BasecampAgentConnector::Connector
-  DEFAULT_TYPES = "Comment,Message,Kanban::Card"
+  # Todo + Kanban::Step are included so todo/step assignment events are delivered
+  # (Kanban::Card already covers card assignments).
+  DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo"
   DEFAULT_EVENTS = "pull_request_review"
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :port)
