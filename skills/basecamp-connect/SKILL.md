@@ -6,6 +6,8 @@ description: |
   and @mentioning a real Basecamp agent user — and hands each off to a background
   agent that gathers context, does the work, and replies as that agent user, so the
   watcher thread stays free to keep taking new mentions.
+  Invoked without arguments it recalls the last-used agent and projects from
+  ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
   agent commands.
 triggers:
@@ -45,6 +47,7 @@ recording and confirming the agent is among its current `assignees`). Only the
 ## Invocation
 
 ```
+/basecamp-connect                                                     # reuse last connection (confirm first)
 /basecamp-connect @Clawdito --project "BC5 Calendar"                 # one project
 /basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY    # several
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
@@ -55,6 +58,35 @@ is optional; it's lowercased to the profile name). `--project` is **required**
 (Basecamp has no global webhook) — pass a name, URL, or ID. The connector
 **validates the agent profile exists locally at startup** and aborts with setup
 guidance if not.
+
+### Stored connection params (no-args invocation)
+
+The skill remembers the last successful connection in
+**`~/.config/basecamp-connect/last.json`**:
+
+```json
+{
+  "agent": "clawdito",
+  "operator": null,
+  "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
+  "saved_at": "2026-07-01T15:00:00Z"
+}
+```
+
+- **Invoked without arguments:** read that file and **confirm the stored params
+  with the user before starting** — show the agent and the project list and ask
+  whether to go with them, adjust them (add/drop projects, different agent), or
+  start fresh. Never launch on stored params silently. If the file doesn't
+  exist, ask for the agent and projects as usual.
+- **Invoked with arguments:** arguments win; the store is not consulted.
+- **After every successful registration** (the `Listening for mentions of …`
+  line), write the params that were actually used back to the file — agent
+  profile, operator override (or null), and the projects with their resolved
+  ids and names — so the store always reflects the last working connection.
+  Create the directory if needed. Launch failures must not overwrite it.
+
+Project ids are stored (not just names) because name lookup is exact-match;
+launching from the store passes ids.
 
 ## Prerequisite: the agent must be a local profile authed as that user
 
@@ -96,7 +128,9 @@ bin/connect @Clawdito --project "<project>" [--project "<project>"]...
 
 Read that output file once and confirm it printed `Listening for mentions of ...`
 (registration succeeded). If it errored instead (unknown agent profile, auth,
-project not found), surface that and stop.
+project not found), surface that and stop. On success, **save the connection
+params** to `~/.config/basecamp-connect/last.json` (see "Stored connection
+params" above) so the next no-args invocation can offer them back.
 
 **b. Arm a persistent monitor on that output file** with the Monitor tool
 (`persistent: true`). Use `-n 0` so it reports only events that arrive *after*
@@ -171,8 +205,20 @@ Instruct that background agent to, in order:
    basecamp show <recording.parent.app_url> -j   # the card/message it lives in
    # plus the thread/comments and the project as needed
    ```
-3. **Do the requested work** in the repo.
-4. **Reply on the originating recording as the agent** — commenting with the
+3. **Move the card out of Triage.** If the work lives on a card (the recording
+   or its parent is a `Kanban::Card`), check which column it sits in. If it's in
+   a **Triage**-like column and the card table has an **In progress**-like column
+   (match loosely and case-insensitively: "In progress", "Working on", "Doing"),
+   move the card there before starting — the board should show the work is
+   underway:
+   ```bash
+   basecamp cards columns --project <project>            # find the columns
+   basecamp cards move <card-id> --column "<In progress>" --profile <agent>
+   ```
+   If there's no Triage-like or no In-progress-like column, skip this silently —
+   never invent columns.
+4. **Do the requested work** in the repo.
+5. **Reply on the originating recording as the agent** — commenting with the
    agent's profile so the reply posts as the agent user:
    ```bash
    basecamp comment <recording.url|id> "<body>" --profile <agent>
@@ -203,10 +249,13 @@ recording itself is the task**. The dispatched background agent should, in order
    recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
    "On it!" --profile <agent>`). Boosts work on todos and cards too, so a boost is
    the single ack for both triggers.
-2. **Do the work** the card/todo describes (its `content`/`title` is the
+2. **Move the card out of Triage** — same rule as for mentions: if the assigned
+   card sits in a Triage-like column and the table has an In-progress-like
+   column, move it there before starting; skip silently otherwise.
+3. **Do the work** the card/todo describes (its `content`/`title` is the
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).
-3. **Reply with the result** on the same recording as the agent — and on failure,
+4. **Reply with the result** on the same recording as the agent — and on failure,
    a short error summary that @mentions the operator.
 
 The instruction here is the **card/todo content**, not a comment body. Everything
