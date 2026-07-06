@@ -33,11 +33,20 @@ You need three things in place:
 1. **The skill** — install it into Claude Code:
 
    ```bash
-   npx skills add basecamp/basecamp-local-agent-connector
+   npx skills add basecamp/basecamp-local-agent-connector       # this project only
+   npx skills add basecamp/basecamp-local-agent-connector -g    # user-level, all projects
    ```
 
    (Or just run Claude Code from a clone of this repo — the skill is
    auto-discovered via `.claude/skills`.)
+
+   **Updating:** the install is a snapshot copy fetched from GitHub, so editing
+   this repo does *not* change an installed skill. After changes land on `main`,
+   refresh with:
+
+   ```bash
+   npx skills update -g    # or without -g for a project-level install
+   ```
 
 2. **The runtime** — clone the repo and install dependencies:
 
