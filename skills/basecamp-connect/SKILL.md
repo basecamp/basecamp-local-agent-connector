@@ -44,6 +44,24 @@ There are thus **two triggers**: an `@mention` of the agent, or the operator
 recording and confirming the agent is among its current `assignees`). Only the
 **operator's** assignments count.
 
+## Runs from any project — the runtime lives in the connector clone
+
+This skill is typically installed user-level (`npx skills add … -g`) and invoked
+from *other* projects (e.g. a working session in `coworker`). The session's
+current directory is therefore **not** the connector repo. All connector
+commands in this skill (`bin/connect`, `config/project_repos.toml`) live in a
+local clone of `basecamp/basecamp-local-agent-connector`, canonically at:
+
+```
+~/Work/basecamp/basecamp-local-agent-connector
+```
+
+Locate the runtime there and run it from that directory — never from the
+current project. If the clone isn't at the canonical path, don't hunt the
+filesystem: tell the user to clone it
+(`git clone https://github.com/basecamp/basecamp-local-agent-connector`) and
+run `bin/setup` (see the repo README).
+
 ## Invocation
 
 ```
@@ -123,7 +141,8 @@ notifies you automatically — with no user prompting in between.
 harness reports (you need it for the monitor):
 
 ```bash
-bin/connect @Clawdito --project "<project>" [--project "<project>"]...
+cd ~/Work/basecamp/basecamp-local-agent-connector && \
+  bin/connect @Clawdito --project "<project>" [--project "<project>"]...
 ```
 
 Read that output file once and confirm it printed `Listening for mentions of ...`
