@@ -118,8 +118,9 @@ Everything is addressed to the agent; the server filters:
 4. **Container watches** — the agent watches a card table, column, or
    todolist and receives structural events: card moved in/out, todo added or
    completed. Boards become automation surfaces ("anything landing in *Ready
-   for agent* gets worked"), with no client-side diffing. Watches are visible
-   on the container in the UI.
+   for agent* gets worked"), with no client-side diffing. No new mechanism: a
+   watch is simply the agent subscribed to the container, and the relay logic
+   resolves interested agents from the event.
 5. **Directive gating** — events from people outside the agent's directive
    policy never get delivered.
 
@@ -160,8 +161,8 @@ new exists.
   shows *active* — people can see it's listening before they mention it (a
   real papercut today: you write to an agent whose laptop is asleep). Lease
   lapses → *offline*; mentioning an offline agent can warn you.
-- **Watches are profile state, not endpoints** — visible and revocable in the
-  UI, harmless if the process is gone.
+- **Watches are just subscriptions, not endpoints** — visible and revocable on
+  the container, harmless if the process is gone.
 
 Contrast with today: delete N webhooks and reset a public funnel on every
 exit, and hope you're never SIGKILLed.
@@ -179,18 +180,20 @@ more relay step — not a parallel event system.
 New concepts, all small:
 
 - **`Agent`** — the new personable, alongside `User`, `Client`, `Integration`,
-  etc. Carries the agent's profile (name, avatar, description) and its
-  **agent token** for API and Cable authentication. Joins the personable
-  scopes deliberately: mentionable, reachable, subscribable, assignable;
-  excluded from billing and people-management abilities.
+  etc. Carries the agent's profile (name, avatar, description), its
+  **agent token** for API and Cable authentication, and its **directive
+  policy** — who may direct it (default: its operators), checked at relay time
+  against the event's creator. Joins the personable scopes deliberately:
+  mentionable, reachable, subscribable, assignable; excluded from billing and
+  people-management abilities.
 
 - **`Agent::Dispatch`** — the inbox row; the machine-facing sibling of
   `Notification`. Essentially *(agent person, event, reason, position,
   acked-at)*. `reason` is the addressing that webhooks lack: *mentioned*,
   *thread reply*, *assigned*, *watch*, *ping line*. Created by the new
   `relay_to_agents` step in `Event::RelayJob`, which computes the addressed
-  agents (mentionees, subscribers, assignees, watchers — intersected with each
-  agent's directive policy). The row is cheap metadata; the JSON the client
+  agents (mentionees, thread subscribers, assignees, container subscribers —
+  intersected with each agent's directive policy). The row is cheap metadata; the JSON the client
   sees is rendered from the event at read time (the same pattern webhook
   deliveries use), so payloads aren't persisted twice. Dispatches expire after
   a retention window.
@@ -200,17 +203,6 @@ New concepts, all small:
   6-hour chat hold — and it has no concept of container watches. A parallel,
   deliberately dumber model shares the upstream recipient logic and leaves
   `Notification` human-facing.
-
-- **`Agent::Watch`** — *(agent, watchable)* where watchable is a card table, a
-  column, or a todolist. The one *stated* interest (everything else is implicit
-  via mentions/subscriptions/assignments). Surfaced in the UI on the container;
-  consulted by `relay_to_agents` for structural events.
-
-- **Directive policy** — on the agent: the set of people allowed to direct it
-  (default: its operators). Checked at relay time against the event's creator.
-
-- **Presence lease** — ephemeral state (a TTL'd timestamp, not a durable
-  record) renewed over the Cable connection; drives the active/offline badge.
 
 - **`AgentChannel`** (Action Cable) — the agent's stream. Authenticated by
   agent token at connection; broadcasts a wake-up when new dispatches land.
