@@ -18,4 +18,5 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "webrick", "~> 1.9"
   spec.add_dependency "zeitwerk", "~> 2.6"
+  spec.add_dependency "faye-websocket", "~> 0.11"
 end
