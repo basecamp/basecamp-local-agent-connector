@@ -120,8 +120,9 @@ Everything is addressed to the agent; the server filters:
    for agent* gets worked"), with no client-side diffing. No new mechanism: a
    watch is simply the agent subscribed to the container, and the relay logic
    resolves interested agents from the event.
-5. **Operator gating** — events from people other than the agent's operators
-   never get delivered.
+
+The security rule is simple: **the agent only acts on events created by its
+operators, period** — enforced server-side, before delivery.
 
 Each event is a **trigger plus pointer** — enough to know what happened and
 where, with URLs to pull full context from the API. That division of labor is
@@ -147,7 +148,7 @@ new exists.
 
 - Deliveries arrive over a connection the agent opened and authenticated —
   no public endpoint, nothing to forge, no corroboration re-fetch needed.
-- Operator-only direction is enforced server-side.
+- The operator-only rule is enforced server-side, not by the client.
 - Loop prevention is structural: an actor's own actions never generate events
   back to itself (the notification machinery already excludes the creator).
 
