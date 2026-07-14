@@ -1,12 +1,13 @@
 ---
 name: basecamp-connect
 description: |
-  Manage local Claude Code agents from Basecamp. Runs the connector bridge
-  (bin/connect), watches its STDOUT for trusted events — authored by the operator
-  and @mentioning a real Basecamp agent user — and hands each off to a background
-  agent that gathers context, does the work, and replies as that agent user, so the
-  watcher thread stays free to keep taking new mentions.
-  Invoked without arguments it recalls the last-used agent and projects from
+  Manage local Claude Code agents from Basecamp. Runs the connector
+  (bin/connect), which opens an outbound Agent Channel connection to Basecamp
+  and streams the agent's durable dispatch inbox as NDJSON, then hands each
+  dispatch off to a background agent that gathers context, does the work, and
+  replies as that agent user, so the watcher thread stays free to keep taking
+  new work.
+  Invoked without arguments it recalls the last-used agent and connection from
   ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
   agent commands.
@@ -26,23 +27,24 @@ You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); a backgroun
 agent on this machine picks it up, gathers the surrounding context from Basecamp,
 acts on it, and replies **as that agent user**.
 
-The agent is identified by a **local `basecamp` CLI profile** of the same name
-(e.g. profile `clawdito`). That profile is both:
-- the **reply identity** — replies post as the agent via `--profile <agent>`, and
-- the **mention target** — the connector only fires when that user is @mentioned.
+The agent is a first-class **`Agent` personable** in Basecamp. It is identified
+by a **local `basecamp` CLI profile** of the same name (e.g. profile `clawdito`),
+which is its **reply identity** — replies post as the agent via `--profile
+<agent>`. It connects to the **Agent Channel** with a per-(operator, agent)
+**connection token**.
 
-The trust model is enforced by `bin/connect`, **not** by this skill: an event
-reaches STDOUT only if it is (1) authored by the **operator** (you — the CLI
-default profile, or `--operator <profile>`), (2) **either** @mentions the agent
-user **or** assigns it a card/todo, and (3) is corroborated against the Basecamp
-API. Treat every STDOUT line as already-trusted — but still keep dispatched
-agents scoped to the resolved repo.
+The trust model is now enforced **server-side by Basecamp**, not by this skill.
+Basecamp only writes a dispatch to your partition when the event was authored by
+you (an operator of the agent) and you have access to it, and it only ever
+delivers your own partition over your connection. So every NDJSON line the
+connector emits is already trusted — but still keep dispatched agents scoped to
+the resolved repo.
 
-There are thus **two triggers**: an `@mention` of the agent, or the operator
-**assigning** the agent a card/todo (a `*_assignment_changed` event whose
-`details.added_person_ids` includes the agent — corroborated by re-fetching the
-recording and confirming the agent is among its current `assignees`). Only the
-**operator's** assignments count.
+Dispatches carry a **`reason`**: `mentioned` (incl. chat lines), `thread_reply`
+(a reply on a thread the agent is subscribed to, no re-mention needed),
+`assigned` (you assigned it a card/todo), or `watch` (a structural change on a
+container it watches — card moved, todo added). All four are handled the same
+way: gather context, do the work, reply.
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -65,17 +67,17 @@ run `bin/setup` (see the repo README).
 ## Invocation
 
 ```
-/basecamp-connect                                                     # reuse last connection (confirm first)
-/basecamp-connect @Clawdito --project "BC5 Calendar"                 # one project
-/basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY    # several
-/basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
+/basecamp-connect                                                             # reuse last connection (confirm first)
+/basecamp-connect @Clawdito --connection-token <token> --host <account-url>   # connect the agent account-wide
 ```
 
-`<agent>` is a real Basecamp user backed by a local CLI profile (the leading `@`
-is optional; it's lowercased to the profile name). `--project` is **required**
-(Basecamp has no global webhook) — pass a name, URL, or ID. The connector
-**validates the agent profile exists locally at startup** and aborts with setup
-guidance if not.
+`<agent>` is the agent's local CLI profile (the leading `@` is optional; it's
+lowercased to the profile name) and the reply identity. `--connection-token` is
+the per-(operator, agent) token minted when you connect the agent in Basecamp;
+`--host` is your account base URL (e.g. `https://3.basecamp.com/1234567`).
+Delivery is **account-wide** — there is no `--project` and no per-project setup;
+Basecamp addresses dispatches to the agent across every project you share with
+it.
 
 ### Stored connection params (no-args invocation)
 
@@ -85,26 +87,22 @@ The skill remembers the last successful connection in
 ```json
 {
   "agent": "clawdito",
-  "operator": null,
-  "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
+  "host": "https://3.basecamp.com/1234567",
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
 
 - **Invoked without arguments:** read that file and **confirm the stored params
-  with the user before starting** — show the agent and the project list and ask
-  whether to go with them, adjust them (add/drop projects, different agent), or
-  start fresh. Never launch on stored params silently. If the file doesn't
-  exist, ask for the agent and projects as usual.
+  with the user before starting** — show the agent and host and ask whether to
+  go with them or start fresh. Never launch on stored params silently. If the
+  file doesn't exist, ask for the agent, connection token, and host. **Never
+  write the connection token to the store** — it is a credential; keep it in the
+  environment or prompt for it each time.
 - **Invoked with arguments:** arguments win; the store is not consulted.
-- **After every successful registration** (the `Listening for mentions of …`
-  line), write the params that were actually used back to the file — agent
-  profile, operator override (or null), and the projects with their resolved
-  ids and names — so the store always reflects the last working connection.
-  Create the directory if needed. Launch failures must not overwrite it.
-
-Project ids are stored (not just names) because name lookup is exact-match;
-launching from the store passes ids.
+- **After a successful connection** (the `Connected …` line), write the agent
+  and host back to the file (not the token) so the next no-args invocation can
+  offer them back. Create the directory if needed. Launch failures must not
+  overwrite it.
 
 ## Prerequisite: the agent must be a local profile authed as that user
 
@@ -122,34 +120,35 @@ agent/bot account):
 basecamp auth login --profile clawdito
 ```
 
-If the agent profile resolves to the **same** user as the operator, replies would
-re-trigger the connector — `bin/connect` warns about this at startup. Use a
-distinct bot account for the agent.
+The agent's own replies never dispatch back to it: Basecamp excludes an actor
+from the recipients of its own events, so the reply loop is closed server-side —
+no distinct-user gymnastics required.
 
 ## Procedure
 
-### 1. Launch the bridge, then watch its STDOUT
+### 1. Launch the connector, then watch its STDOUT
 
-`bin/connect` is a long-running process that never exits on its own — it streams
-one trusted event per STDOUT line for as long as it runs. A plain background
-task only notifies you when a command *completes*, so on its own it would never
-wake you per event. You therefore need **two** steps: run the connector in the
-background, then arm a persistent monitor on its output so each new event
-notifies you automatically — with no user prompting in between.
+`bin/connect` is a long-running process that never exits on its own — it opens
+the Agent Channel connection and streams one dispatch per STDOUT line for as
+long as it runs. A plain background task only notifies you when a command
+*completes*, so on its own it would never wake you per event. You therefore need
+**two** steps: run the connector in the background, then arm a persistent
+monitor on its output so each new dispatch notifies you automatically — with no
+user prompting in between.
 
 **a. Run the connector in the background** and note the output-file path the
 harness reports (you need it for the monitor):
 
 ```bash
 cd ~/Work/basecamp/basecamp-local-agent-connector && \
-  bin/connect @Clawdito --project "<project>" [--project "<project>"]...
+  bin/connect @Clawdito --connection-token "<token>" --host "<account-url>"
 ```
 
-Read that output file once and confirm it printed `Listening for mentions of ...`
-(registration succeeded). If it errored instead (unknown agent profile, auth,
-project not found), surface that and stop. On success, **save the connection
-params** to `~/.config/basecamp-connect/last.json` (see "Stored connection
-params" above) so the next no-args invocation can offer them back.
+Read that output file once and confirm the connection came up (a `Connected …`
+line). If it errored instead (bad token, unreachable host), surface that and
+stop. On success, **save the agent and host** to
+`~/.config/basecamp-connect/last.json` (see "Stored connection params" above) —
+**never the token** — so the next no-args invocation can offer them back.
 
 **b. Arm a persistent monitor on that output file** with the Monitor tool
 (`persistent: true`). Use `-n 0` so it reports only events that arrive *after*
@@ -163,20 +162,22 @@ tail -f -n 0 <connector-output-file> | grep --line-buffered -E '^\{'
 Each notification the monitor delivers is one event — process it via step 2. An
 event that lands while you are waiting on the user is **not** the user's reply.
 
-Each STDOUT line is one trusted event as NDJSON:
+Each STDOUT line is one trusted dispatch as NDJSON — the same shape the old
+webhook path emitted, plus `dispatch_id` and `reason`:
 
 ```json
-{"event_id":99001,"kind":"comment_created","created_at":"...",
+{"dispatch_id":55,"reason":"mentioned","event_id":99001,"kind":"comment_created",
+ "created_at":"...",
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@..."},
  "recording":{"id":456,"type":"Comment","app_url":"...","url":"...",
-   "content":"<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…@Clawdito…</bc-attachment> do X</p>",
+   "content":"<p>Hey @Clawdito do X</p>",
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}}}
 ```
 
-`creator` is the operator (you). The mention of the agent lives in
-`recording.content` as a mention attachment. STDERR carries diagnostics
-(dropped/uncorroborated events, registration notices) — surface them but don't
-act on them.
+`creator` is the operator (you). `reason` tells you why it arrived (`mentioned`,
+`thread_reply`, `assigned`, `watch`). The connector acks each dispatch and
+advances its cursor automatically, so a restart resumes cleanly from the durable
+inbox. STDERR carries diagnostics — surface them but don't act on them.
 
 Keep watching until the user stops the skill (see Cleanup).
 
@@ -249,20 +250,28 @@ Instruct that background agent to, in order:
 
 Because the background agent gathers its own context and posts its own reply, the
 front thread is free the instant it dispatches — it goes straight back to the
-monitor, ready for the next mention while any number of events are in flight.
-There is **no concurrency cap**; dispatch every event as it arrives.
+monitor, ready for the next dispatch while any number are in flight. There is
+**no concurrency cap**; dispatch every one as it arrives.
 
-**c. Drop self-authored events.** If an event's recording is a comment the agent
-itself just posted, ignore it. Posting as the agent (a distinct user from the
-operator) already keeps replies from re-triggering the connector — the trust
-filter requires the *operator* to be the author — but this is cheap defense in
-depth.
+**Keep a shared session and relay follow-ups to in-flight agents.** Run one
+long-lived front thread across a work session rather than a cold start per
+dispatch — you are usually working the same set of issues, and a shared session
+context makes the whole thing cheaper and sharper. When a `thread_reply` (or a
+new mention) lands for a thread whose background agent is **still working**,
+relay the new information to that running agent (via SendMessage) instead of
+spawning a fresh one — it keeps the subagent's context current, exactly as
+Claude's subagent model is built to work. Spawn a new agent only for genuinely
+new work.
+
+**c. Loop prevention is automatic.** Basecamp never dispatches an actor's own
+events back to it, so the agent won't be woken by its own replies. No client-side
+self-authored filtering needed.
 
 ### When the agent is assigned a card/todo
 
-If the event `kind` ends in `_assignment_changed`, the operator assigned the
-agent to the recording (a card/todo/step) — there's no mention to strip; **the
-recording itself is the task**. The dispatched background agent should, in order:
+If the dispatch `reason` is `assigned`, the operator assigned the agent to the
+recording (a card/todo/step) — there's no mention to strip; **the recording
+itself is the task**. The dispatched background agent should, in order:
 
 1. **Acknowledge first with a boost** — same as for a mention: boost the
    recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
@@ -326,16 +335,18 @@ Once the PR is up and green, reviews are handled **event-driven via a GitHub
 `pull_request_review` webhook**, not by an agent sitting in a poll loop: a human
 review is unbounded latency, an idle LLM agent is the wrong tool for it, and an
 in-session agent would die when the session ends. **`bin/connect` is unified** —
-the same process that watches Basecamp also watches GitHub repos, over the
-**same funnel**, when you pass `--repo`:
+the same process that watches Basecamp over the Agent Channel can also watch
+GitHub repos over a Tailscale Funnel when you pass `--repo`:
 
 ```bash
-bin/connect @Clawdito --project "<project>" --repo <owner>/<repo>
+bin/connect @Clawdito --connection-token "<token>" --host "<account-url>" --repo <owner>/<repo>
 ```
 
-It emits GitHub review events on the same STDOUT as Basecamp events (a review
+It emits GitHub review events on the same STDOUT as Basecamp dispatches (a review
 event carries `review_id`/`repo`/`state` instead of `recording`), so the one
-persistent monitor you already armed picks them up too. For a repo created
+persistent monitor you already armed picks them up too. GitHub still uses the
+inbound funnel + webhooks (GitHub pushes to you) — only the Basecamp side moved
+to the outbound Agent Channel. For a repo created
 **after** the connector started (the common PR case), don't restart it — the
 connector logs a `/gh/<secret>` endpoint + HMAC secret at startup; register a
 `pull_request_review` webhook on the new repo against that endpoint (one webhook
@@ -354,37 +365,40 @@ re-fetch. The connector-side plumbing that backs this loop (the unified
 signature, parse `pull_request_review`, emit) is specced in
 [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md).
 
-## Cleanup / lifecycle — always tear down
+## Cleanup / lifecycle — always stop the process
 
-`bin/connect` opens a **public** Tailscale Funnel URL and registers a **real
-Basecamp webhook per project**. These must not outlive the session. The
-connector deletes every webhook and resets the funnel on `SIGINT`/`SIGTERM`, so
-the rule is simple: **whenever you stop watching — normal end, user interrupt, an
-error, or the skill aborting — stop the `bin/connect` process** (TaskStop / send
-SIGTERM). Its teardown does the rest.
+The **Basecamp side auto-cleans by construction**: it holds nothing durable —
+just the outbound Agent Channel connection and a short presence lease. Stop the
+process and the connection drops, the lease lapses, and there is nothing public
+and nothing registered to tear down. A restart resumes cleanly from the durable
+inbox cursor.
 
-After stopping, **verify nothing leaked**:
+The **GitHub side** (only when you passed `--repo`) still opens a public
+Tailscale Funnel and registers repo webhooks; those must not outlive the
+session. So the rule stays simple: **whenever you stop watching — normal end,
+user interrupt, an error, or the skill aborting — stop the `bin/connect`
+process** (TaskStop / send SIGTERM). Its teardown deletes the GitHub webhooks and
+resets the funnel.
+
+After stopping with `--repo` in play, **verify the GitHub side left nothing**:
 
 ```bash
-basecamp webhooks list --project "<project>" -j   # expect zero from this run
-tailscale funnel status                            # expect no funnel for our port
+tailscale funnel status   # expect no funnel for our port
 ```
 
-If the process was killed un-gracefully (e.g. `SIGKILL`) and teardown didn't run,
-delete the leftover webhook(s) manually with `basecamp webhooks delete <id>
---project "<project>"` and `tailscale funnel reset`. Never leave a registered
-webhook or an open funnel behind.
+If the process was `SIGKILL`ed with `--repo` active, reset the funnel manually
+(`tailscale funnel reset`) and delete any leftover repo webhook. The Basecamp
+Agent Channel needs no such cleanup.
 
 ## Notes
 
-- One `bin/connect` run = one funnel + one server + one webhook per watched
-  project. Re-running re-registers fresh; exiting cleans up.
-- The connector never trusts the POST body's content — it re-fetches the
-  recording from Basecamp before emitting. The content you see on STDOUT is the
-  authoritative copy.
-- **Reply loop (defense in depth):** trust is "authored by the operator AND
-  mentions the agent." Replying as the agent profile (a distinct user) means
-  agent replies fail the operator-author check and are never re-ingested. The
-  durable belt-and-suspenders fix still belongs in `bin/connect` (don't emit
-  recordings the agent authored); until then, reply as the agent and keep the
-  agent mention out of reply bodies.
+- The Basecamp side is account-wide over one Agent Channel connection — no
+  funnel, no webhooks, no per-project setup. GitHub (with `--repo`) still uses
+  one funnel + one server + one webhook per repo.
+- Deliveries are authentic by construction: they arrive over a connection the
+  agent opened and authenticated with its connection token. No forgery surface,
+  no corroboration re-fetch. The dispatch is still a trigger + pointer — pull
+  full context from the API.
+- **Reply loop:** closed server-side — Basecamp never dispatches an actor's own
+  events back to it. Still reply as the agent profile and keep the agent mention
+  out of reply bodies.
