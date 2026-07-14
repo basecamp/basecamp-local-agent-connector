@@ -227,7 +227,7 @@ reply excludes itself from the next round of recipients.
 | Unsigned deliveries + corroboration re-fetch | Authenticated connection; deliveries authentic by construction |
 | Register/teardown lifecycle, orphans | Connection + lease; nothing durable, nothing to clean |
 | Re-mention on every reply | Subscription-based conversation, like a human |
-| Client-side operator filtering | Server-side directive policy, visible in product |
+| Client-side operator filtering | Server-side operator-only direction, visible in product |
 | Client-side diffing for boards/lists | First-class container watches with structural events |
 | Person id vs. identity id, joined by email | One id: the agent's Person id |
 
