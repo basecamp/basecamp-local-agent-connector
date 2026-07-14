@@ -53,8 +53,8 @@ Every mechanism in the connector maps to a gap in Basecamp:
 - **Reuse the social model.** Mentions, subscriptions, assignments, and
   notifications already encode "who should hear about this." Agents plug into
   that machinery as people.
-- **Trust is Basecamp's job.** Who may direct an agent is account
-  configuration, enforced server-side.
+- **Trust is Basecamp's job.** Only an agent's operators may direct it,
+  enforced server-side.
 
 ---
 
@@ -82,11 +82,10 @@ authenticates with an **agent token**, the `access_key`-on-Person precedent,
 giving it exactly one id: its Person id); not omnipotent (normal project
 access rules apply, and its API surface can be scoped tighter than a user's).
 
-**Trust model, in product.** Each agent carries a directive policy: who may
-direct it (defaulting to its operator). Mentions, assignments, and thread
-replies from anyone else are filtered — or flagged — server-side, before
-delivery. Today's client-side operator filter moves into Basecamp, visible
-and auditable.
+**Trust model, in product.** Only an agent's **operators** may direct it.
+Mentions, assignments, and thread replies from anyone else are filtered
+server-side, before delivery. Today's client-side operator filter moves into
+Basecamp, visible and auditable.
 
 **Why not extend `Integration`?** It is deliberately a write-only chat bot —
 unmentionable, unreachable, no reads, synchronous public `command_url` — and
@@ -121,8 +120,8 @@ Everything is addressed to the agent; the server filters:
    for agent* gets worked"), with no client-side diffing. No new mechanism: a
    watch is simply the agent subscribed to the container, and the relay logic
    resolves interested agents from the event.
-5. **Directive gating** — events from people outside the agent's directive
-   policy never get delivered.
+5. **Operator gating** — events from people other than the agent's operators
+   never get delivered.
 
 Each event is a **trigger plus pointer** — enough to know what happened and
 where, with URLs to pull full context from the API. That division of labor is
@@ -148,7 +147,7 @@ new exists.
 
 - Deliveries arrive over a connection the agent opened and authenticated —
   no public endpoint, nothing to forge, no corroboration re-fetch needed.
-- Directive policy is enforced server-side.
+- Operator-only direction is enforced server-side.
 - Loop prevention is structural: an actor's own actions never generate events
   back to itself (the notification machinery already excludes the creator).
 
@@ -180,10 +179,9 @@ more relay step — not a parallel event system.
 New concepts, all small:
 
 - **`Agent`** — the new personable, alongside `User`, `Client`, `Integration`,
-  etc. Carries the agent's profile (name, avatar, description), its
-  **agent token** for API and Cable authentication, and its **directive
-  policy** — who may direct it (default: its operators), checked at relay time
-  against the event's creator. Joins the personable scopes deliberately:
+  etc. Carries the agent's profile (name, avatar, description) and its
+  **agent token** for API and Cable authentication. Joins the personable
+  scopes deliberately:
   mentionable, reachable, subscribable, assignable; excluded from billing and
   people-management abilities.
 
@@ -193,7 +191,7 @@ New concepts, all small:
   *thread reply*, *assigned*, *watch*, *ping line*. Created by the new
   `relay_to_agents` step in `Event::RelayJob`, which computes the addressed
   agents (mentionees, thread subscribers, assignees, container subscribers —
-  intersected with each agent's directive policy). The row is cheap metadata; the JSON the client
+  keeping only events authored by each agent's operators). The row is cheap metadata; the JSON the client
   sees is rendered from the event at read time (the same pattern webhook
   deliveries use), so payloads aren't persisted twice. Dispatches expire after
   a retention window.
@@ -247,7 +245,7 @@ reply excludes itself from the next round of recipients.
    shows agent availability.
 4. **Container watches** — structural events for card tables, columns,
    todolists.
-5. **Directive policy UI** — operators, allowed directors, Adminland settings.
+5. **Operators UI** — manage an agent's operators and settings in Adminland.
 
 Each stage is independently useful, and the connector adopts them
 incrementally — it already has the right split (trusted-event stream in, API
@@ -260,8 +258,8 @@ eventually into nothing but the `basecamp` CLI and a skill.
   dispatches, and what does the UI show for a large backlog?
 - **Multiple runtimes per agent** — two laptops connect as the same agent:
   compete or duplicate? (Leases suggest single-active with takeover.)
-- **Directive policy granularity** — a list of people, or roles ("anyone on
-  the project")? Does an unauthorized mention notify the operator?
+- **Unauthorized mentions** — someone who isn't an operator @mentions the
+  agent: silently ignored, or surfaced to the operators?
 - **Agent-to-agent** — may one agent mention or assign another? Loop
   prevention needs more thought than the human↔agent case.
 - **Client visibility** — should client users see or direct agents?
