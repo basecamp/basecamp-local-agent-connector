@@ -1,33 +1,32 @@
 require "test_helper"
 
 class ConnectorTest < Minitest::Test
-  def test_parses_basecamp_only_with_defaults
-    options = BasecampAgentConnector::Connector.parse_options([ "@Clawdito", "--project", "Queenbee" ])
+  def test_parses_basecamp_with_a_connection_token_and_host
+    options = BasecampAgentConnector::Connector.parse_options(
+      [ "@Clawdito", "--connection-token", "tok-123", "--host", "https://3.basecamp.com/1234567" ])
 
     assert_equal "clawdito", options.agent
-    assert_equal [ "Queenbee" ], options.projects
-    assert_empty options.repos
-    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo", options.types
-    assert_equal [ "pull_request_review" ], options.events
-    assert_nil options.port
+    assert_equal "tok-123", options.connection_token
+    assert_equal "https://3.basecamp.com/1234567", options.host
+    assert options.watch_basecamp?
+    refute options.watch_github?
   end
 
   def test_parses_github_only_without_an_agent
     options = BasecampAgentConnector::Connector.parse_options([ "--repo", "basecamp/bc3" ])
 
     assert_nil options.agent
-    assert_empty options.projects
     assert_equal [ "basecamp/bc3" ], options.repos
+    assert options.watch_github?
+    refute options.watch_basecamp?
   end
 
   def test_parses_both_transports_together
     options = BasecampAgentConnector::Connector.parse_options(
-      [ "@clawdito", "--project", "A", "--repo", "acme/a", "--repo", "acme/b", "--operator", "jorge", "--port", "4567" ])
+      [ "@clawdito", "--connection-token", "tok", "--host", "https://example.com/1", "--repo", "acme/a", "--port", "4567" ])
 
-    assert_equal "clawdito", options.agent
-    assert_equal [ "A" ], options.projects
-    assert_equal [ "acme/a", "acme/b" ], options.repos
-    assert_equal "jorge", options.operator
+    assert options.watch_basecamp?
+    assert options.watch_github?
     assert_equal 4567, options.port
   end
 
@@ -37,15 +36,21 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "pull_request_review", "issue_comment" ], options.events
   end
 
-  def test_requires_at_least_one_project_or_repo
+  def test_requires_something_to_watch
+    assert_raises ArgumentError do
+      BasecampAgentConnector::Connector.parse_options([])
+    end
+  end
+
+  def test_basecamp_requires_a_connection_token
     assert_raises ArgumentError do
       BasecampAgentConnector::Connector.parse_options([ "@clawdito" ])
     end
   end
 
-  def test_requires_an_agent_when_watching_projects
+  def test_basecamp_requires_a_host
     assert_raises ArgumentError do
-      BasecampAgentConnector::Connector.parse_options([ "--project", "Queenbee" ])
+      BasecampAgentConnector::Connector.parse_options([ "@clawdito", "--connection-token", "tok" ])
     end
   end
 end
