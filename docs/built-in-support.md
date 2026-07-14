@@ -133,7 +133,7 @@ The infrastructure for authenticated per-user streams already exists, and the
 protocol is plain JSON over a WebSocket — nothing browser-specific. A headless
 Ruby client (the connector's successor, ultimately the `basecamp` CLI) opens
 the socket with its agent token, subscribes to its agent channel, and gets
-fully bidirectional messaging: deliveries flow down; acks, cursor advances,
+fully bidirectional messaging: dispatches flow down; acks, cursor advances,
 and lease renewals flow up as channel actions. No new transport layer to
 build or operate.
 
@@ -184,7 +184,7 @@ New concepts, all small:
   scopes deliberately: mentionable, reachable, subscribable, assignable;
   excluded from billing and people-management abilities.
 
-- **`Agent::Delivery`** — the inbox row; the machine-facing sibling of
+- **`Agent::Dispatch`** — the inbox row; the machine-facing sibling of
   `Notification`. Essentially *(agent person, event, reason, position,
   acked-at)*. `reason` is the addressing that webhooks lack: *mentioned*,
   *thread reply*, *assigned*, *watch*, *ping line*. Created by the new
@@ -192,7 +192,7 @@ New concepts, all small:
   agents (mentionees, subscribers, assignees, watchers — intersected with each
   agent's directive policy). The row is cheap metadata; the JSON the client
   sees is rendered from the event at read time (the same pattern webhook
-  deliveries use), so payloads aren't persisted twice. Deliveries expire after
+  deliveries use), so payloads aren't persisted twice. Dispatches expire after
   a retention window.
 
   Why not reuse `Notification`? It's 80% right (event, addressed to a person,
@@ -213,13 +213,13 @@ New concepts, all small:
   record) renewed over the Cable connection; drives the active/offline badge.
 
 - **`AgentChannel`** (Action Cable) — the agent's stream. Authenticated by
-  agent token at connection; broadcasts a wake-up when new deliveries land.
+  agent token at connection; broadcasts a wake-up when new dispatches land.
   Client-to-server actions: acknowledge / advance cursor, renew lease. A
-  matching REST endpoint lists deliveries from a cursor for catch-up — the
+  matching REST endpoint lists dispatches from a cursor for catch-up — the
   same rows, so the stream and the inbox can never disagree.
 
 The flow end to end: recording saved → `Event` created → `Event::RelayJob`
-runs `relay_to_agents` → `Agent::Delivery` rows for each addressed agent →
+runs `relay_to_agents` → `Agent::Dispatch` rows for each addressed agent →
 `AgentChannel` broadcast wakes the connected runtime → it reads from its
 cursor, pulls context via the REST API, works, replies as the agent → its own
 reply excludes itself from the next round of recipients.
@@ -248,7 +248,7 @@ reply excludes itself from the next round of recipients.
 1. **`Agent` personable + agent token** — mentionable, reachable, assignable,
    badged, unbilled, API-authenticated. Removes the fake-account hack even
    with webhooks still in use.
-2. **The inbox** — `Agent::Delivery` + the relay step + the cursor REST
+2. **The inbox** — `Agent::Dispatch` + the relay step + the cursor REST
    endpoint. Conversation and chat mentions start working; the connector sheds
    the funnel, webhooks, corroboration, and teardown in one stroke.
 3. **The stream** — `AgentChannel` + presence lease. Real-time latency; the UI
@@ -265,7 +265,7 @@ eventually into nothing but the `basecamp` CLI and a skill.
 ## Open questions
 
 - **Retention and overflow** — how long does an offline agent's inbox retain
-  deliveries, and what does the UI show for a large backlog?
+  dispatches, and what does the UI show for a large backlog?
 - **Multiple runtimes per agent** — two laptops connect as the same agent:
   compete or duplicate? (Leases suggest single-active with takeover.)
 - **Directive policy granularity** — a list of people, or roles ("anyone on
