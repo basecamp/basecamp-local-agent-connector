@@ -406,6 +406,17 @@ open decisions by consequence and brings the top two; every other one stays on t
 bot card, and the summary says how many are waiting there. Never imply the list is
 empty, and never let the ceiling turn into the agent quietly deciding a third.
 
+**A list of risks is work, not a decision.** The intake path inherits phases from the
+full loop that were written as working sessions with Fernando — psp-plan's risk walk,
+one risk at a time, is the example — and that shape does not survive onto this surface.
+The agent resolves each risk itself: retired, shrunk to a named residual, or accepted
+with its reason, all written to the bot card. **Only a risk whose resolution he alone
+can make reaches the human card**, and it counts against the two-decision ceiling like
+anything else. A risk that already carries a recommendation is resolved, not open: bring
+it to him only if choosing against that recommendation is genuinely his call (his ruling
+2026-08-19, on a summary that handed back all eight risks as its next step and then spent
+its remaining words explaining the first — defects row 3883).
+
 **Bound the claims, not the prose — and prove every one.** The failure mode on this
 surface is a summary that asserts a lot and proves nothing, which is both longer and
 less useful than one that asserts little and proves it. So:
