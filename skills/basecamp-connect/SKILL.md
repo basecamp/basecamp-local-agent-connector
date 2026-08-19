@@ -376,6 +376,14 @@ Route on the card the triggering comment sits on:
   and its bot card. It runs all nine steps of `psp-design` at fix scale, finalizes
   the Approach into the bot card's description, moves **both** cards to Design, and
   halts.
+- **Comment on a sister card approving the Approach** — dispatch `psp-intake-code` with the same
+  two cards. It absorbs `psp-code` and `psp-test` at fix scale and **runs unattended**: his
+  approval is the go for the whole effort, not for its first part, so it never asks permission to
+  open one (his ruling 2026-08-19). It opens the PR with an **empty description and leaves it
+  empty** — **Fernando writes the description and merges, always.** Its terminal state is a green,
+  reviewed PR handed back with the implementation-only diff range, the fix-round count, and the
+  manual scenarios queued as unticked `Verify` steps on the bot card; this session posts that
+  handoff on the human card, @mentioning him, under the usual contract.
 
 **Both cards are created by the agent the moment a symptom clears dedupe** — the
 bot card and its sister, back to back, before any diagnosis. Their appearing is how
