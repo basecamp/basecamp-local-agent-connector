@@ -131,7 +131,7 @@ def paragraphs(cmd):
         if seen_fmt:
             lines.append(q)
     if not lines:
-        return []
+        return heredoc_or_file_body(cmd)
     blocks, cur = [], []
     for l in lines:
         if l.strip() == "":
@@ -142,6 +142,35 @@ def paragraphs(cmd):
     if cur:
         blocks.append(" ".join(cur))
     return blocks
+
+
+def heredoc_or_file_body(cmd):
+    """Bodies that do not arrive as printf arguments.
+
+    The guard read only `printf '%s\\n' ... | basecamp comments create`. A body
+    written by heredoc and posted with `< file` or `-` extracted nothing, so
+    `main` exited 0 and the comment went unchecked: six comments posted that way
+    in one session were never seen by this hook (defects 2026-08-19). PreToolUse
+    runs before the command does, so a file the same command is about to write
+    does not exist yet — but its heredoc text is right there in the command.
+    """
+    blocks = []
+    for body in re.findall(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1", cmd, re.S):
+        blocks.append(body[1])
+    if not blocks:
+        for path in re.findall(r"(?:<|\$\(cat\s+)\s*([^\s;|)<>]+)", cmd):
+            expanded = os.path.expanduser(path)
+            if os.path.isfile(expanded):
+                try:
+                    blocks.append(open(expanded).read())
+                except OSError:
+                    pass
+    out = []
+    for text in blocks:
+        for para in re.split(r"\n\s*\n", text.strip()):
+            if para.strip():
+                out.append(" ".join(para.split()))
+    return out
 
 
 def main():
@@ -159,7 +188,11 @@ def main():
 
     paras = paragraphs(cmd)
     if not paras:
-        sys.exit(0)
+        deny("the comment body could not be read from this command, so the contract "
+             "could not be checked, and an unreadable body is not an exempt one. "
+             "Post it in a form this guard can read: a heredoc written in the same "
+             "command, a file that already exists on disk, or "
+             "printf '%s\\n' 'para' '' 'para' | basecamp comments create <id> -")
     text = "\n".join(paras)
 
     problems = []
