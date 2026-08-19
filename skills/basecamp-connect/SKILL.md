@@ -512,6 +512,12 @@ onward. During intake both simply sit in Plan.
 - The **source card is never touched** — no comment, no move, no edit. It
   usually lives on a shared team board, where a PSP gate notifies people about our
   internal process instead of about their bug.
+- **A write is not done because the CLI said `ok`.** `basecamp cards update` has
+  reported success while silently dropping a 14KB body, and `basecamp comments update`
+  has reported success against a comment id that does not exist — an id one digit off a
+  real comment would have overwritten it (defects rows 3775, 3826). Ids for in-place
+  updates come from a `comments list` in the same round, and every write is confirmed by
+  re-reading the target, not by the exit status.
 
 The subscriber gate is not consulted here. Fernando: PSP has exactly two members,
 so every card in it is private by construction; the routing above, not the gate, is
