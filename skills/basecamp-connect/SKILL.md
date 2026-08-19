@@ -481,7 +481,8 @@ less useful than one that asserts little and proves it. So:
   that we wrote something down is. State the finding, not its filing.
 - **The last sentence names the next step.** Always, and as the final thing in the
   second paragraph — what happens next, who owns it, and what it unblocks. Name the
-  disposition outright: ready for design, blocked on a check only Fernando can run,
+  disposition outright: ready for design, **ready for code with design skipped and the artifact
+  that pins the shape named**, blocked on a check only Fernando can run,
   blocked on the reporter, going to planning as a scope change, or closed. A summary
   can satisfy every other requirement and still leave the reader guessing whether
   anything is waiting on them, which is the one thing a decision surface exists to
