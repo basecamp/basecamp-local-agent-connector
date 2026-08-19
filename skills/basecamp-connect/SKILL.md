@@ -500,6 +500,28 @@ project, because the sister card replaces it.
 The sister mirrors its bot card on **every** column transition from creation
 onward. During intake both simply sit in Plan.
 
+**An intake that ends without a build gets a postmortem, and the card waits for it.**
+When an effort closes with no code written — Not now, retired as a scope change, superseded,
+duplicate — dispatch `psp-intake-postmortem` **before** the human card moves to its terminal
+column. The unit is the human card, and the move is what publishes the closure, so the move is
+held until the report posts (Fernando's ruling 2026-08-19).
+
+It measures what a diagnosis-only effort has and refuses what it does not: minutes to verdict,
+how many times the verdict changed and what changed it, which filter caught each defect and which
+reached Fernando, and — the reason it exists — the earliest point the closing evidence was
+reachable, which yields a wasted-rounds figure. No LOC, no estimate error, no defects/KLOC: there
+is no build to divide by, and a fabricated zero enters the cross-effort trend as real. Its report
+lands on the bot card and its measures on the `projects.jsonl` row, and **this session then posts a
+short summary of it on the human card, @mentioning him** (his ruling 2026-08-19) — same contract,
+same hook, same three paragraphs as every other Human-table comment. The summary leads with the
+wasted-rounds figure and what closed the effort, names the true cost where it differs from the
+minutes booked, carries the lesson line, and states the disposition. A close-out he never sees
+measures nothing he can act on.
+
+This exists because one source card produced five effort rows, 381 minutes and 119 defect rows
+tonight, and every one of those rows was terminal with `actual: null` — invisible to calibration,
+since `psp-postmortem` measures a build and none of them built anything.
+
 **Division of labor, absolute:**
 
 - The **agent** owns the Bot table outright — cards, comments, moves — plus the
