@@ -4,8 +4,12 @@ description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted events — authored by the operator
   and @mentioning a real Basecamp agent user — and hands each off to a background
-  agent that gathers context, does the work, and replies as that agent user, so the
-  watcher thread stays free to keep taking new mentions.
+  agent that gathers context and does the work. Replies are written by the front thread so they carry the
+  session's output style, and only when the item's subscribers are just the
+  operator and the bot; otherwise the result comes back in the session. In
+  Fernando: PSP a two-table routing applies instead: comments on the standing
+  intake card start a psp-intake-bug diagnosis on the verbose Bot Card Table, and
+  a short human-readable sister card carries the summary.
   Invoked without arguments it recalls the last-used agent and projects from
   ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
@@ -24,11 +28,15 @@ triggers:
 This skill turns a Basecamp comment/message/card into a local Claude Code task.
 You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); a background
 agent on this machine picks it up, gathers the surrounding context from Basecamp,
-acts on it, and replies **as that agent user**.
+and acts on it **as that agent user**. A reply lands in the thread only when the item
+is private to you and the bot, and the **front thread writes it** so it carries this session's output style; on a public item the
+agent pings you in your private chat when you need to know, and the result comes
+back to you in the Claude Code session. Events in **Fernando: PSP** route by a
+dedicated two-table scheme — see "PSP bug intake" below.
 
 The agent is identified by a **local `basecamp` CLI profile** of the same name
 (e.g. profile `clawdito`). That profile is both:
-- the **reply identity** — replies post as the agent via `--profile <agent>`, and
+- the **posting identity** — every write posts as the agent via `--profile <agent>`, and
 - the **mention target** — the connector only fires when that user is @mentioned.
 
 The trust model is enforced by `bin/connect`, **not** by this skill: an event
@@ -184,7 +192,7 @@ Keep watching until the user stops the skill (see Cleanup).
 
 **The front thread is an orchestrator, not a worker.** Its only job is to keep
 watching for new mentions and to dispatch each one. It must **never** gather
-context, run the requested work, or post the reply itself — every one of those
+context or run the requested work itself — every one of those
 blocks it from picking up the next mention. For each event it does just two
 things — resolve the repo, then dispatch a single background agent that owns the
 event end-to-end — and then returns immediately to the monitor.
@@ -204,27 +212,20 @@ everything it needs to finish **without the front thread**:
 - the **instruction** — `recording.content` with the agent mention removed, the
   rest of the raw HTML (links, other mentions) intact;
 - the **recording** URL/id and its parent URL;
-- the **agent profile name** (its reply identity);
-- the **operator's** name/id (to @mention on failure).
+- the **agent profile name** (its Basecamp identity for every write it makes);
+- the **operator's** name/id (to @mention when the subscriber gate lets it reply,
+  and to match against the subscriber list).
 
 Instruct that background agent to, in order:
 
-1. **Acknowledge immediately with a boost** — before any slow work, boost the
-   originating recording (comment, message, card, **or** todo) with `On it!` **as
-   the agent** so the trigger visibly registered (a boost is a lightweight
-   reaction, ≤16 chars). This is the ack for **every** trigger — mentions and
-   assignments alike:
-   ```bash
-   basecamp boost create <recording.url|id> "On it!" --profile <agent>
-   ```
-2. **Gather context from Basecamp** — it is the context store; the event is just
+1. **Gather context from Basecamp** — it is the context store; the event is just
    the trigger + pointer:
    ```bash
    basecamp show <recording.app_url> -j          # the recording itself
    basecamp show <recording.parent.app_url> -j   # the card/message it lives in
    # plus the thread/comments and the project as needed
    ```
-3. **Move the card out of Triage.** If the work lives on a card (the recording
+2. **Move the card out of Triage.** If the work lives on a card (the recording
    or its parent is a `Kanban::Card`), check which column it sits in. If it's in
    a **Triage**-like column and the card table has an **In progress**-like column
    (match loosely and case-insensitively: "In progress", "Working on", "Doing"),
@@ -232,25 +233,80 @@ Instruct that background agent to, in order:
    underway:
    ```bash
    basecamp cards columns --project <project>            # find the columns
-   basecamp cards move <card-id> --column "<In progress>" --profile <agent>
+   basecamp cards move <card-id> --to "<In progress>" --project <project id> --profile <agent>
    ```
    If there's no Triage-like or no In-progress-like column, skip this silently —
    never invent columns.
-4. **Do the requested work** in the repo.
-5. **Reply on the originating recording as the agent** — commenting with the
-   agent's profile so the reply posts as the agent user:
+3. **Do the requested work** in the repo.
+4. **Check the audience, then reply only if it is private.** A reply is allowed
+   *only* when the item the reply would land on is seen by nobody but the operator
+   and the agent. Run the check on the **item** — the parent card/message/todo for
+   a comment trigger, the recording itself when it is the item:
    ```bash
-   basecamp comment <recording.url|id> "<body>" --profile <agent>
+   basecamp subscriptions show <item.url|id> -j --profile <agent>
    ```
-   - **Success** — post the results where the mention was written.
-   - **Failure** (it errored or couldn't finish) — post a short error summary and
-     **@mention the operator** so it surfaces as a notification.
-   - **Never put the agent mention in a reply body.**
+   Reply **only if every subscriber id** is the operator's or the agent's. One
+   other person on the list — a teammate, a reporter, anyone — and the agent does
+   not reply, ever. If the check errors or you cannot enumerate the subscribers,
+   treat it as **not private** and stay silent; never guess the audience.
+   - **Private item (operator and/or agent only)** — the reply is owed, but the
+     **background agent does not write it**. It returns a structured result and
+     posts nothing; the **front thread composes the body in this session's voice**
+     and posts it as the agent, @mentioning the operator so it surfaces as a
+     notification:
+     ```bash
+     basecamp comment <recording.url|id> "<body>" --profile <agent>
+     ```
+     A subagent runs its own context and its own voice; routing the words through
+     the front thread is what applies the session's output style. Success posts the
+     results; failure posts a short error summary. **Never put the agent's own
+     mention in a reply body.**
+   - **Anyone else subscribed** — say nothing in the thread at all. Nothing visible
+     happens on that item. When the agent needs the operator's
+     attention on such an item — it finished something he should see, it is
+     blocked, it failed, or it has a question — it pings him in the **operator's
+     private chat** instead (see "Escalation channel" below): an @mention, **one
+     sentence saying why it needs him**, and the item's `app_url`. Routine "done,
+     here it is" on a public item needs no ping — that goes in the session report.
+   - **Either way, return the result to the front thread**, which reports it to the
+     operator in the Claude Code session: what was done, links to anything it
+     produced (PR, card, doc), or what broke and where it stopped. On a public item
+     that session report is the *only* place the result appears.
+   - Writes the *task itself* asks for (create a card, post a doc, move a column)
+     are always fair game — this gate covers answering in the thread, nothing else.
 
-Because the background agent gathers its own context and posts its own reply, the
-front thread is free the instant it dispatches — it goes straight back to the
+Because the background agent gathers its own context and reports back to the
+session, the front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
-There is **no concurrency cap**; dispatch every event as it arrives.
+There is **no concurrency cap**; dispatch every event as it arrives. Composing a
+reply at the end of an event is the one piece of work the front thread keeps; it is
+words, not context-gathering, and it does not block the next dispatch.
+
+**Escalation channel.** When the subscriber gate blocks a reply but the operator
+needs to know something, the agent posts in his private chat in the
+**"Fernando: PSP"** project — Campfire room `10157062379`
+(<https://app.basecamp.com/2914079/buckets/48348194/chats/10157062379>):
+
+```bash
+basecamp chat post "@Fernando.Olivares <one sentence: why this needs you> <item app_url>" \
+  --project 48348194 --room 10157062379 --profile <agent>
+```
+
+**Every ping leads with one sentence saying why it needs him** — the specific thing
+he has to decide, unblock, or look at — then the item's `app_url`. Nothing else:
+no recap of the task, no status narration, no restating what the card already says.
+Write it so he can tell from that one sentence whether to open the link now or
+later. Examples:
+
+- `@Fernando.Olivares The repro procedure for the respond-in-Basecamp bug needs your approval before I can diagnose it. <url>`
+- `@Fernando.Olivares I can't reproduce this on iOS 26.1 and need to know which build you saw it on. <url>`
+- `@Fernando.Olivares CI is red on the PR for this card and the failure looks unrelated to my change. <url>`
+
+`chat post` resolves `@First.Last` mentions automatically, so the ping arrives as a
+real notification. The detail belongs in the session report, not the chat. This
+chat is also the right place for a question the agent cannot answer on a public
+card. The same one-sentence-why rule applies whenever the agent @mentions him in a
+reply on a private item.
 
 **c. Drop self-authored events.** If an event's recording is a comment the agent
 itself just posted, ignore it. Posting as the agent (a distinct user from the
@@ -264,22 +320,298 @@ If the event `kind` ends in `_assignment_changed`, the operator assigned the
 agent to the recording (a card/todo/step) — there's no mention to strip; **the
 recording itself is the task**. The dispatched background agent should, in order:
 
-1. **Acknowledge first with a boost** — same as for a mention: boost the
-   recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
-   "On it!" --profile <agent>`). Boosts work on todos and cards too, so a boost is
-   the single ack for both triggers.
-2. **Move the card out of Triage** — same rule as for mentions: if the assigned
+1. **Move the card out of Triage** — same rule as for mentions: if the assigned
    card sits in a Triage-like column and the table has an In-progress-like
    column, move it there before starting; skip silently otherwise.
-3. **Do the work** the card/todo describes (its `content`/`title` is the
+2. **Do the work** the card/todo describes (its `content`/`title` is the
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).
-4. **Reply with the result** on the same recording as the agent — and on failure,
-   a short error summary that @mentions the operator.
+3. **Apply the same subscriber gate before replying** — `basecamp subscriptions
+   show <recording.url|id> -j --profile <agent>`. Every subscriber the operator or
+   the agent: the agent returns its result and the **front thread** writes and posts
+   the reply as the agent, @mentioning the operator.
+   Anyone else on the list (or a check you cannot complete): no reply — ping the
+   operator in his private chat (see "Escalation channel") if he needs to see it.
+   Either way, return the result to the front thread for the session report.
 
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
+
+### PSP bug intake — the two-table routing in Fernando: PSP
+
+Events in **Fernando: PSP (48348194)** route by which card they land on, not by
+their content. The project holds two card tables with identical columns (Triage,
+Not now, Plan, Design, Code, Review, Test, QA, Postmortem, Done):
+
+| Table | Id | Purpose |
+|---|---|---|
+| **Human Card Table** | `10216651629` (Plan `10216651634`, Triage `10216651631`) | Fernando's interaction surface. Short, plain, human-readable. |
+| **Bot Card Table** | `10157062382` (Plan `10157062387`) | The agent's context store. As verbose as the work needs. |
+
+**The standing intake card is `10216674310`** ("On Call Work Card"), permanently in
+Human Triage. It never moves; its comment thread is the work history.
+
+Route on the card the triggering comment sits on:
+
+- **Comment on the standing card `10216674310`** — a **new intake**. It carries a
+  source card URL. Dispatch `psp-intake-bug` with the comment and that URL. The
+  agent resolves the repo from the source card, splits the report into one bug per
+  distinguishable wrong-vs-right result, and for each creates a Bot-table card in
+  Plan carrying the simplified plan and a code-backed theory. **When `psp-intake-bug` returns, dispatch `psp-bug-intake-plan-review` before
+  writing anything to the Human table.** It sweeps every open question, blocker and
+  `UNVERIFIED` claim against the reported-facts ledger and the source card, kills the
+  ones the report already answers, and checks the intent verdict, the citations, the
+  split and the sizing. Its report is what the human summary is written from — an
+  open item it killed never reaches Fernando (defects row 3777). **Intake decides
+  whether the behavior was designed** — from a test asserting it, the commit that
+  introduced it, an owning PSP effort's acceptance ledger, or the shipped contract —
+  and returns `defect`, `working-as-designed` or `never-designed`. Only `defect`
+  opens an effort; the other two are scope changes that belong to /psp-plan, and
+  intake halts and says so (defects row 3760).
+- **Comment on a sister card** — a **response about that one bug**, Fernando's
+  approval included. The card identity says which bug; never parse it out of the
+  body. When that comment approves the theory and asks for design ("sounds good,
+  let's run psp-intake-design"), dispatch `psp-intake-design` with the sister card
+  and its bot card. It runs all nine steps of `psp-design` at fix scale, finalizes
+  the Approach into the bot card's description, moves **both** cards to Design, and
+  halts.
+
+**Both cards are created by the agent the moment a symptom clears dedupe** — the
+bot card and its sister, back to back, before any diagnosis. Their appearing is how
+Fernando sees that work started. The sister is created with a **plain-language
+title and the source card URL as its body**; that title is the only prose the agent
+may write in the Human table. Both cards carry the source URL — it is the only
+route back to the original report from the card Fernando is looking at.
+
+**The summary is the front thread's.** When an agent returns, this session writes a
+short summary in Fernando's voice, @mentions him, and posts it as a comment on the
+sister card that already exists. **It always names the proposed direction** — what
+the fix would look like, **its size as new-and-changed LOC**, and roughly how far
+away it is — and any decision that is his to make. LOC is the measurement the
+postmortem computes estimate error against; a summary without it leaves the effort
+outside size calibration (defects row 3740). A summary carrying only the mechanism cannot serve a decision, and the
+Human table is the decision surface (defects row 3738).
+
+**A design summary carries at most two decisions.** `psp-intake-design` ranks the
+open decisions by consequence and brings the top two; every other one stays on the
+bot card, and the summary says how many are waiting there. Never imply the list is
+empty, and never let the ceiling turn into the agent quietly deciding a third.
+
+**Bound the claims, not the prose — and prove every one.** The failure mode on this
+surface is a summary that asserts a lot and proves nothing, which is both longer and
+less useful than one that asserts little and proves it. So:
+
+- **At most three or four factual claims.** If it needs more, the extra ones belong
+  on the bot card.
+- **Every claim carries its proof inline, as a link he can click.** A bare
+  `path/file.rb:41` or a bare short sha is checkable only by someone at a terminal
+  with that repo cloned and the right ref checked out, which defeats the point of
+  putting proof on the surface he reads (defects row 3776). Use GitHub, pinned at the
+  ref the claim was read at:
+  - code — `https://github.com/<org>/<repo>/blob/<sha>/<path>#L<line>`
+  - commit — `https://github.com/<org>/<repo>/commit/<sha>`
+  - PR — `https://github.com/<org>/<repo>/pull/<n>`
+  - Basecamp — the recording's `app_url`
+
+  Roster remotes: `bc3`, `bc3-ios`, `hey-ios`, `bc3-desktop`, `hey-electron` are all
+  under `basecamp/`. Read the remote with `git -C <repo> remote get-url origin`
+  rather than assuming. A claim with no reachable reference is an opinion, and on
+  this surface it reads as one.
+
+  Bare `file:line @ ref` stays correct on the **bot** card, which is read beside a
+  checkout. This rule is the human table's.
+- **Exactly three paragraphs: two of explanation, one of next steps.** A hard
+  count, not a target — countable at a glance and impossible to approach gradually.
+  Connected prose inside them: no bullet lists, no labelled slots, no telegram.
+- **Stripped-down directive register**, the same one the operator's global
+  `CLAUDE.md` mandates for every surface. No emoji, no filler, no hype, no
+  conversational transitions, no concessions carrying affect ("fair challenge",
+  "good question"). Address the reader directly and state things.
+- **No CTA. Ever.** The third paragraph names next steps and stops. Never solicit a
+  reply, never offer to do something conditional on permission — "say the word",
+  "let me know", "want me to" and their family are banned outright (defects rows
+  3805, 3806). If you would do the thing on request, either do it or state it as an
+  available next step; do not ask for the cue.
+- **If it will not fit in two paragraphs, you have too many claims.** Cut claims and
+  move them to the bot card; never cut the connective tissue to make room.
+- **Never an inventory of unknowns.** Intake's bar is that the card arrives with
+  none open (`psp-intake-bug` step 7b): each is settled, or carried as an evaluated
+  hypothesis with its consequence. What reaches the sister card is the hypothesis
+  and what it means, never the list. "Six unknowns remain" is the phase reporting
+  that it did not finish.
+- **No internal vocabulary.** Numbered items, "verdict", "retired", "conditional",
+  "designed intent", "acceptance rows", "step 2 of the chain", "rival" — none of it
+  parses without the bot card open, and a sentence the reader must decode is worse
+  than one that is merely long (defects row 3809). Say the thing in his terms: not
+  "item 1 is retired by ruling", but what we are now assuming and what breaks if the
+  assumption is wrong.
+- **No bookkeeping. The card is a decision surface, not a ledger of our process.**
+  Never report where something was filed, cite a defect row number, name a ledger
+  file, or narrate that a card now carries a comment. None of it changes a decision
+  he makes, and every such sentence displaces the finding it precedes (defects row
+  3808). A link to fuller detail is not bookkeeping and stays; a sentence announcing
+  that we wrote something down is. State the finding, not its filing.
+- **The last sentence names the next step.** Always, and as the final thing in the
+  second paragraph — what happens next, who owns it, and what it unblocks. Name the
+  disposition outright: ready for design, blocked on a check only Fernando can run,
+  blocked on the reporter, going to planning as a scope change, or closed. A summary
+  can satisfy every other requirement and still leave the reader guessing whether
+  anything is waiting on them, which is the one thing a decision surface exists to
+  deliver (defects row 3804). "Here is a cheap experiment" is not a disposition —
+  say whether the effort proceeds without it.
+
+Four failures bracket this contract, all on the same surface: a 350-word wall he had
+to read twice (row 3758), a slot template that produced seven disconnected one-liners
+(row 3759), a 300-word summary making six unreferenced assertions (row 3774), and a
+four-paragraph answer written with the contract loaded (row 3803). Short, cohesive,
+and proven are three separate requirements, and optimising for any one alone has now
+failed three times.
+
+**The ceiling is a count, not a range, because ranges do not hold.** Every earlier
+version of this rule gave a word range, and every one was exceeded by the writer who
+had it in context — a range has no failure condition you can check yourself against,
+so it reads as permission to reach its top. Three paragraphs either is or is not.
+
+**And it is enforced, not merely written down.** A `PreToolUse` hook
+(`~/.claude/hooks/psp-human-card-guard.py`, wired in `~/.claude/settings.json`)
+intercepts every `basecamp comments create|update` whose target resolves into the
+Human Card Table and denies the call on: a paragraph count other than three, more
+than **150 words total**, more than **60 words** or **4 sentences** in any
+paragraph, any single sentence over **40 words**, any banned soft-ask/CTA/filler
+phrase, any emoji, or a final paragraph with no stated next step. URLs do not count
+toward the word budget — they are proof, not prose.
+
+**Every dimension is capped because capping one displaces the growth into another.**
+Bounding words produced a slot template; bounding paragraphs grew the paragraphs
+(213 to 281 words with the count unchanged); bounding sentences alone would produce
+run-on sentences. The caps are simultaneous for that reason, and the denial names
+the actual counts so the fix is arithmetic rather than judgement. Six written amendments to this contract were each violated by the writer
+who had them loaded; the seventh is a gate. Adding a rule here without adding its
+check leaves the same gap.
+
+**Every requirement added here replaces something; it never appends.** The summary
+reached 350 words by gaining one mandatory element per defect fixed — direction,
+size, ranked decisions, the count — with nothing bounding the total. If a new element
+genuinely must appear, say which one it displaces. That @mention is the only
+notification he gets — the Campfire escalation channel does not apply in this
+project, because the sister card replaces it.
+
+The sister mirrors its bot card on **every** column transition from creation
+onward. During intake both simply sit in Plan.
+
+**Division of labor, absolute:**
+
+- The **agent** owns the Bot table outright — cards, comments, moves — plus the
+  Human table's structural actions: creating sister cards with their titles, and
+  column moves. **The bot never boosts anything, anywhere.** Every action ends in a
+  card or a comment, so a boost is only a second, weaker acknowledgement of something
+  already visible.
+- **This session** owns every Human-table **comment**. The agent never comments
+  there.
+- The **source card is never touched** — no comment, no move, no edit. It
+  usually lives on a shared team board, where a PSP gate notifies people about our
+  internal process instead of about their bug.
+
+The subscriber gate is not consulted here. Fernando: PSP has exactly two members,
+so every card in it is private by construction; the routing above, not the gate, is
+what decides where words go.
+
+### The front thread is a thin orchestrator
+
+It routes events, it writes the human-facing prose, and it does nothing else. It does
+not investigate, does not gather context, and does not carry findings from one agent
+into another's prompt. Every event reaches it first — the monitor wakes nothing else —
+and its only decision is which of three routes the event takes.
+
+**Answer directly** when the answer is already in this session: what an agent
+reported, what was decided, what a card says. Post the reply on the sister card in
+Fernando's voice. Reporting only in session is not answering — that mistake left a
+card standing with a recommendation the evidence had already killed.
+
+**Resume the owning agent** — `SendMessage` to its id — whenever the question turns on
+evidence that agent gathered. It still holds its own investigation and can re-derive
+from it; the front thread cannot. This is the default for follow-ups, corrections and
+challenges to a finding. Prefer it over a fresh spawn every time it applies. Its
+context dies with the session, so resume while you still can.
+
+**Spawn fresh only for new investigation** — work no existing agent has done.
+
+### Claims are reviewed before they reach the Human table
+
+**Anything that makes or revises a factual claim goes through
+`psp-bug-intake-plan-review` before it reaches Fernando's card.** Not only the
+initial intake run — a resumed agent answering a follow-up produces claims too, and
+a follow-up answer is where an agent is most likely to restate a conclusion more
+confidently than its evidence supports.
+
+The line is claims, not agents and not phases:
+
+- **Reviewed** — new evidence, a changed conclusion, a re-assertion of *how*
+  something is known, a size or estimate, a verdict.
+- **Not reviewed** — pure retrieval: a card id, a column, a restatement of what a
+  comment already says, a link.
+
+**Scope a follow-up review to the new or changed claims only.** The facts ledger,
+the citations and the split were verified on the first pass and are not re-derived;
+the first full pass on an effort ran ten minutes and 130k tokens, and repeating it
+per question would make the check cost more than the answer. The reviewer is told
+what changed and checks that.
+
+Two things tonight are why this is a rule. The reviewer's first pass returned three
+blocking findings on work that read as sound, including a time row whose stated
+measurement was impossible against its own timestamps. And the intake agent,
+re-checking its own work, mis-invoked `git` in a way that would have reversed its
+conclusion had it not caught itself — a self-check is not a check.
+
+### A fresh agent's context is the card, not this session
+
+**Dispatch prompts carry pointers, never findings.** Give a fresh agent the card ids,
+the source card URL, its Basecamp identity, the task and the constraints. Do **not**
+summarize what earlier agents concluded, what the theory is, or what the evidence
+showed. It reads all of that off the bot card, which is why the bot card is verbose.
+
+Three reasons this is a rule and not a preference:
+
+- **The front thread's memory is not durable.** This conversation is summarized as it
+  grows and is gone when the session ends. The card is what survives, and an agent
+  that depends on the session's recollection cannot be re-run tomorrow.
+- **A relayed finding is a finding without its evidence.** Passed through a prompt it
+  arrives as an assertion the agent is likely to accept, which is how a reviewer's
+  doubt came to outrank a correct reading (defects row 3777).
+- **It makes the card's completeness testable.** If a fresh agent cannot reconstruct
+  the effort from the card and its links, the card is deficient — and that is a defect
+  worth finding, not a gap to paper over from session memory.
+
+**When the front thread knows something the card does not, write it to the card** —
+Fernando's ruling in chat, a constraint agreed in session, a correction. Putting it
+in a prompt hides it from every later reader; putting it on the card makes it context
+for all of them.
+
+The narrow exceptions are facts that exist nowhere else and are not findings: the
+agent profile name, card and column ids, the repo roster, and explicit prohibitions.
+
+### Repo isolation — dispatched agents never work in a shared checkout
+
+The roster repos are Fernando's live checkouts, shared with him and with every
+other agent running concurrently. Two agents dispatched from one source card land
+in the same repos at the same time, and a `git checkout` in either moves `HEAD`
+under the other (defects row 3757).
+
+Every dispatch carries this rule:
+
+- **Read-only work needs no isolation**, but it must stay read-only. Pinned refs
+  are read with `git show <ref>:<path>` and `git -C <repo>`, never by checking the
+  ref out. `checkout`, `switch`, `stash`, `clean` and `reset` are banned in a
+  shared checkout.
+- **Anything that builds, tests, or writes code gets its own worktree**, one per
+  repo, under the agent's scratchpad: `git -C <repo> worktree add <path> <ref>`.
+  This is the existing rule for PR tasks, generalized — it is not only for PRs.
+
+The Agent tool's `isolation: "worktree"` flag does **not** cover this: it anchors a
+worktree to the session's own repo, the connector session's directory is not a git
+repository, and a dispatched agent typically spans two or three repos. The worktree
+has to be created per repo by the agent itself.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 
@@ -289,7 +621,7 @@ repo's `bin/ci` **in the background** (non-blocking) before reporting done.
 Aggregate as much as possible into a single run: don't re-run after every small
 edit, but as a general rule run `bin/ci` once at the **end** of the body of work.
 Running it in the background keeps the agent free and surfaces failures without
-stalling; fix anything it flags before you reply "done."
+stalling; fix anything it flags before you report "done."
 
 ```bash
 bin/ci --force > /tmp/ci-<branch>.log 2>&1; echo "EXIT=$?" >> /tmp/ci-<branch>.log   # background
@@ -315,10 +647,10 @@ green** — getting CI green is part of finishing the task, not a follow-up:
 4. **Green remotely** — `gh pr checks <n> --watch --fail-fast`; if a check fails,
    fix it, push, and re-watch. Loop until every check is green (remote can fail
    what local passed).
-5. **Only now reply "done"** on Basecamp, with the PR link. Never communicate
-   success on a red or unchecked branch. If you cannot get it green after a
-   reasonable effort, reply with **what is failing** and @mention the operator —
-   not a false "done."
+5. **Only now report done** — to the front thread with the PR link, and on
+   Basecamp too if the subscriber gate passes. Never communicate success on a red
+   or unchecked branch. If you cannot get it green after a reasonable effort,
+   report **what is failing** and where you stopped — not a false "done."
 
 #### Review / approval loop (GitHub webhook)
 
@@ -344,8 +676,10 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
 - **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
-  push, and reply.
-- **`approved`** — land per the repo's policy and reply done.
+  and push. GitHub review threads are the exception to the no-reply rule: replying
+  on the PR is allowed and expected — the ban covers the Basecamp thread that
+  tagged the agent.
+- **`approved`** — land per the repo's policy and report done to the front thread.
 
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API
@@ -382,9 +716,20 @@ webhook or an open funnel behind.
 - The connector never trusts the POST body's content — it re-fetches the
   recording from Basecamp before emitting. The content you see on STDOUT is the
   authoritative copy.
+- **Audience gate on replies:** a reply lands in a thread only when the item's
+  subscribers are the operator and/or the agent — a private item. Any other
+  subscriber and nothing visible happens on that item; anything the operator must
+  see goes to his private chat (room `10157062379`) and to the session report. An un-enumerable subscriber list counts as public. The words are
+  always the front thread's, never the background agent's.
+- **Fernando: PSP is routed, not gated.** Its two members make every card private
+  by construction, so the gate never decides anything there — "PSP bug intake"
+  above does, and its sister card replaces the Campfire ping.
+- **Campfire cannot be a trigger.** Basecamp refuses every chat type at webhook
+  registration (`Chat::Line`, `Chat::Transcript::Line`, `Campfire` and friends all
+  return `types: must be eligible`), so a chat mention never reaches the bridge.
+  Chat is an outbound channel only. Inbound always arrives as a `Comment`,
+  `Message`, `Kanban::Card`, `Kanban::Step` or `Todo`.
 - **Reply loop (defense in depth):** trust is "authored by the operator AND
-  mentions the agent." Replying as the agent profile (a distinct user) means
-  agent replies fail the operator-author check and are never re-ingested. The
-  durable belt-and-suspenders fix still belongs in `bin/connect` (don't emit
-  recordings the agent authored); until then, reply as the agent and keep the
-  agent mention out of reply bodies.
+  mentions the agent," so a reply posted as the agent (a distinct user) fails the
+  operator-author check and is never re-ingested. Keep the agent's own mention out
+  of reply bodies.
