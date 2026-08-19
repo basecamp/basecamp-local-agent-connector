@@ -39,6 +39,19 @@ LEDGER = [
     (r"\b(bot card|card table) (carries|now carries|has)\b",
      "reports bot-card contents"),
     (r"\bdefect (row|rows)\b", "names defect rows"),
+    # Process-state narration: sentences whose subject is one of our own phases or
+    # artifacts rather than the reader's problem. Three of these have reached the
+    # human card (rows 3808, 3877, 3908); the last passed a running guard, because
+    # the patterns above catch ledger writes and row numbers and nothing else.
+    (r"\b(nobody|no one) has (yet )?(designed|planned|decided|written|sized)\b",
+     "narrates which phase owes the work"),
+    (r"\bnot a plan\b", "narrates our phase vocabulary"),
+    (r"\bis (now )?folding (it|this|them) in\b", "narrates a phase in progress"),
+    (r"\b(design|intake|the battery|the build|the review) is (now )?(running|underway|in flight|folding)\b",
+     "narrates a phase in progress"),
+    (r"\bhas (not )?been (designed|reviewed|sized|planned)\b", "reports an artifact's phase status"),
+    (r"\bgoes through (review|design|the battery)\b", "narrates our pipeline"),
+    (r"\byou get back\b", "narrates what the process will hand over"),
 ]
 
 # Internal vocabulary. Terms that only parse if the reader has the bot card open.
