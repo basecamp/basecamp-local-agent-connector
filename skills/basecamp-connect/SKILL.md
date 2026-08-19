@@ -401,6 +401,14 @@ postmortem computes estimate error against; a summary without it leaves the effo
 outside size calibration (defects row 3740). A summary carrying only the mechanism cannot serve a decision, and the
 Human table is the decision surface (defects row 3738).
 
+**When intake offers a product alternative, the summary carries the choice, not the winner with a
+footnote.** Both directions, each with its size and what it gives up, and the recommendation. This
+replaces elaboration of the mechanism rather than adding to the budget: with two directions on the
+card, the reader needs enough of the mechanism to judge them and no more, and the rest stays on the
+bot card. A choice he cannot see is a choice he cannot make — the desktop sign-out effort's cheaper
+direction reached him only because it happened to land in a summary's last sentence, and it turned
+a 100-line change in one repository into 22 lines in another.
+
 **A design summary carries at most two decisions.** `psp-intake-design` ranks the
 open decisions by consequence and brings the top two; every other one stays on the
 bot card, and the summary says how many are waiting there. Never imply the list is
