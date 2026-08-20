@@ -118,15 +118,53 @@ def comment_parent(cid):
         return ""
 
 
+def designated_cards():
+    """Cards ruled human-facing outside the Human Card Table.
+
+    An effort can be run with a board card as its own human surface — Fernando
+    ruled one that way on 2026-08-19 — and the contract has to follow the role,
+    not the table. Without this the guard silently stops applying the moment the
+    surface moves, which is the condition that let nine unchecked comments out
+    earlier the same day.
+    """
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                        "psp-human-cards.json")
+    try:
+        return {str(c["id"]): c.get("bucket", PROJECT)
+                for c in json.load(open(path)).get("cards", [])}
+    except Exception:
+        return {}
+
+
+def comment_parent_in(cid, bucket):
+    url = f"https://3.basecampapi.com/2914079/buckets/{bucket}/comments/{cid}.json"
+    try:
+        out = subprocess.run(["basecamp", "show", url, "-j"],
+                             capture_output=True, text=True, timeout=20)
+        return str(((json.loads(out.stdout).get("data") or {}).get("parent") or {}).get("id") or "")
+    except Exception:
+        return ""
+
+
 def targets_human_table(target):
     tid = re.sub(r".*/", "", target.split("#")[0]).replace(".json", "")
     if not tid.isdigit():
         return False
+    designated = designated_cards()
+    if tid in designated:
+        return True
     ids = human_card_ids()
     if tid in ids or tid in human_card_ids(force=True):
         return True
     parent = comment_parent(tid)
-    return bool(parent) and parent in human_card_ids()
+    if parent and parent in human_card_ids():
+        return True
+    # A designated card lives on another board, so its comments must be resolved
+    # in that bucket rather than in the PSP project.
+    for card, bucket in designated.items():
+        if bucket != PROJECT and comment_parent_in(tid, bucket) == card:
+            return True
+    return False
 
 
 def paragraphs(cmd):

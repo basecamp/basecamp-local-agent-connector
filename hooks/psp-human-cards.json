@@ -1,0 +1,12 @@
+{
+  "_comment": "Cards designated human-facing outside the PSP Human Card Table. Fernando rules a card into this list by saying so; the guard then enforces the sister-card contract on it. Each entry: card id, the bucket it lives in, and why.",
+  "cards": [
+    {
+      "id": "10220386339",
+      "bucket": "43795599",
+      "title": "[iOS] To-dos pagination",
+      "designated": "2026-08-19",
+      "reason": "Fernando: 'Let's treat this card as the human-facing card' \u2014 no sister card for this effort, so the summary lands here on a shared team board."
+    }
+  ]
+}
