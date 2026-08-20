@@ -1,12 +1,21 @@
 {
-  "_comment": "Cards designated human-facing outside the PSP Human Card Table. Fernando rules a card into this list by saying so; the guard then enforces the sister-card contract on it. Each entry: card id, the bucket it lives in, and why.",
+  "_comment": "Human-facing surfaces outside the PSP Human Card Table. `cards` are individual cards Fernando ruled human-facing; `tables` are whole card tables whose every card is one. The guard enforces the sister-card contract on both. A card the intake agent adopts is appended to `cards`; the `tables` entry is the backstop for one it forgets.",
   "cards": [
     {
       "id": "10220386339",
       "bucket": "43795599",
       "title": "[iOS] To-dos pagination",
       "designated": "2026-08-19",
-      "reason": "Fernando: 'Let's treat this card as the human-facing card' \u2014 no sister card for this effort, so the summary lands here on a shared team board."
+      "reason": "Fernando: 'Let's treat this card as the human-facing card' — no sister card for this effort, so the summary lands here on a shared team board."
+    }
+  ],
+  "tables": [
+    {
+      "id": "9027546450",
+      "bucket": "43795599",
+      "title": "Issues — Mobile: On Call",
+      "designated": "2026-08-19",
+      "reason": "Intake runs on this board with the source card as its own human surface, so every card on it can become one. Adopted cards are appended to `cards` too; this entry means a missed append does not silently un-gate the contract."
     }
   ]
 }

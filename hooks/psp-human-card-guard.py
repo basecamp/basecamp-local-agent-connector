@@ -10,6 +10,8 @@ import json, os, re, subprocess, sys, time
 HUMAN_TABLE = "10216651629"
 PROJECT = "48348194"
 CACHE = os.path.expanduser("~/.claude/hooks/.psp-human-cards.json")
+TABLE_CACHE = os.path.expanduser("~/.claude/hooks/.psp-table-columns.json")
+ACCOUNT = "2914079"
 TTL = 900
 
 BANNED = [
@@ -136,6 +138,106 @@ def designated_cards():
         return {}
 
 
+def designated_tables():
+    """Whole card tables whose cards are human-facing.
+
+    The per-card list above stops scaling the moment a board is watched
+    wholesale: the intake agent appends each card it adopts, and a card it
+    forgets to append is a card the contract silently stops covering — the same
+    failure the per-card list was itself added to close. A table entry is the
+    backstop: every card on that board is gated whether or not anything
+    remembered to list it.
+    """
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                        "psp-human-cards.json")
+    try:
+        return [(str(t["id"]), str(t.get("bucket", PROJECT)))
+                for t in json.load(open(path)).get("tables", [])]
+    except Exception:
+        return []
+
+
+def cache_read(path):
+    try:
+        if time.time() - os.stat(path).st_mtime < TTL:
+            return json.load(open(path))
+    except Exception:
+        pass
+    return {}
+
+
+def cache_write(path, data):
+    try:
+        json.dump(data, open(path, "w"))
+    except Exception:
+        pass
+
+
+def table_column_ids(table, bucket):
+    key = f"{bucket}:{table}"
+    cache = cache_read(TABLE_CACHE)
+    if key in cache:
+        return set(cache[key])
+    try:
+        out = subprocess.run(
+            ["basecamp", "cards", "columns", "--project", bucket,
+             "--card-table", table, "-j"],
+            capture_output=True, text=True, timeout=25)
+        ids = [str(c["id"]) for c in (json.loads(out.stdout).get("data") or [])]
+    except Exception:
+        return set()
+    cache[key] = ids
+    cache_write(TABLE_CACHE, cache)
+    return set(ids)
+
+
+def card_column_id(cid, bucket):
+    """A card's parent is its column, so the board is one hop up from the card.
+
+    Reversing that hop — resolving the table's columns once and matching against
+    the set — costs one cached call instead of one call per card.
+    """
+    url = (f"https://3.basecampapi.com/{ACCOUNT}/buckets/{bucket}"
+           f"/card_tables/cards/{cid}.json")
+    try:
+        out = subprocess.run(["basecamp", "show", url, "-j"],
+                             capture_output=True, text=True, timeout=20)
+        return str(((json.loads(out.stdout).get("data") or {}).get("parent") or {}).get("id") or "")
+    except Exception:
+        return ""
+
+
+def named_project(cmd):
+    """The numeric project the command targets, when it states one.
+
+    Resolving an unknown card id costs two API hops, and paying them on every
+    comment posted anywhere is the difference between a hook you keep and one you
+    disable. A command that names a project other than a designated bucket cannot
+    be landing on a designated table, so it can skip the lookup. A command that
+    names none still pays — silently skipping the check is the failure this file
+    exists to prevent.
+    """
+    m = re.search(r"--(?:project|in)\s+[\"']?(\d+)", cmd)
+    return m.group(1) if m else ""
+
+
+def in_designated_table(tid, cmd=""):
+    named = named_project(cmd)
+
+    for table, bucket in designated_tables():
+        if named and named != bucket:
+            continue
+        columns = table_column_ids(table, bucket)
+        if not columns:
+            continue
+        if card_column_id(tid, bucket) in columns:
+            return True
+        parent = comment_parent_in(tid, bucket)
+        if parent and card_column_id(parent, bucket) in columns:
+            return True
+    return False
+
+
 def comment_parent_in(cid, bucket):
     url = f"https://3.basecampapi.com/2914079/buckets/{bucket}/comments/{cid}.json"
     try:
@@ -146,7 +248,7 @@ def comment_parent_in(cid, bucket):
         return ""
 
 
-def targets_human_table(target):
+def targets_human_table(target, cmd=""):
     tid = re.sub(r".*/", "", target.split("#")[0]).replace(".json", "")
     if not tid.isdigit():
         return False
@@ -164,7 +266,7 @@ def targets_human_table(target):
     for card, bucket in designated.items():
         if bucket != PROJECT and comment_parent_in(tid, bucket) == card:
             return True
-    return False
+    return in_designated_table(tid, cmd)
 
 
 def paragraphs(cmd):
@@ -234,7 +336,7 @@ def main():
     m = re.search(r"basecamp\s+comments\s+(?:create|update)\s+(\S+)", cmd)
     if not m:
         sys.exit(0)
-    if not targets_human_table(m.group(1).strip("\"'")):
+    if not targets_human_table(m.group(1).strip("\"'"), cmd):
         sys.exit(0)
 
     paras = paragraphs(cmd)
