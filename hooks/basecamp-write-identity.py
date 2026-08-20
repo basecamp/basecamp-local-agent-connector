@@ -18,8 +18,18 @@ import json
 import re
 import sys
 
+# The command text is not the command. A heredoc body, a quoted argument, a
+# grep pattern or a defect row describing this very guard all carry the literal
+# words of a write without being one — and matching them denied a
+# `ledger-append.py` call whose only crime was quoting `basecamp comments
+# create` inside a row about a false denial. So: drop heredoc bodies first,
+# then require the invocation to sit in command position.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1.*?^\s*\2\b", re.S | re.M)
+BOUNDARY = r"(?:^|[;&|(\n]|&&|\|\|)\s*(?:sudo\s+)?"
+
 WRITE = re.compile(
-    r"\bbasecamp\s+(?:"
+    BOUNDARY +
+    r"basecamp\s+(?:"
     r"comments?\s+(?:create|update|delete)"
     r"|cards?\s+(?:create|update|move|archive|trash|done|step)"
     r"|chat\s+post"
@@ -37,9 +47,13 @@ def main():
     if payload.get("tool_name") != "Bash":
         sys.exit(0)
     cmd = (payload.get("tool_input") or {}).get("command", "")
-    if not WRITE.search(cmd):
+    if not WRITE.search(HEREDOC.sub(" ", cmd)):
         sys.exit(0)
     if re.search(r"--profile[= ]", cmd):
+        sys.exit(0)
+    # A help invocation writes nothing. Scoped to commands carrying no quoted
+    # string, so `comments create 123 "text --help"` stays a write.
+    if re.search(r"(?:^|\s)(?:--help|-h)(?:\s|$)", cmd) and not re.search(r"[\"']", cmd):
         sys.exit(0)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
