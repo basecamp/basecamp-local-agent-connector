@@ -37,6 +37,43 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "pull_request_review", "issue_comment" ], options.events
   end
 
+  def test_parses_no_watched_columns_by_default
+    options = BasecampAgentConnector::Connector.parse_options([ "@Clawdito", "--project", "Queenbee" ])
+
+    assert_empty options.watched_columns
+  end
+
+  def test_parses_a_watched_column
+    options = parse_quietly([ "@Clawdito", "--project", "43795599", "--watch-column", "43795599:9956253701:52498414" ])
+
+    assert_equal 1, options.watched_columns.length
+    assert_equal "43795599:9956253701:52498414", options.watched_columns.first.to_s
+  end
+
+  def test_rejects_a_malformed_watched_column
+    assert_raises ArgumentError do
+      BasecampAgentConnector::Connector.parse_options([ "@Clawdito", "--project", "Queenbee", "--watch-column", "Sentry" ])
+    end
+  end
+
+  def test_warns_when_a_watched_bucket_is_in_no_watched_project
+    _out, err = capture_io do
+      BasecampAgentConnector::Connector.parse_options([ "@Clawdito", "--project", "Queenbee", "--watch-column", "43795599:9956253701" ])
+    end
+
+    assert_match(/no --project argument mentions/, err)
+  end
+
+  def test_does_not_warn_when_the_project_is_given_as_a_url_carrying_the_bucket
+    _out, err = capture_io do
+      BasecampAgentConnector::Connector.parse_options([ "@Clawdito",
+        "--project", "https://app.basecamp.com/2914079/projects/43795599",
+        "--watch-column", "43795599:9956253701" ])
+    end
+
+    assert_empty err
+  end
+
   def test_requires_at_least_one_project_or_repo
     assert_raises ArgumentError do
       BasecampAgentConnector::Connector.parse_options([ "@clawdito" ])
@@ -48,4 +85,11 @@ class ConnectorTest < Minitest::Test
       BasecampAgentConnector::Connector.parse_options([ "--project", "Queenbee" ])
     end
   end
+
+  private
+    def parse_quietly(argv)
+      options = nil
+      capture_io { options = BasecampAgentConnector::Connector.parse_options(argv) }
+      options
+    end
 end

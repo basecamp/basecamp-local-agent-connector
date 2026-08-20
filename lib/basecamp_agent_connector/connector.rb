@@ -11,7 +11,7 @@ class BasecampAgentConnector::Connector
   DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo"
   DEFAULT_EVENTS = "pull_request_review"
 
-  Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :port)
+  Options = Data.define(:agent, :operator, :projects, :types, :watched_columns, :repos, :events, :port)
 
   def self.start(argv)
     new(parse_options(argv)).start
@@ -22,6 +22,7 @@ class BasecampAgentConnector::Connector
   def self.parse_options(argv)
     arguments = argv.dup
     projects = []
+    watched_columns = []
     repos = []
     operator = nil
     types = DEFAULT_TYPES
@@ -29,8 +30,11 @@ class BasecampAgentConnector::Connector
     port = nil
 
     OptionParser.new do |parser|
-      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--types TYPES] [--events EVENTS] [--port PORT]"
+      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--watch-column BUCKET:COLUMN[:CREATOR]]... [--repo OWNER/REPO]... [--operator PROFILE] [--types TYPES] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
+      parser.on("--watch-column SPEC", "Trigger on any card created in this column, with no mention or assignment (repeatable)") do |value|
+        watched_columns << BasecampAgentConnector::Basecamp::WatchedColumn.parse(value)
+      end
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--types TYPES", "Comma-separated Basecamp event types") { |value| types = value }
@@ -43,7 +47,24 @@ class BasecampAgentConnector::Connector
     raise ArgumentError, "watch something: pass at least one --project or --repo" if projects.empty? && repos.empty?
     raise ArgumentError, "an agent is required to watch Basecamp projects, e.g. `connect @clawdito --project \"My Project\"`" if projects.any? && (agent.nil? || agent.empty?)
 
-    Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events), port: port)
+    warn_about_unwatched_buckets(watched_columns, projects)
+
+    Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types,
+      watched_columns: watched_columns, repos: repos, events: events_list(events), port: port)
+  end
+
+  # Webhooks are registered per project, so a watched column whose bucket is not
+  # among them is silently dead — no delivery ever arrives to match it. Projects
+  # can be named rather than numbered, so this can only warn.
+  def self.warn_about_unwatched_buckets(watched_columns, projects)
+    watched_columns.each do |watched|
+      bucket = watched.bucket.to_s
+
+      unless projects.any? { |project| project.to_s.include?(bucket) }
+        warn "Warning: --watch-column #{watched} names bucket #{bucket}, which no --project argument mentions. " \
+          "If that project is not watched, its card creations never arrive."
+      end
+    end
   end
 
   def self.normalize_agent(agent)
@@ -89,6 +110,7 @@ class BasecampAgentConnector::Connector
       BasecampAgentConnector::Basecamp::Bridge.new \
         operator: operator, agent: agent,
         projects: @options.projects, types: @options.types,
+        watched_columns: @options.watched_columns,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 

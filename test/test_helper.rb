@@ -92,6 +92,29 @@ module PayloadHelpers
     ).merge(overrides)
   end
 
+  # A `kanban_card_created` webhook: a card filed into a column by somebody who
+  # is not the operator and who mentions nobody — the shape a robot files.
+  def card_created_payload(overrides = {})
+    {
+      "id" => 99003,
+      "kind" => "kanban_card_created",
+      "created_at" => "2026-06-28T12:00:00Z",
+      "creator" => { "id" => 777, "name" => "MobileBot", "email_address" => "mobilebot@example.com" },
+      "recording" => created_card_recording
+    }.merge(overrides)
+  end
+
+  def created_card_recording(overrides = {})
+    sample_recording(
+      "id" => 901,
+      "type" => "Kanban::Card",
+      "title" => "Sentry Crash Report",
+      "content" => "<p>Project: hey-ios<br>All issues: HEY-IOS-669</p>",
+      "creator" => { "id" => 777, "name" => "MobileBot", "email_address" => "mobilebot@example.com" },
+      "parent" => { "id" => 555, "title" => "Sentry", "type" => "Kanban::Column" }
+    ).merge(overrides)
+  end
+
   # A webhook delivers a mention as an unexpanded attachment: just the SGID
   # (which encodes the Person gid) and content-type, with no rendered name.
   def mention_html(person_id:)

@@ -9,6 +9,9 @@ class BasecampAgentConnector::Basecamp::Event
 
   ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed", ASSIGNMENT_KIND_SUFFIX ]
 
+  CARD_CREATED_KIND = "kanban_card_created"
+
+
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
   # The webhook delivers a mention as an unexpanded attachment carrying only an
@@ -73,6 +76,18 @@ class BasecampAgentConnector::Basecamp::Event
     recording["url"]
   end
 
+  def bucket_id
+    recording.dig("bucket", "id")
+  end
+
+  # A card's parent is its column (`Kanban::Column`), never its board — the card
+  # table's id appears nowhere in the payload. That is why a watched surface is
+  # specified as a column rather than as a table: the column id arrives already
+  # matchable, and resolving a table would cost an API call per delivery.
+  def column_id
+    recording.dig("parent", "id")
+  end
+
   def recording_app_url
     recording["app_url"]
   end
@@ -95,6 +110,10 @@ class BasecampAgentConnector::Basecamp::Event
 
   def assignment_changed?
     kind.end_with?(ASSIGNMENT_KIND_SUFFIX)
+  end
+
+  def card_created?
+    kind == CARD_CREATED_KIND
   end
 
   def authored_by?(identity)
