@@ -8,8 +8,11 @@ description: |
   session's output style, and only when the item's subscribers are just the
   operator and the bot; otherwise the result comes back in the session. In
   Fernando: PSP a two-table routing applies instead: comments on the standing
-  intake card start a psp-intake-bug diagnosis on the verbose Bot Card Table, and
-  a short human-readable sister card carries the summary.
+  intake card start a psp-intake-plan diagnosis on the verbose Bot Card Table, and
+  a short human-readable sister card carries the summary. On the Mobile: On Call
+  Issues board the same intake runs with the board's own card as the human surface
+  — started by Fernando assigning the bot, or fired automatically when MobileBot
+  files a Sentry crash card.
   Invoked without arguments it recalls the last-used agent and projects from
   ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
@@ -95,6 +98,7 @@ The skill remembers the last successful connection in
   "agent": "clawdito",
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
+  "watched_columns": [ "43795599:9956253701:52498414" ],
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
@@ -107,8 +111,9 @@ The skill remembers the last successful connection in
 - **Invoked with arguments:** arguments win; the store is not consulted.
 - **After every successful registration** (the `Listening for mentions of …`
   line), write the params that were actually used back to the file — agent
-  profile, operator override (or null), and the projects with their resolved
-  ids and names — so the store always reflects the last working connection.
+  profile, operator override (or null), the projects with their resolved
+  ids and names, and any `--watch-column` specs — so the store always reflects
+  the last working connection.
   Create the directory if needed. Launch failures must not overwrite it.
 
 Project ids are stored (not just names) because name lookup is exact-match;
@@ -150,8 +155,13 @@ harness reports (you need it for the monitor):
 
 ```bash
 cd ~/Work/basecamp/basecamp-local-agent-connector && \
-  bin/connect @Clawdito --project "<project>" [--project "<project>"]...
+  bin/connect @Clawdito --project "<project>" [--project "<project>"]... \
+    [--watch-column BUCKET:COLUMN[:CREATOR]]...
 ```
+
+`--watch-column` is the one trigger that does not need the operator (see "On-call
+board intake" below). Its bucket must also be a `--project`, or no delivery ever
+arrives to match it; the connector warns when it cannot see one.
 
 Read that output file once and confirm it printed `Listening for mentions of ...`
 (registration succeeded). If it errored instead (unknown agent profile, auth,
@@ -181,8 +191,10 @@ Each STDOUT line is one trusted event as NDJSON:
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}}}
 ```
 
-`creator` is the operator (you). The mention of the agent lives in
-`recording.content` as a mention attachment. STDERR carries diagnostics
+`creator` is the operator (you) — on every path but one. A card creation matched
+by `--watch-column` carries whoever filed it, which is the point of that path;
+route on the card, not on the assumption that you authored the event. The mention
+of the agent lives in `recording.content` as a mention attachment. STDERR carries diagnostics
 (dropped/uncorroborated events, registration notices) — surface them but don't
 act on them.
 
@@ -355,10 +367,10 @@ Human Triage. It never moves; its comment thread is the work history.
 Route on the card the triggering comment sits on:
 
 - **Comment on the standing card `10216674310`** — a **new intake**. It carries a
-  source card URL. Dispatch `psp-intake-bug` with the comment and that URL. The
+  source card URL. Dispatch `psp-intake-plan` with the comment and that URL. The
   agent resolves the repo from the source card, splits the report into one bug per
   distinguishable wrong-vs-right result, and for each creates a Bot-table card in
-  Plan carrying the simplified plan and a code-backed theory. **When `psp-intake-bug` returns, dispatch `psp-bug-intake-plan-review` before
+  Plan carrying the simplified plan and a code-backed theory. **When `psp-intake-plan` returns, dispatch `psp-intake-plan-reviewer` before
   writing anything to the Human table.** It sweeps every open question, blocker and
   `UNVERIFIED` claim against the reported-facts ledger and the source card, kills the
   ones the report already answers, and checks the intent verdict, the citations, the
@@ -463,7 +475,7 @@ less useful than one that asserts little and proves it. So:
 - **If it will not fit in two paragraphs, you have too many claims.** Cut claims and
   move them to the bot card; never cut the connective tissue to make room.
 - **Never an inventory of unknowns.** Intake's bar is that the card arrives with
-  none open (`psp-intake-bug` step 7b): each is settled, or carried as an evaluated
+  none open (`psp-intake-plan` step 7b): each is settled, or carried as an evaluated
   hypothesis with its consequence. What reaches the sister card is the hypothesis
   and what it means, never the list. "Six unknowns remain" is the phase reporting
   that it did not finish.
@@ -575,6 +587,73 @@ The subscriber gate is not consulted here. Fernando: PSP has exactly two members
 so every card in it is private by construction; the routing above, not the gate, is
 what decides where words go.
 
+### On-call board intake — the source card is the human card
+
+The routing above splits one effort across two cards in one project. On **Mobile:
+On Call (43795599)**, card table **Issues (`9027546450`)**, it splits across two
+*projects* instead: the bot card stays in Fernando: PSP exactly as above, and the
+**card on the Issues board plays the sister card's part**. Nothing about the Bot
+Card Table changes.
+
+**Two triggers, and only two:**
+
+- **Fernando assigns the bot to a card, or @mentions it in a comment on one.**
+  The ordinary trust path — he authored the event and pointed it at the agent.
+  Every card on the board is reachable this way and none is reached any other way.
+- **MobileBot files a card into the Sentry column (`9956253701`).** This one fires
+  with no involvement from him at all, via
+  `--watch-column 43795599:9956253701:52498414`. It is the single place the
+  operator-author gate is relaxed, and it is relaxed because the cards worth
+  catching there are filed by a robot: six landed between June and July and not one
+  was ever triaged. Roughly three a month. Nothing else on the board self-triggers.
+
+`sentry-card-verdict` used to own that column and no longer runs — nothing invokes
+it and none of its cards carry a comment. Intake absorbs it. Three things from it
+are worth keeping and belong in the diagnosis, not in a skill: the decisive cut is
+almost always the release split of the current build against the prior one; Windows
+exit code `-1073741510` (`0xC000013A`) is a force-terminated process, not a crash;
+and a plain `resolve` reopens on the next straggler event, so `resolvedInNextRelease`
+is the right disposition while old builds are still emitting.
+
+**The subscriber gate is not consulted here either.** The board is shared with the
+mobile team and the gate would block every reply, and an Issues card can carry an
+empty subscriber list, which would make the gate permit one for the wrong reason.
+Routing decides, as it does in Fernando: PSP. Fernando ruled the notification cost
+acceptable on 2026-08-19: people watching the board do not get notified of a card
+they are not subscribed to, so making the process public costs nothing here.
+
+**Division of labor is unchanged, with the source card in the sister's place.**
+This session owns every comment on it. The agent owns column moves and `Verify`
+steps and never comments there. The card is adopted, so the standing "never touch
+the source card" rule does not apply to it — it still applies to any *other* card
+the report links to.
+
+**Column map**, because Issues has none of PSP's columns:
+
+| Bot card (PSP) | Issues board |
+|---|---|
+| Plan, Design | Triage until diagnosed, then In progress |
+| Code, Review | In progress → Ready for PR Review |
+| Test, QA | QA to confirm fixed |
+| Postmortem, Done | Done |
+| Not now | Not now |
+
+Sentry, Waiting for feedback and Pending internal release have no counterpart —
+never move a card into one to represent a phase. And the postmortem's hold on the
+terminal move cannot be enforced on a shared board: anyone can drag the card to
+Done. Post the close-out anyway.
+
+**Sentry cards dedupe on the issue short-id, never on symptom prose.** The body
+carries `Project: <repo>` and `All issues: <SHORT-ID>`, which resolves the repo
+without inference and gives dedupe an exact key. It needs one: a plain `resolve`
+makes MobileBot re-card the same signature within hours, and prose matching will
+not catch that.
+
+**Adoption is recorded, not assumed.** When intake adopts a card, append it to
+`hooks/psp-human-cards.json` under `cards`. The board is also listed there under
+`tables`, so the comment contract is enforced either way — the append is what keeps
+the record honest, not what turns the guard on.
+
 ### The front thread is a thin orchestrator
 
 It routes events, it writes the human-facing prose, and it does nothing else. It does
@@ -598,7 +677,7 @@ context dies with the session, so resume while you still can.
 ### Claims are reviewed before they reach the Human table
 
 **Anything that makes or revises a factual claim goes through
-`psp-bug-intake-plan-review` before it reaches Fernando's card.** Not only the
+`psp-intake-plan-reviewer` before it reaches Fernando's card.** Not only the
 initial intake run — a resumed agent answering a follow-up produces claims too, and
 a follow-up answer is where an agent is most likely to restate a conclusion more
 confidently than its evidence supports.
