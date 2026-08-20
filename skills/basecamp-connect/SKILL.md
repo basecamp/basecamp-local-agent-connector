@@ -558,7 +558,9 @@ since `psp-postmortem` measures a build and none of them built anything.
   card or a comment, so a boost is only a second, weaker acknowledgement of something
   already visible.
 - **This session** owns every Human-table **comment**. The agent never comments
-  there.
+  there. **`Verify` steps are the one exception to the agent's no-writing rule** — a
+  checklist belongs on the card of the person who runs it, and they are structure rather
+  than prose, so the agent creates them on the human card directly (defects row 3971).
 - The **source card is never touched** — no comment, no move, no edit. It
   usually lives on a shared team board, where a PSP gate notifies people about our
   internal process instead of about their bug.
