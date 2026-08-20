@@ -1,4 +1,4 @@
-# Project → repo mapping for the /basecamp skill.
+# Project → repo mapping for the /basecamp-connect skill.
 #
 # When a trusted event arrives, the skill resolves which local repo to run the
 # agent in by matching tokens (case-insensitive) against the Basecamp project
@@ -6,12 +6,29 @@
 # matches, the skill asks you which repo to use — it never guesses.
 #
 # Paths may use ~ for your home directory.
+#
+# The two projects the agent user (@on-call-bot) belongs to — "Mobile: On Call"
+# and "Fernando: PSP" — are deliberately NOT mapped: both span several repos, and
+# which one a card means is decided by the card, not the project. Those events
+# fall through to "ask which repo", with the roster below as the candidate list.
+#
+# Active clones live at ~/<repo>; the ~/Work/basecamp/ copies of bc3-ios and
+# bc3-desktop are stale and are not mapped.
 
 [mappings]
+"bc3-desktop" = "~/bc3-desktop"
+"bc3-ios" = "~/bc3-ios"
+"hey-electron" = "~/hey-electron"
+"hey-ios" = "~/hey-ios"
+"haystack" = "~/Work/basecamp/haystack"
 "bc5" = "~/Work/basecamp/bc3"
 "bc4" = "~/Work/basecamp/bc3"
 "basecamp" = "~/Work/basecamp/bc3"
-"hey" = "~/Work/basecamp/haystack"
-"fizzy" = "~/Work/basecamp/fizzy"
 "launchpad" = "~/Work/basecamp/launchpad"
 "queenbee" = "~/Work/basecamp/queenbee"
+"shipshape" = "~/Work/basecamp/shipshape"
+"shipyard" = "~/Work/basecamp/shipyard"
+"signal_id" = "~/Work/basecamp/signal_id"
+"docker-dev" = "~/Work/basecamp/docker-dev"
+"ruby-dev" = "~/Work/basecamp/ruby-dev"
+"hotwire-native-ios" = "~/Work/basecamp/hotwire-native-ios"
