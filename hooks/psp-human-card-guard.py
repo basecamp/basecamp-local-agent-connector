@@ -66,6 +66,22 @@ LEDGER = [
 # because measuring them is the whole reason it exists.
 POSTMORTEM = re.compile(r"\bpost-?mortem\b", re.I)
 
+# A second exemption: a comment Fernando asked for as a TABLE. The prose caps -
+# three paragraphs, sentence and word limits, one-fact-per-sentence - describe a
+# decision surface written in sentences. A table he requested is data he intends
+# to act from row by row, and counting its cells as sentences would refuse the
+# thing he asked for. The tone rules still apply to any prose around it.
+# Fernando, 2026-08-21: "the 3 paragraph rule stays, but adding images or tables
+# or bullet-points for additional explanation is allowed."
+#
+# So a block that is a table, a list, an image or an attachment is NOT prose. It
+# does not count toward the three, and no length cap applies to it - a table row
+# is not a sentence and counting its cells as words refuses the thing he asked
+# for. The three prose paragraphs still have to be there and still have to obey
+# every cap. The tone rules apply to everything, extras included: a metaphor
+# inside a bullet is still a metaphor.
+NONPROSE = re.compile(r"<(?:table|tr|td|th|ul|ol|li|figure|img|bc-attachment)\b", re.I)
+
 ACCOUNTING = [
     (r"\b\d+\s*(?:minutes?|mins?|hours?)\b", "counts our minutes"),
     (r"\bagainst an? (?:planned|estimated?)\b", "reports estimate error"),
@@ -167,6 +183,16 @@ COUNTED = re.compile(
     r"\b(?:both|either|the two|all three|all four|the three)\s+"
     r"(?:the\s+)?[a-z][a-z-]*s\b", re.I)
 
+# The same failure with the noun supplied and the items still missing:
+# "those five instrumentation parts", "the four events". He asked "what
+# instrumentation parts?" within a minute of reading one. A count only
+# earns its place when the comment itself enumerates what it counts, so
+# this fires unless the body carries a list or the sentence introduces one.
+POINTED = re.compile(
+    r"\b(?:those|these|the|all)\s+"
+    r"(?:two|three|four|five|six|seven|eight|nine|ten|\d{1,3})\s+"
+    r"(?:[a-z][a-z-]*\s+){0,2}[a-z][a-z-]*s\b", re.I)
+
 URL = re.compile(r"https?://\S+")
 SENT = re.compile(r"[.!?]+(?:\s|$)")
 TAG = re.compile(r"<[^>]+>")
@@ -187,7 +213,48 @@ MAX_PARA_SENTENCES = 5
 MAX_SENTENCE_WORDS = 25
 
 
-def deny(reason):
+# Self-owned next steps. A comment that ends "none from you" or "mine, not yours"
+# declares work the session still owes. The guard runs before the comment posts
+# and cannot watch what happens after it, so it records the debt instead: every
+# self-owned step lands in OPEN_STEPS with its card, and psp-open-steps.py lists
+# what is still outstanding. Fernando should never be the thing that restarts us.
+OPEN_STEPS = os.path.expanduser("~/.claude/hooks/.psp-open-steps.json")
+SELF_OWNED = re.compile(
+    r"next step[^.]*?\b(?:"
+    r"none from you|nothing from you|mine,? not yours|is mine\b|ours\b|"
+    r"none here|no action from you|not yours"
+    r")", re.I)
+
+
+def record_debt(card, kind, text):
+    if os.environ.get("PSP_GUARD_PREVIEW"):
+        return
+    try:
+        steps = json.load(open(OPEN_STEPS))
+    except Exception:
+        steps = []
+    steps.append({"card": card, "kind": kind,
+                  "declared": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "step": " ".join(re.sub(r"<[^>]+>", " ", text).split())[:300],
+                  "done": False})
+    try:
+        json.dump(steps, open(OPEN_STEPS, "w"), indent=2)
+    except Exception:
+        pass
+
+
+def record_open_step(card, para):
+    record_debt(card, "self-owned", para)
+
+
+# A denial is not a no-op. The card was owed a comment before the check ran and
+# it is still owed one after, but nothing on the card, in the thread, or in this
+# store would show it -- so one turn later a blocked write is indistinguishable
+# from a delivered one. That is how a direct question sat unanswered for three
+# hours (defects row 4472). Every denial is recorded here as an open obligation.
+def deny(reason, card=None):
+    if card:
+        record_debt(card, "denied", reason.split("\n")[0])
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
@@ -443,7 +510,8 @@ def main():
     m = re.search(r"basecamp\s+comments\s+(?:create|update)\s+(\S+)", cmd)
     if not m:
         sys.exit(0)
-    if not targets_human_table(m.group(1).strip("\"'"), cmd):
+    card = m.group(1).strip("\"'")
+    if not targets_human_table(card, cmd):
         sys.exit(0)
 
     paras = paragraphs(cmd)
@@ -452,13 +520,17 @@ def main():
              "could not be checked, and an unreadable body is not an exempt one. "
              "Post it in a form this guard can read: a heredoc written in the same "
              "command, a file that already exists on disk, or "
-             "printf '%s\\n' 'para' '' 'para' | basecamp comments create <id> -")
+             "printf '%s\\n' 'para' '' 'para' | basecamp comments create <id> -",
+             card=card)
     text = "\n".join(paras)
 
     problems = []
-    if len(paras) != 3:
-        problems.append(f"{len(paras)} paragraphs; the contract requires exactly 3 "
-                        "(two of explanation, one of next steps)")
+    prose = [p for p in paras if not NONPROSE.search(p)]
+    extras = len(paras) - len(prose)
+    if len(prose) != 3:
+        problems.append(f"{len(prose)} prose paragraphs; the contract requires exactly 3 "
+                        "(two of explanation, one of next steps). Tables, lists and "
+                        f"images are additional and do not count — {extras} found.")
     low = text.lower()
     hits = [b for b in BANNED if b in low]
     if hits:
@@ -490,7 +562,7 @@ def main():
             "Basecamp resolves a pasted link in its own composer; posting through the "
             "API does not, so fetch the target's title and use it as the anchor text.")
 
-    for i, para in enumerate(paras, 1):
+    for i, para in enumerate(prose, 1):
         negs = NEGATION.findall(TAG.sub(" ", URL.sub("", para)))
         if len(negs) > MAX_PARA_NEGATIONS:
             problems.append(
@@ -504,12 +576,23 @@ def main():
             problems.append(f"metaphor ({m_.group(0)!r}). Software does not hear or "
                             "stay quiet. Say the literal thing it does or does not do.")
 
+    enumerates = "<li" in text or "<td" in text
     for sent in re.split(r"(?<=[.;])\s+", TAG.sub(" ", text)):
         m_ = COUNTED.search(sent)
         if m_ and "`" not in sent and "<code" not in sent:
             problems.append(f"counted but unnamed ({m_.group(0)!r}). Name the things "
                             "you are counting, or he has to go and look them up.")
             break
+
+    if not enumerates:
+        for sent in re.split(r"(?<=[.;:])\s+", TAG.sub(" ", text)):
+            m_ = POINTED.search(sent)
+            if m_ and ":" not in sent and "`" not in sent:
+                problems.append(
+                    f"points at a list he cannot see ({m_.group(0)!r}). A count "
+                    "with no enumeration makes him ask what they are. Name them, "
+                    "list them, or say the one that matters and drop the number.")
+                break
 
     for pat in EMPHASIS:
         m_ = re.search(pat, text, re.I)
@@ -529,7 +612,7 @@ def main():
             problems.append(f"passive or ambiguous about the action - {why} "
                             f"({m_.group(0)!r}). {fix}")
 
-    if not NEXT_STEP.search(paras[-1]):
+    if prose and not NEXT_STEP.search(prose[-1]):
         problems.append("final paragraph does not state a next step "
                         "(it must contain 'Next step')")
 
@@ -539,7 +622,7 @@ def main():
         # the style attribute alone would eat a dozen words of a 150-word budget.
         return len(TAG.sub(" ", URL.sub("", s)).split())
 
-    per = [wc(p) for p in paras]
+    per = [wc(p) for p in prose]
     total = sum(per)
     if total > MAX_TOTAL_WORDS:
         problems.append(f"{total} words, cap is {MAX_TOTAL_WORDS} "
@@ -549,7 +632,7 @@ def main():
     for i, n_ in enumerate(per, 1):
         if n_ > MAX_PARA_WORDS:
             problems.append(f"paragraph {i} is {n_} words, cap is {MAX_PARA_WORDS}")
-    for i, para in enumerate(paras, 1):
+    for i, para in enumerate(prose, 1):
         stripped = URL.sub("", para)
         sents = [s for s in SENT.split(TAG.sub(" ", stripped)) if s.strip()]
         if len(sents) > MAX_PARA_SENTENCES:
@@ -560,6 +643,9 @@ def main():
                 problems.append(f"a sentence in paragraph {i} runs "
                                 f"{len(s.split())} words, cap is {MAX_SENTENCE_WORDS}")
                 break
+
+    if SELF_OWNED.search(paras[-1]):
+        record_open_step(card, paras[-1])
 
     if problems:
         deny("Sister-card comment contract violated:\n- " + "\n- ".join(problems) +
@@ -574,7 +660,10 @@ def main():
              "also named. No effort accounting - minutes, estimate error and finding "
              "counts belong on the bot card, unless the comment is a postmortem. "
              "Stripped-down directive register - no CTA, no soft ask, no filler. "
-             "Every factual claim carries a clickable GitHub or Basecamp link.")
+             "Tables, bullet lists and images are welcome as extra explanation and "
+             "are exempt from the caps, but the three prose paragraphs still stand. "
+             "Every factual claim carries a clickable GitHub or Basecamp link.",
+             card=card)
     sys.exit(0)
 
 
