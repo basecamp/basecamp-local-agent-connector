@@ -28,6 +28,40 @@ class EventTest < Minitest::Test
     assert_equal [ 200 ], emitted["details"]["added_person_ids"]
   end
 
+  def test_authored_by_matches_on_the_account_person_id
+    operator = BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: 35753702)
+
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 35753702 })).authored_by?(operator)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 999 })).authored_by?(operator)
+  end
+
+  # Basecamp masks other people's addresses on a recording read, so the only
+  # unmasked thing the operator check can stand on is the id. Matching on email
+  # here answers false and every mention and assignment silently stops firing.
+  def test_a_masked_email_does_not_stop_the_operator_check
+    operator = BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "folivares@basecamp.com", person_id: 35753702)
+    masked = sample_payload("creator" => { "id" => 35753702, "email_address" => "f\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022@\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022.\u2022\u2022\u2022" })
+
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(masked).authored_by?(operator)
+  end
+
+  # A masked address must never be read as a match on its own.
+  def test_a_masked_email_alone_is_not_the_operator
+    operator = BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "folivares@basecamp.com")
+    masked = sample_payload("creator" => { "email_address" => "f\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022@\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022.\u2022\u2022\u2022" })
+
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(masked).authored_by?(operator)
+  end
+
+  # The id wins when both are present and they disagree, so a shared or stale
+  # address cannot authorize somebody else's event.
+  def test_the_person_id_decides_when_it_disagrees_with_the_email
+    operator = BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: 35753702)
+
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 999, "email_address" => "operator@example.com" })).authored_by?(operator)
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 35753702, "email_address" => "someone@example.com" })).authored_by?(operator)
+  end
+
   def test_authored_by_matches_on_email
     assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).authored_by?(operator_identity)
     assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "email_address" => "OPERATOR@example.com" })).authored_by?(operator_identity)

@@ -116,10 +116,20 @@ class BasecampAgentConnector::Basecamp::Event
     kind == CARD_CREATED_KIND
   end
 
+  # The account-scoped person id decides this, and email is only the fallback for
+  # a payload that carries no creator id. Basecamp masks other people's addresses
+  # on a recording read — the operator's comes back as `f••••••••@••••••••.•••` —
+  # so an email comparison answers false for every event he authored, and the two
+  # triggers that route through here, mentions and assignments, both go dead while
+  # watched-column creations keep working. Ids are never masked.
   def authored_by?(identity)
-    return false if creator_email.nil? || identity.email.nil?
-
-    creator_email.casecmp?(identity.email)
+    if !creator_id.nil? && !identity.person_id.nil?
+      creator_id == identity.person_id
+    elsif !creator_email.nil? && !identity.email.nil?
+      creator_email.casecmp?(identity.email)
+    else
+      false
+    end
   end
 
   def mentions?(agent)

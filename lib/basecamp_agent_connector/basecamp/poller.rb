@@ -62,7 +62,17 @@ class BasecampAgentConnector::Basecamp::Poller
   # authored anything, which is the whole point of the watched-column trigger —
   # letting a notification copy win would drop a bot-filed card on the floor.
   def payloads
+    @staged = {}
     watched_creations + mentioned + assigned
+  end
+
+  # Undo everything this round remembered on that payload's behalf. Called when
+  # the Verifier could not reach Basecamp to corroborate it: nothing was emitted,
+  # so nothing was handled, and the next round has to see it again.
+  def rollback(payload)
+    Array(@staged&.delete(payload.dig("recording", "id"))).each do |source, id|
+      state.forget source, id
+    end
   end
 
   # A first run has no idea what it has already handled, and the surfaces it
@@ -87,13 +97,22 @@ class BasecampAgentConnector::Basecamp::Poller
       unseen(NOTIFICATIONS, notifications).filter_map do |notification|
         next remember(NOTIFICATIONS, notification) unless watched_bucket?(notification["bucket_name"])
 
-        emit(notification_payload(notification))&.tap { remember NOTIFICATIONS, notification }
+        emit(notification_payload(notification))&.tap do |payload|
+          remember NOTIFICATIONS, notification
+          stage payload, NOTIFICATIONS, notification["id"]
+        end
       end
     end
 
+    # `.tap` and not `&.tap`, because a card whose recording was already emitted
+    # from another source still has to be remembered here or it is re-listed every
+    # round -- and `nil.tap` runs its block, which is what makes that work.
     def watched_creations
       unseen(CARDS, watched_cards).filter_map do |card|
-        emit(card_payload(card)).tap { remember CARDS, card }
+        emit(card_payload(card)).tap do |payload|
+          remember CARDS, card
+          stage payload, CARDS, card["id"]
+        end
       end
     end
 
@@ -115,6 +134,17 @@ class BasecampAgentConnector::Basecamp::Poller
       return nil if id.nil? || state.seen?(RECORDINGS, id)
 
       state.record RECORDINGS, id
+      stage payload, RECORDINGS, id
+      payload
+    end
+
+    # Everything this round wrote to state on a payload's behalf, so it can be
+    # taken back if the payload never survives verification. Recording an id says
+    # the event was handled; that claim is only true once something was emitted.
+    def stage(payload, source, id)
+      return payload if payload.nil?
+
+      ((@staged ||= {})[payload.dig("recording", "id")] ||= []) << [ source, id ]
       payload
     end
 

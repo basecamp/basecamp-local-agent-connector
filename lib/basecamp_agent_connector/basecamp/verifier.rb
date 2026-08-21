@@ -1,4 +1,20 @@
 class BasecampAgentConnector::Basecamp::Verifier
+  # Raised when the corroborating read could not be made at all. A forged event
+  # and an unreachable API both used to return nil here, so a transient failure
+  # was silently indistinguishable from a rejection -- and the caller had already
+  # written the event off as handled.
+  Unreachable = Class.new(StandardError)
+
+  # Deliberately narrow, and matched on the message because Client::Error carries
+  # nothing else. A 404 is not in here: the recording really is absent, which is a
+  # rejection and stays one. These are the failures that mean the question was
+  # never asked -- the profile's credentials read as missing while the token is
+  # valid for another fortnight, or the network dropped underneath the call.
+  UNREACHABLE = /not authenticated|credentials not found|no such profile|
+                 timed out|timeout|connection (refused|reset)|could not connect|
+                 network is (down|unreachable)|temporarily unavailable|
+                 \b(429|500|502|503|504)\b/xi
+
   def initialize(basecamp_cli:, agent:)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -18,7 +34,9 @@ class BasecampAgentConnector::Basecamp::Verifier
       return nil if locator.nil?
 
       @basecamp_cli.show(locator)
-    rescue BasecampAgentConnector::Basecamp::Client::Error
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      raise Unreachable, "could not corroborate #{locator}: #{error.message}" if UNREACHABLE.match?(error.message)
+
       nil
     end
 

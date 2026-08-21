@@ -30,6 +30,16 @@ class BasecampAgentConnector::PollState
     ids(source) << key(id)
   end
 
+  # Recording an id is a promise that the event was handled. When the promise
+  # turns out to be false -- the Verifier could not reach Basecamp to corroborate
+  # it, so nothing was emitted -- the memory has to come back out, or the event is
+  # lost for good on a blip.
+  def forget(source, id)
+    return if key(id).empty?
+
+    ids(source).delete key(id)
+  end
+
   def empty?
     @sources.values.all?(&:empty?)
   end

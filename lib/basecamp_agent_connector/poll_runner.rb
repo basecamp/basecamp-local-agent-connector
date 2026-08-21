@@ -70,8 +70,17 @@ class BasecampAgentConnector::PollRunner
   end
 
   private
+    # A payload that cannot be corroborated because Basecamp could not be read is
+    # not a payload that was handled. Give back what was remembered on its behalf
+    # and let the next round find it again, rather than recording a blip as work
+    # done and losing one of Fernando's cards to it.
     def poll
-      poller.payloads.each { |payload| pipeline.process(payload) }
+      poller.payloads.each do |payload|
+        pipeline.process(payload)
+      rescue BasecampAgentConnector::Basecamp::Verifier::Unreachable => error
+        poller.rollback payload
+        warn "#{error.message} - will retry next round"
+      end
       state.save
     rescue StandardError => error
       warn "poll round failed: #{error.message}"

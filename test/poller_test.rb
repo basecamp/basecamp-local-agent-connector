@@ -192,7 +192,38 @@ class PollerTest < Minitest::Test
     assert_empty poller(runner).payloads
   end
 
+  def test_a_card_whose_verification_could_not_be_made_is_offered_again
+    runner = FakeCommandRunner.new
+    stub_listings runner
+    runner.stub "cards list --project 222 --column 555", stdout: envelope([ created_card_recording ])
+    state = FakePollState.new
+    polling = poller(runner, state: state, watched_columns: [ watched_column ])
+
+    payload = only(polling.payloads)
+    polling.rollback payload
+
+    refute_empty polling.payloads, "a card the Verifier could not reach must come back next round"
+  end
+
+  def test_a_card_that_was_verified_is_not_offered_again
+    runner = FakeCommandRunner.new
+    stub_listings runner
+    runner.stub "cards list --project 222 --column 555", stdout: envelope([ created_card_recording ])
+    state = FakePollState.new
+    polling = poller(runner, state: state, watched_columns: [ watched_column ])
+
+    only polling.payloads
+
+    assert_empty polling.payloads, "rollback must not fire for a card that was handled"
+  end
+
   private
+    # The failure this pair exists for: a transient read failure used to leave the
+    # event marked handled, so the next round filtered it out and it was gone. The
+    # message is the one the bridge actually logged on 2026-08-21, ten times in a
+    # 92-line run, while the profile's token had a fortnight left on it.
+    BLIP = "Not authenticated for profile:on-call-bot: credentials not found for profile:on-call-bot".freeze
+
     def only(payloads)
       assert_equal 1, payloads.length
       payloads.first
@@ -249,5 +280,9 @@ class FakePollState
 
   def record(source, id)
     @seen[source] << id.to_s
+  end
+
+  def forget(source, id)
+    @seen[source].delete id.to_s
   end
 end
