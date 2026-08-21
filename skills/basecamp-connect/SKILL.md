@@ -163,9 +163,32 @@ cd ~/Work/basecamp/basecamp-local-agent-connector && \
 board intake" below). Its bucket must also be a `--project`, or no delivery ever
 arrives to match it; the connector warns when it cannot see one.
 
+**On a network that cannot carry inbound traffic, use `bin/poll` instead.**
+`bin/connect` needs Basecamp to reach this machine over a public Tailscale Funnel
+URL, and a restricted network breaks that at the DNS layer: on an airplane
+connection Tailscale never published the node's `ts.net` record, and every
+webhook registration failed with `payload_url: must resolve to an active public
+IP` while the funnel reported itself healthy locally. The tell is that error, or
+a `ts.net` name that returns NXDOMAIN from a public resolver.
+
+```bash
+cd ~/Work/basecamp/basecamp-local-agent-connector && \
+  bin/poll @Clawdito --project "<project>" [--project "<project>"]... \
+    [--watch-column BUCKET:COLUMN[:CREATOR]]... [--interval 60]
+```
+
+It emits the same NDJSON through the same trust pipeline, needs only outbound
+HTTPS, and registers nothing — so step 2 and everything after it is unchanged,
+and there is nothing to tear down. It confirms itself with `Starting from now`
+rather than `Listening for mentions of ...`: a first run marks what is already
+waiting as handled instead of replaying it, since the agent's inbox holds every
+mention it has ever received. Pass `--backfill` to pick up a backlog on purpose.
+The one thing it does not cover is the GitHub PR-review loop, which rides the
+funnel; reviews still need `bin/connect`.
+
 Read that output file once and confirm it printed `Listening for mentions of ...`
-(registration succeeded). If it errored instead (unknown agent profile, auth,
-project not found), surface that and stop. On success, **save the connection
+(or `Starting from now` in poll mode). If it errored instead (unknown agent
+profile, auth, project not found), surface that and stop. On success, **save the connection
 params** to `~/.config/basecamp-connect/last.json` (see "Stored connection
 params" above) so the next no-args invocation can offer them back.
 
@@ -381,6 +404,25 @@ Route on the card the triggering comment sits on:
   and returns `defect`, `working-as-designed` or `never-designed`. Only `defect`
   opens an effort; the other two are scope changes that belong to /psp-plan, and
   intake halts and says so (defects row 3760).
+- **Comment on the standing card carrying a card URL *and* a pull request URL** — a
+  **code review intake**. Somebody else has already worked the card and opened a PR,
+  and the question is whether that PR is right. Dispatch `psp-intake-code-review`
+  with the comment, the card URL and the PR URL. It runs the same intake as
+  `psp-intake-plan` — reported-facts ledger, classification, split, dedupe, its own
+  bot card, the plan comments — then **diagnoses the bug blind**, from the code at
+  the PR's merge-base with the diff unread, posts that theory, and only then opens
+  the patch and maps every hunk to a hop of the mechanism. It returns
+  `solves-it` / `solves-with-gaps` / `wrong-mechanism` / `undetermined`, a tiered
+  findings list, and a plain-language `Verify` script queued on the sister card.
+  **Two rules are specific to this route.** It never touches the pull request —
+  no comment, no review, no label, no merge — so anything reaching its author goes
+  through Fernando. And it **never adopts a shared board card**: the human surface
+  is always a sister in the PSP Human Card Table, because a review of someone
+  else's work is private between him and the agent. When the comment carries a PR
+  URL but asks for a diagnosis rather than a judgment, that is still
+  `psp-intake-plan`; when the ask is genuinely ambiguous, ask him in his chat room
+  rather than guessing, because the two agents produce different artifacts and the
+  wrong one costs a full run.
 - **Comment on a sister card** — a **response about that one bug**, Fernando's
   approval included. The card identity says which bug; never parse it out of the
   body. When that comment approves the theory and asks for design ("sounds good,
@@ -420,6 +462,21 @@ card, the reader needs enough of the mechanism to judge them and no more, and th
 bot card. A choice he cannot see is a choice he cannot make — the desktop sign-out effort's cheaper
 direction reached him only because it happened to land in a summary's last sentence, and it turned
 a 100-line change in one repository into 22 lines in another.
+
+**A code-review route is not complete until its summary lands on the sister card.** The agent
+halts with the human card holding its title, its two URLs and its unticked `Verify:` steps and
+nothing else — that is its contract, not an oversight — so the verdict exists only on a bot card
+until this thread posts. On the first live run it stayed there until Fernando asked where it was.
+Treat the summary as the last step of the route rather than as a courtesy after it, and post it
+before reporting the run as done.
+
+**A code-review summary leads with the verdict and what accepting the PR costs.** Not the
+mechanism, not the findings inventory — `psp-intake-code-review` returns a disposition (merge
+as-is, merge with a named follow-up, do not merge) and one sentence that decides it, and that
+sentence is the summary's first. Blockers are named; nits are counted, never listed. It also
+carries the recommendation the author could act on, because Fernando is the only channel to them
+— the agent never posts on the pull request. The `Verify` steps are already queued on the sister
+card, so the summary points at them rather than restating them.
 
 **A design summary carries at most two decisions.** `psp-intake-design` ranks the
 open decisions by consequence and brings the top two; every other one stays on the
@@ -607,8 +664,10 @@ Card Table changes.
   catching there are filed by a robot: six landed between June and July and not one
   was ever triaged. Roughly three a month. Nothing else on the board self-triggers.
 
-`sentry-card-verdict` used to own that column and no longer runs — nothing invokes
-it and none of its cards carry a comment. Intake absorbs it. Three things from it
+`sentry-card-verdict` used to own that column. It was **deleted on 2026-08-20** —
+nothing invoked it, none of its cards carried a comment, and its constants still
+named `bc3-electron` rather than the projects the column actually files. Intake
+absorbs it, so do not go looking for the skill. Three things from it
 are worth keeping and belong in the diagnosis, not in a skill: the decisive cut is
 almost always the release split of the current build against the prior one; Windows
 exit code `-1073741510` (`0xC000013A`) is a force-terminated process, not a crash;
@@ -826,6 +885,9 @@ signature, parse `pull_request_review`, emit) is specced in
 [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md).
 
 ## Cleanup / lifecycle — always tear down
+
+This section is about `bin/connect` only. **`bin/poll` registers nothing and
+opens nothing**, so a poll run needs no teardown beyond stopping the process.
 
 `bin/connect` opens a **public** Tailscale Funnel URL and registers a **real
 Basecamp webhook per project**. These must not outlive the session. The

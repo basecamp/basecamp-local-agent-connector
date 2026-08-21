@@ -24,6 +24,29 @@ class BasecampAgentConnector::Basecamp::Client
     json "show", url_or_id
   end
 
+  def project(id_or_name)
+    json "projects", "show", id_or_name.to_s
+  end
+
+  def notifications(profile: nil)
+    json "notifications", "list", *profile_flag(profile)
+  end
+
+  def cards_in_column(project:, column:)
+    json "cards", "list", "--project", project.to_s, "--column", column.to_s
+  end
+
+  # Account-wide, and the only listing that reports assignment at all: a
+  # project-scoped card listing omits `assignees` entirely, so detecting an
+  # assignment from one would cost a fetch per card on the board.
+  def cards_assigned_to(assignee)
+    json "cards", "list", "--all-projects", "--assignee", assignee.to_s
+  end
+
+  def events(id_or_url)
+    json "events", id_or_url.to_s
+  end
+
   def create_webhook(url:, project:, types:)
     json "webhooks", "create", url, "--project", project.to_s, "--types", types
   end

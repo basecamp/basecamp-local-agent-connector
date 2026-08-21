@@ -56,9 +56,11 @@ You need three things in place:
    bin/setup        # bundle install + checks for the `basecamp` and `tailscale` CLIs
    ```
 
-   You also need [Tailscale](https://tailscale.com) with **Funnel enabled** for
-   your tailnet (Basecamp has to reach your machine over the public internet) and
-   Ruby 3.4+.
+   You also need Ruby 3.4+, and — **for `bin/connect` only** — [Tailscale](https://tailscale.com)
+   with **Funnel enabled** for your tailnet, since Basecamp has to reach your
+   machine over the public internet to deliver a webhook. `bin/poll` needs
+   neither, and is the mode to use on a network that will not carry inbound
+   traffic (see [Polling instead of webhooks](#polling-instead-of-webhooks)).
 
 3. **An agent user + its local profile.** The agent is a *real Basecamp user*
    (e.g. a bot account named “Clawdito”) that you can @mention. The connector
@@ -198,6 +200,58 @@ startup if the agent and operator resolve to the same Basecamp user.)
 
 ---
 
+## Polling instead of webhooks
+
+`bin/connect` needs Basecamp to reach *you*: a public Tailscale Funnel URL, a
+webhook registered per project, and inbound HTTPS. On a restricted network none
+of that works — on an airplane connection Tailscale never publishes the node's
+`ts.net` record, so every webhook registration fails validation with
+`payload_url: must resolve to an active public IP`.
+
+`bin/poll` inverts the direction. It asks Basecamp what happened instead of
+waiting to be told, so it needs only outbound HTTPS:
+
+```bash
+bin/poll @Clawdito --project "BC5 Calendar"
+bin/poll @Clawdito --project 43795599 --watch-column 43795599:9956253701:52498414
+```
+
+It emits the **same NDJSON** on stdout as `bin/connect`, through the same
+`Pipeline` and `Verifier` — so anything consuming the stream cannot tell the two
+apart, and the trust model is not re-implemented but reused. Three triggers are
+covered, one per source:
+
+| Trigger | `bin/connect` | `bin/poll` |
+|---|---|---|
+| The operator @mentions the agent | `comment_created` webhook | the agent's own notification feed |
+| The operator assigns the agent a card | `*_assignment_changed` webhook | the assigned-cards listing, with the assigner read from the card's history |
+| A watched column gets a card | `--watch-column` on the webhook | that column's card listing |
+
+What it does **not** cover is the GitHub PR-review loop: `--repo` rides the same
+funnel, so reviews still need `bin/connect`.
+
+| Argument / flag | Meaning | Default |
+|-----------------|---------|---------|
+| `@AGENT` | Agent user / local `basecamp` profile. As in `bin/connect`. **Required**. | — |
+| `--project` | Project id or name to accept events from. Repeatable. Each is resolved to *both* its id and its name, because a notification names its project while a card numbers its bucket. Omit to accept every project the agent belongs to. | all |
+| `--watch-column` | `BUCKET:COLUMN[:CREATOR]`, as in `bin/connect`. Repeatable. | — |
+| `--operator` | Profile whose user is allowed to trigger. | CLI default profile |
+| `--interval` | Seconds between rounds. Floored at 15. | 60 |
+| `--backfill` | Emit what is already waiting instead of starting from now. | off |
+| `--state` | Where handled events are remembered across restarts. | `~/.config/basecamp-connect/poll-state.json` |
+
+**A first run starts from now.** The surfaces being watched are not empty — the
+agent's inbox holds every mention it has ever received, and a watched Sentry
+column holds every card nobody triaged — so a first run *seeds*: it marks what is
+already there as handled without emitting any of it. `--backfill` opts into the
+opposite, and is how you pick up a backlog deliberately.
+
+**Nothing is registered, so nothing needs tearing down.** No funnel, no webhook,
+no public URL. A poll run killed uncleanly leaves no trace on Basecamp — unlike
+`bin/connect`, whose cleanup matters (see below).
+
+---
+
 ## Internal command: `bin/connect`
 
 The bridge. Run it directly to watch a project and print trusted events; the
@@ -299,8 +353,11 @@ boundary rather than mocking the gem’s own classes.
 
 ```
 bin/connect                          # shim → Connector.start(ARGV) — Basecamp and/or GitHub
+bin/poll                             # shim → PollRunner.start(ARGV) — Basecamp, no funnel
 lib/basecamp_agent_connector/
   connector        # unified: one funnel + one multi-route server, mounts each transport's bridge
+  poll_runner      # polling mode: same Pipeline, no funnel and no webhooks
+  poll_state       # polling mode: what has been handled, across restarts
   command_runner   # shared: runs subprocesses; the seam tests stub
   server           # shared: WEBrick server, path→handler routes; 200-fast, raw body + headers
   tunnel           # shared: Tailscale Funnel lifecycle (start / reset)
@@ -308,6 +365,8 @@ lib/basecamp_agent_connector/
   basecamp/        # Basecamp:: — the Basecamp webhook transport
     bridge         #   one route: secret path, register webhooks, handler, teardown
     client         #   thin wrapper over the `basecamp` CLI (JSON in/out, profiles)
+    poller         #   polling source: listings → the same payloads a webhook delivers
+    recording_url  #   a notification's browser URL → the API URL that can be fetched
     identity       #   resolve a Basecamp user by profile (agent / operator)
     webhooks       #   register / delete webhooks across projects (with retry)
     event          #   payload value object + the filter predicates
