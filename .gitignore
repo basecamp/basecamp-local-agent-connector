@@ -4,3 +4,4 @@
 Gemfile.lock
 *.gem
 hooks/*.lock
+hooks/__pycache__/

@@ -56,6 +56,28 @@ LEDGER = [
     (r"\byou get back\b", "narrates what the process will hand over"),
 ]
 
+# Effort accounting. The LEDGER patterns catch where a finding was FILED. They do
+# not catch what a phase COST us - minutes, estimate error, finding counts, a
+# phase standing as the subject of a sentence. That is our bookkeeping too, and
+# it belongs on the bot card. If the cost changes what he should decide, put the
+# decision in front of him instead of the arithmetic behind it.
+# The one exemption: a postmortem IS the effort accounting. A comment that opens
+# by declaring itself one may carry minutes, estimate error and finding counts,
+# because measuring them is the whole reason it exists.
+POSTMORTEM = re.compile(r"\bpost-?mortem\b", re.I)
+
+ACCOUNTING = [
+    (r"\b\d+\s*(?:minutes?|mins?|hours?)\b", "counts our minutes"),
+    (r"\bagainst an? (?:planned|estimated?)\b", "reports estimate error"),
+    (r"\b\d+\s+(?:findings?|blockers?|defects?|errata|nits?)\b", "counts our findings"),
+    (r"\b(?:estimated?|priced|sized) at\b", "reports our estimate"),
+    (r"\b(?:overrun|under-?ran|est\.|LOC)\b", "estimate vocabulary"),
+    (r"\b(?:planning|design|intake|review|testing|postmortem|the battery)\s+"
+     r"(?:cost|took|priced|produced|returned|found|caught|ran)\b",
+     "a phase of ours acting as the subject"),
+    (r"\bthe effort (?:now )?(?:reads|stands|costs|runs)\b", "narrates effort accounting"),
+]
+
 # Internal vocabulary. Terms that only parse if the reader has the bot card open.
 JARGON = [
     (r"\bitems?\s+\d+\b", "numbered internal item"),
@@ -71,13 +93,98 @@ JARGON = [
     (r"\brivals?\b", "internal term"),
     (r"\bshelf survey\b", "internal artefact"),
 ]
+# Voice. A claim about a mechanism has to say what the mechanism DOES. "The check
+# cannot fail" reads two opposite ways - the check is inert, or the check must not
+# fail - and the reader cannot tell which from the sentence. Name the actor and the
+# action instead. Kept deliberately narrow: broad passive-voice detection fires on
+# ordinary English, and an over-broad pattern costs more than the fault it catches.
+VOICE = [
+    (r"\b(?:can ?not|can't|could ?n[o']t|will not|won't|does not|doesn't|do not|"
+     r"don't|never)\s+(?:fails?|be trusted|be relied on|catch(?:es)? anything|rejects?)\b",
+     "says what it will not do instead of what it does",
+     "Say the action: 'passes whatever the fuses read', 'reports every body as clean'."),
+    (r"\b(?:is|are|was|were)\s+(?:not\s+)?"
+     r"(?:verified|enforced|guarded|checked|covered|asserted|validated)\b(?!\s+by\b)",
+     "agentless passive - nothing in the sentence does the verifying",
+     "Name who or what does it: 'the workflow checks X', 'no test asserts X'."),
+    (r"\bnothing\s+(?:is|was)\s+(?:done|changed|checked)\b",
+     "agentless passive with no actor",
+     "Name the actor and the action."),
+]
+# Tone. Two habits, both of them the writer showing up in a report that should
+# only carry the finding.
+#
+# EMPHASIS: intensifiers and absolutes arranged for effect. A fact does not need
+# "exactly" or "at all" to land, and a paragraph built to a reveal makes the
+# reader wait for information they could have had in the first clause.
+#
+# EDITORIAL: sentences that judge rather than report - scoring the finding
+# instead of stating it. Whether a thing was the right call is the reader's to
+# decide from the facts.
+EMPHASIS = [
+    r"\bexactly\b", r"\bprecisely\b", r"\bat all\b", r"\boutright\b",
+    r"\bthe single (?:one|thing|place|workflow|test|file)\b", r"\bthe very\b",
+    r"\band nowhere else\b", r"\bnothing but\b", r"\bnot one\b",
+    r"\bsimply\b", r"\bmerely\b", r"\bof course\b", r"\bobviously\b",
+    r"\bentire(?:ly)?\b", r"\bwhatsoever\b", r"\bflatly\b",
+]
+EDITORIAL = [
+    r"\bexists to (?:stop|prevent|catch|protect)\b", r"\bwhich is the point\b",
+    r"\bthe whole point\b", r"\bthe real (?:cost|problem|question|answer)\b",
+    r"\bworth (?:noting|knowing|saying)\b", r"\bcorrectly\b", r"\brightly\b",
+    r"\btellingly\b", r"\bremarkably\b", r"\bunsurprisingly\b",
+    r"\bthe right call\b", r"\bis what matters\b", r"\bneedless to say\b",
+    r"\bto be fair\b", r"\bin fairness\b",
+]
+# Restatement. A paragraph that says one thing four ways spends the sentence
+# budget on paraphrase instead of facts. Whether two sentences carry the same
+# fact is semantic and a regex cannot see it - but restating an ABSENCE has a
+# mechanical signature, because each paraphrase needs its own negation. Three
+# negations in one paragraph is the reliable tell: "does not report", "posts no
+# message", "nobody learns" are one finding wearing three coats.
+NEGATION = re.compile(
+    r"\b(?:not|n't|no|none|nobody|nothing|never|neither|nor|without|fails? to)\b", re.I)
+MAX_PARA_NEGATIONS = 2
+
+# Metaphor. Software does not hear, stay quiet, wake up or go blind. A figure of
+# speech makes the reader translate before they can act, and the translation is
+# where the meaning slips. "The room stays quiet" is one word longer than "it
+# posts no message" and less exact.
+METAPHOR = [
+    r"\b(?:stays?|went|goes|going|fell|falls?) (?:quiet|silent|dark)\b",
+    r"\b(?:hears?|heard|listens?|listening) (?:about|from|to)?\b",
+    r"\b(?:speaks? up|shouts?|whispers?|screams?)\b",
+    r"\b(?:wakes? up|woke up|goes to sleep|asleep at)\b",
+    r"\b(?:blind to|in the dark|turns? a blind eye|flies? under)\b",
+    r"\b(?:under the hood|out of the box|moving parts|low-hanging)\b",
+    r"\b(?:bites?|bit) (?:us|you|back)\b",
+    r"\bwearing \w+ (?:coats?|hats?)\b",
+]
+
+# Named referents. "both checks" makes him ask which two. A quantified plural
+# stands only when the sentence also names the things it counts.
+COUNTED = re.compile(
+    r"\b(?:both|either|the two|all three|all four|the three)\s+"
+    r"(?:the\s+)?[a-z][a-z-]*s\b", re.I)
+
 URL = re.compile(r"https?://\S+")
 SENT = re.compile(r"[.!?]+(?:\s|$)")
+TAG = re.compile(r"<[^>]+>")
 
-MAX_TOTAL_WORDS = 150
-MAX_PARA_WORDS = 60
-MAX_PARA_SENTENCES = 4
-MAX_SENTENCE_WORDS = 40
+
+# A Basecamp record link whose visible text is the URL itself. Basecamp resolves a
+# pasted link to the record's name in its own composer, but posting through the API
+# does not: the server only autolinks it (class="autolinked" data-behavior="truncate",
+# verified by probe 2026-08-21). So the name has to be fetched and used as the anchor
+# text, or the reader gets a bare id to decode.
+BARE_LINK = re.compile(
+    r'<a[^>]+href="(https://(?:app\.basecamp\.com|3\.basecampapi\.com)/[^"]+)"[^>]*>\s*'
+    r'(?:https?://|#?\d{6,})', re.I)
+
+MAX_TOTAL_WORDS = 200
+MAX_PARA_WORDS = 90
+MAX_PARA_SENTENCES = 5
+MAX_SENTENCE_WORDS = 25
 
 
 def deny(reason):
@@ -364,19 +471,73 @@ def main():
             problems.append(f"internal vocabulary - {why} ({m_.group(0)!r}). "
                             "It only parses with the bot card open. Say the thing "
                             "in the reader's own terms.")
+    for pat, why in (ACCOUNTING if not POSTMORTEM.search(paras[0]) else []):
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(f"effort accounting - {why} ({m_.group(0)!r}). What a phase "
+                            "cost us is bot-card material. If the cost changes his "
+                            "decision, give him the decision, not the arithmetic.")
+
     for pat, why in LEDGER:
         m_ = re.search(pat, text, re.I)
         if m_:
             problems.append(f"bookkeeping sentence - {why} ({m_.group(0)!r}). "
                             "The human card is a decision surface, not a ledger of "
                             "our process. State the finding, not where it was filed.")
+    for m_ in BARE_LINK.finditer(text):
+        problems.append(
+            f"link shows its URL instead of the record's name ({m_.group(1)[:60]}...). "
+            "Basecamp resolves a pasted link in its own composer; posting through the "
+            "API does not, so fetch the target's title and use it as the anchor text.")
+
+    for i, para in enumerate(paras, 1):
+        negs = NEGATION.findall(TAG.sub(" ", URL.sub("", para)))
+        if len(negs) > MAX_PARA_NEGATIONS:
+            problems.append(
+                f"paragraph {i} negates {len(negs)} times ({', '.join(repr(n) for n in negs[:4])}). "
+                "Restating one absence in different words spends sentences without "
+                "adding facts. Say it goes missing once, then say what follows from it.")
+
+    for pat in METAPHOR:
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(f"metaphor ({m_.group(0)!r}). Software does not hear or "
+                            "stay quiet. Say the literal thing it does or does not do.")
+
+    for sent in re.split(r"(?<=[.;])\s+", TAG.sub(" ", text)):
+        m_ = COUNTED.search(sent)
+        if m_ and "`" not in sent and "<code" not in sent:
+            problems.append(f"counted but unnamed ({m_.group(0)!r}). Name the things "
+                            "you are counting, or he has to go and look them up.")
+            break
+
+    for pat in EMPHASIS:
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(f"emphasis written for effect ({m_.group(0)!r}). "
+                            "State the fact without the intensifier; if it needs one "
+                            "to land, the fact is not carrying its own weight.")
+    for pat in EDITORIAL:
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(f"editorial - judges instead of reporting ({m_.group(0)!r}). "
+                            "Report the finding and let him judge it.")
+
+    for pat, why, fix in VOICE:
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(f"passive or ambiguous about the action - {why} "
+                            f"({m_.group(0)!r}). {fix}")
+
     if not NEXT_STEP.search(paras[-1]):
         problems.append("final paragraph does not state a next step "
                         "(it must contain 'Next step')")
 
     # Length. URLs are proof, not prose, so they do not count toward it.
     def wc(s):
-        return len(URL.sub("", s).split())
+        # Markup is not prose. Before the mark wrapper this cost nothing; with it
+        # the style attribute alone would eat a dozen words of a 150-word budget.
+        return len(TAG.sub(" ", URL.sub("", s)).split())
 
     per = [wc(p) for p in paras]
     total = sum(per)
@@ -390,7 +551,7 @@ def main():
             problems.append(f"paragraph {i} is {n_} words, cap is {MAX_PARA_WORDS}")
     for i, para in enumerate(paras, 1):
         stripped = URL.sub("", para)
-        sents = [s for s in SENT.split(stripped) if s.strip()]
+        sents = [s for s in SENT.split(TAG.sub(" ", stripped)) if s.strip()]
         if len(sents) > MAX_PARA_SENTENCES:
             problems.append(f"paragraph {i} has {len(sents)} sentences, "
                             f"cap is {MAX_PARA_SENTENCES}")
@@ -404,6 +565,14 @@ def main():
         deny("Sister-card comment contract violated:\n- " + "\n- ".join(problems) +
              "\n\nContract lives in basecamp-connect SKILL.md. Three paragraphs: two of "
              "explanation, one naming the next step, who owns it and what it unblocks. "
+             "Record links carry the record's name, not its URL. "
+             "Every claim about a mechanism names the actor and the action - never "
+             "what it will not do. "
+             "No emphasis written for effect and no editorial - report the finding, "
+             "do not score it. Every sentence carries a fact the previous one did not; "
+             "no paragraph restates itself. No metaphors, and anything counted is "
+             "also named. No effort accounting - minutes, estimate error and finding "
+             "counts belong on the bot card, unless the comment is a postmortem. "
              "Stripped-down directive register - no CTA, no soft ask, no filler. "
              "Every factual claim carries a clickable GitHub or Basecamp link.")
     sys.exit(0)
