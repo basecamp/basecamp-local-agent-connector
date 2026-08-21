@@ -105,6 +105,26 @@ class PollerTest < Minitest::Test
     assert_empty runner.commands_matching(/show/)
   end
 
+  # Every read the poller makes runs as the agent, not as whoever the CLI
+  # defaults to. Reading as the operator would let the bot act on recordings the
+  # bot itself cannot see, and it couples the bridge to a second set of
+  # credentials that can fail independently — both happened before this was
+  # threaded through.
+  def test_every_listing_and_fetch_runs_as_the_agent
+    runner = FakeCommandRunner.new
+    stub_listings runner, notifications: [ notification ], assignments: [ assigned_recording ]
+    runner.stub "cards list --project 222 --column 555", stdout: envelope([ created_card_recording ])
+    runner.stub "show ", stdout: envelope(sample_recording)
+    runner.stub "events ", stdout: envelope([ assignment_event ])
+
+    poller(runner, watched_columns: [ watched_column ]).payloads
+
+    commands = runner.commands_matching(/./)
+    assert_equal 5, commands.length
+    unprofiled = commands.reject { |command| command.each_cons(2).include?([ "--profile", "clawdito" ]) }
+    assert_empty unprofiled, "every read must name the agent profile: #{unprofiled.inspect}"
+  end
+
   # The bug this guards: a card filed into a watched column ALSO notifies the
   # bot, so the same card arrived twice in one round under two different event
   # ids — the card's from the column, the notification's from the feed. Nothing

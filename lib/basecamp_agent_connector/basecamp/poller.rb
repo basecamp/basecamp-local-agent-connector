@@ -128,7 +128,7 @@ class BasecampAgentConnector::Basecamp::Poller
 
     def watched_cards
       watched_columns.flat_map do |watched|
-        basecamp_cli.cards_in_column(project: watched.bucket, column: watched.column)
+        basecamp_cli.cards_in_column(project: watched.bucket, column: watched.column, profile: agent.profile)
       rescue BasecampAgentConnector::Basecamp::Client::Error => error
         log "could not read column #{watched}: #{error.message}"
         []
@@ -138,7 +138,7 @@ class BasecampAgentConnector::Basecamp::Poller
     def assigned_cards
       return [] if agent.name.nil?
 
-      basecamp_cli.cards_assigned_to(agent.name)
+      basecamp_cli.cards_assigned_to(agent.name, profile: agent.profile)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "could not read assignments for #{agent.name}: #{error.message}"
       []
@@ -198,7 +198,7 @@ class BasecampAgentConnector::Basecamp::Poller
     end
 
     def events(card)
-      basecamp_cli.events(card["app_url"] || card["id"])
+      basecamp_cli.events(card["app_url"] || card["id"], profile: agent.profile)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "could not read the history of card #{card['id']}: #{error.message}"
       nil
@@ -207,7 +207,7 @@ class BasecampAgentConnector::Basecamp::Poller
     def fetch(url)
       return nil if url.nil?
 
-      recording = basecamp_cli.show(url)
+      recording = basecamp_cli.show(url, profile: agent.profile)
       recording.is_a?(Hash) && recording["id"] ? recording : nil
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "could not read #{url}: #{error.message}"

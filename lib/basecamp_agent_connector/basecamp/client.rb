@@ -20,31 +20,31 @@ class BasecampAgentConnector::Basecamp::Client
     run("auth", "refresh", *profile_flag(profile)).success?
   end
 
-  def show(url_or_id)
-    json "show", url_or_id
+  def show(url_or_id, profile: nil)
+    json "show", url_or_id, *profile_flag(profile)
   end
 
-  def project(id_or_name)
-    json "projects", "show", id_or_name.to_s
+  def project(id_or_name, profile: nil)
+    json "projects", "show", id_or_name.to_s, *profile_flag(profile)
   end
 
   def notifications(profile: nil)
     json "notifications", "list", *profile_flag(profile)
   end
 
-  def cards_in_column(project:, column:)
-    json "cards", "list", "--project", project.to_s, "--column", column.to_s
+  def cards_in_column(project:, column:, profile: nil)
+    json "cards", "list", "--project", project.to_s, "--column", column.to_s, *profile_flag(profile)
   end
 
   # Account-wide, and the only listing that reports assignment at all: a
   # project-scoped card listing omits `assignees` entirely, so detecting an
   # assignment from one would cost a fetch per card on the board.
-  def cards_assigned_to(assignee)
-    json "cards", "list", "--all-projects", "--assignee", assignee.to_s
+  def cards_assigned_to(assignee, profile: nil)
+    json "cards", "list", "--all-projects", "--assignee", assignee.to_s, *profile_flag(profile)
   end
 
-  def events(id_or_url)
-    json "events", id_or_url.to_s
+  def events(id_or_url, profile: nil)
+    json "events", id_or_url.to_s, *profile_flag(profile)
   end
 
   def create_webhook(url:, project:, types:)
