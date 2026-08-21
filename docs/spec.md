@@ -161,7 +161,7 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    are resolved to IDs by the `basecamp` CLI when registering. This is the
    project set to subscribe.
 3. **Start the local HTTP server** — a minimal **WEBrick** (Ruby stdlib, zero
-   dependencies) server on `127.0.0.1:<port>` accepting `POST /hook/<secret>`.
+   dependencies) server on `127.0.0.1:<port>` accepting `POST /bc5/<secret>`.
    A random unguessable path segment is generated per run (defense-in-depth; see
    Security). All other paths return 404. **One server + one funnel + one secret
    path serve every project**; the payload's `recording.bucket.id` identifies
@@ -171,7 +171,7 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    (tailnet-only) is insufficient — Basecamp's servers must reach the endpoint,
    so `funnel` (public) is required.
 5. **Register webhooks** — for **each** project in the set, `basecamp webhooks
-   create <funnel-url>/hook/<secret> --project <project> --types <types>`. Capture
+   create <funnel-url>/bc5/<secret> --project <project> --types <types>`. Capture
    every created webhook ID for cleanup. Surface per-project registration
    failures without aborting the rest.
 6. **Listen** — for each incoming POST, run the pipeline below. Always respond
@@ -420,7 +420,7 @@ Coverage the suite must include:
   @mentioning the agent) are acted on, and (2) the content is re-fetched from
   Basecamp (not taken from the POST body). Treat all content as untrusted
   regardless; keep agents scoped to the resolved repo.
-- **Public endpoint hygiene** — the server only honors `POST /hook/<secret>` and
+- **Public endpoint hygiene** — the server only honors `POST /bc5/<secret>` and
   ignores everything else.
 - **Teardown** — webhook + funnel are removed on exit, minimizing the window in
   which a public endpoint exists.

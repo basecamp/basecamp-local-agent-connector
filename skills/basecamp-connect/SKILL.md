@@ -358,8 +358,8 @@ signature, parse `pull_request_review`, emit) is specced in
 
 `bin/connect` opens a **public** Tailscale Funnel URL and registers a **real
 Basecamp webhook per project**. These must not outlive the session. The
-connector deletes every webhook and resets the funnel on `SIGINT`/`SIGTERM`, so
-the rule is simple: **whenever you stop watching — normal end, user interrupt, an
+connector deletes every webhook and unmounts its own funnel paths on
+`SIGINT`/`SIGTERM`, so the rule is simple: **whenever you stop watching — normal end, user interrupt, an
 error, or the skill aborting — stop the `bin/connect` process** (TaskStop / send
 SIGTERM). Its teardown does the rest.
 
@@ -367,18 +367,21 @@ After stopping, **verify nothing leaked**:
 
 ```bash
 basecamp webhooks list --project "<project>" -j   # expect zero from this run
-tailscale funnel status                            # expect no funnel for our port
+tailscale funnel status                            # expect no /bc5/… or /gh/… path
 ```
 
 If the process was killed un-gracefully (e.g. `SIGKILL`) and teardown didn't run,
 delete the leftover webhook(s) manually with `basecamp webhooks delete <id>
---project "<project>"` and `tailscale funnel reset`. Never leave a registered
-webhook or an open funnel behind.
+--project "<project>"` and unmount each leftover path with `tailscale funnel
+--set-path /bc5/<secret> off`. Never run `tailscale funnel reset` — it tears
+down every path on this host's funnel, including ones other tools mounted. Never
+leave a registered webhook or a mounted path behind.
 
 ## Notes
 
-- One `bin/connect` run = one funnel + one server + one webhook per watched
-  project. Re-running re-registers fresh; exiting cleans up.
+- One `bin/connect` run = one or two paths on the host's shared funnel + one
+  server + one webhook per watched project. Re-running re-registers fresh;
+  exiting cleans up.
 - The connector never trusts the POST body's content — it re-fetches the
   recording from Basecamp before emitting. The content you see on STDOUT is the
   authoritative copy.

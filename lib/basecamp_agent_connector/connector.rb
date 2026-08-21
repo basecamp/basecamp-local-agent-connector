@@ -1,10 +1,11 @@
 require "optparse"
 require "socket"
 
-# The unified entry point. Opens ONE Tailscale Funnel and ONE local server, and
-# mounts each requested transport (Basecamp projects and/or GitHub repos) as a
-# route on it. Basecamp and GitHub watching therefore run simultaneously over a
-# single funnel — the per-machine funnel is no longer a bottleneck.
+# The unified entry point. Opens ONE local server and mounts each requested
+# transport (Basecamp projects and/or GitHub repos) as a route on it, exposing
+# each route as its own path on this host's Tailscale Funnel. Basecamp and GitHub
+# watching therefore run simultaneously — the per-machine funnel is no longer a
+# bottleneck, and paths other tools mounted are left alone.
 class BasecampAgentConnector::Connector
   # Todo + Kanban::Step are included so todo/step assignment events are delivered
   # (Kanban::Card already covers card assignments).
@@ -62,7 +63,7 @@ class BasecampAgentConnector::Connector
     @bridges = build_bridges
     port = @options.port || free_port
 
-    @tunnel = BasecampAgentConnector::Tunnel.new(port: port, command_runner: command_runner)
+    @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: @bridges.map(&:path), command_runner: command_runner)
     base_url = @tunnel.start
     @bridges.each { |bridge| bridge.register(base_url: base_url) }
 
