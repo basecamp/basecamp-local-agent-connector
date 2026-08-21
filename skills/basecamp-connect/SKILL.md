@@ -367,13 +367,13 @@ After stopping, **verify nothing leaked**:
 
 ```bash
 basecamp webhooks list --project "<project>" -j   # expect zero from this run
-tailscale funnel status                            # expect no /hook/… or /gh/… path
+tailscale funnel status                            # expect no /bc5/… or /gh/… path
 ```
 
 If the process was killed un-gracefully (e.g. `SIGKILL`) and teardown didn't run,
 delete the leftover webhook(s) manually with `basecamp webhooks delete <id>
 --project "<project>"` and unmount each leftover path with `tailscale funnel
---set-path /hook/<secret> off`. Never run `tailscale funnel reset` — it tears
+--set-path /bc5/<secret> off`. Never run `tailscale funnel reset` — it tears
 down every path on this host's funnel, including ones other tools mounted. Never
 leave a registered webhook or a mounted path behind.
 

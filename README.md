@@ -156,7 +156,7 @@ What `bin/connect` has in place, at a glance:
   the agent's Person id encoded in the mention SGID.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
-- **Secret webhook path** — the server accepts only `POST /hook/<secret>`, where
+- **Secret webhook path** — the server accepts only `POST /bc5/<secret>`, where
   `<secret>` is a fresh 128-bit random token generated per run; every other path
   returns 404.
 - **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
@@ -224,10 +224,10 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    `Run basecamp auth login --profile <agent>…`. Resolves the operator identity
    (refreshing an expired token once). Warns if agent == operator.
 2. **Open the endpoint.** Starts a WEBrick server on `127.0.0.1:<port>` that only
-   accepts `POST /hook/<random-secret>`; everything else is 404. One server + one
+   accepts `POST /bc5/<random-secret>`; everything else is 404. One server + one
    secret path serves every watched project.
 3. **Expose it.** `tailscale funnel --set-path` mounts each of the connector's
-   paths (`/hook/<secret>`, plus `/gh/<secret>` when watching repos) on this
+   paths (`/bc5/<secret>`, plus `/gh/<secret>` when watching repos) on this
    host's funnel, publishing the server at a public `https://<host>.ts.net` URL.
    Only those paths are touched, so funnel paths other tools mounted keep
    working.
@@ -259,8 +259,8 @@ is ever `SIGKILL`ed, clean up manually:
 ```bash
 basecamp webhooks list   --project "<project>"        # find leftovers
 basecamp webhooks delete <id> --project "<project>"
-tailscale funnel status                              # find leftover /hook/… and /gh/… paths
-tailscale funnel --set-path /hook/<secret> off
+tailscale funnel status                              # find leftover /bc5/… and /gh/… paths
+tailscale funnel --set-path /bc5/<secret> off
 ```
 
 ### Useful `basecamp` CLI commands

@@ -18,7 +18,7 @@ class BasecampAgentConnector::Basecamp::Bridge
   end
 
   def path
-    "/hook/#{@secret}"
+    "/bc5/#{@secret}"
   end
 
   def register(base_url:)

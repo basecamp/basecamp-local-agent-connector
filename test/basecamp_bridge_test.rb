@@ -2,7 +2,7 @@ require "test_helper"
 
 class BasecampBridgeTest < Minitest::Test
   def test_path_is_a_secret_hook_path
-    assert_match(%r{\A/hook/[0-9a-f]{32}\z}, bridge(FakeCommandRunner.new).path)
+    assert_match(%r{\A/bc5/[0-9a-f]{32}\z}, bridge(FakeCommandRunner.new).path)
   end
 
   def test_register_creates_a_webhook_at_the_funnel_url_for_each_project
