@@ -2,11 +2,81 @@
   "_comment": "Human-facing surfaces outside the PSP Human Card Table. `cards` are individual cards Fernando ruled human-facing; `tables` are whole card tables whose every card is one. The guard enforces the sister-card contract on both. A card the intake agent adopts is appended to `cards`; the `tables` entry is the backstop for one it forgets.",
   "cards": [
     {
+      "id": "10225366163",
+      "bucket": "43795599",
+      "title": "🍎🏕️ NSInvalidArgumentException: Can't add self as subview",
+      "designated": "2026-08-21",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; filed by MobileBot into the Sentry column (9956253701) on 2026-08-21 and adopted by psp-intake-plan the same night. Moved out of Sentry to In progress (9027546460). Pairs with TWO bot cards in Fernando: PSP 48348194, table 10157062382 - 10225414803 (bc3-ios-ipad-restoration-replays-saved-stack-as-animated-pushes) and 10225415490 (bc3-ios-nsinvalidargument-issue-groups-113-unrelated-signatures). Two symptoms on one card, so a split of the board card is recommended. No sister card created. NOTE: board card 9040419171 ('[BC4][iOS] Cannot add self as subview', Not now column, 15 comments, 2025-03-22) is a PRE-EXISTING human card on the SAME Sentry issue 3801825639 - it is NOT adopted and was not touched. No prose of the agent goes on any of these cards; the summary is written by the dispatching session."
+    },
+    {
       "id": "10220386339",
       "bucket": "43795599",
       "title": "[iOS] To-dos pagination",
       "designated": "2026-08-19",
       "reason": "Fernando: 'Let's treat this card as the human-facing card' — no sister card for this effort, so the summary lands here on a shared team board."
+    },
+    {
+      "id": "10224285589",
+      "bucket": "43795599",
+      "title": "PDFs printed from the desktop app lose their links",
+      "designated": "2026-08-20",
+      "reason": "Issues-board intake with the board card as its own human surface; Fernando started it on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224471552 (desktop-print-to-pdf-drops-link-annotations) in Fernando: PSP 48348194, table 10157062382."
+    },
+    {
+      "id": "10224283548",
+      "bucket": "43795599",
+      "title": "Bubble up date picker buttons are not in view when selecting a date",
+      "designated": "2026-08-20",
+      "reason": "Issues-board intake with the board card as its own human surface; Fernando started it on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224843922 (bubble-up-pick-a-date-buttons-below-the-fold) in Fernando: PSP 48348194, table 10157062382. No sister card was created."
+    },
+    {
+      "id": "10127262113",
+      "bucket": "43795599",
+      "title": "HEY-IOS-669 — Fatal App Hang Fully Blocked",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20."
+    },
+    {
+      "id": "10120067870",
+      "bucket": "43795599",
+      "title": "HEY-DESKTOP-2TX — TypeError: Object has been destroyed",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224582259 (hey-desktop-download-done-crashes-on-destroyed-window) in Fernando: PSP 48348194, table 10157062382."
+    },
+    {
+      "id": "10114946754",
+      "bucket": "43795599",
+      "title": "HEY-DESKTOP-64Q — partition_alloc OnNoMemoryInternal",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224689117 (hey-desktop-did-fail-load-loop-oom) in Fernando: PSP 48348194, table 10157062382. Verdict defect-already-fixed (db4ee29, shipped v1.3.4 2026-07-01), so no effort opened and the card stays in the Sentry column (9956253701); recommended next column is Done (9027546463). Sentry disposition: all FIVE issues in the signature family (HEY-DESKTOP-64Q, 64N, 66V, 64G and 66W) are ignored/untilEscalating, verified by fresh read. 66W was brought in after Fernando ruled on 2026-08-20 to resolve the signature in 1.3.4; it was confirmed on its own evidence. RESOLVED-IN-RELEASE COULD NOT BE SET FROM THE AGENT TOOL SURFACE (statusDetails silently dropped, landing a bare plain resolve; reverted, defect row 4073), so setting HEY@1.3.4 by hand in the Sentry UI is OWED TO FERNANDO, with the warning that doing so reopens these roughly every 5 days on upload-time-tagged stragglers. psp-intake-postmortem is owed and deliberately not run by the intake."
+    },
+    {
+      "id": "10114946720",
+      "bucket": "43795599",
+      "title": "HEY-DESKTOP-64W — HttpError: 403",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224572057 (hey-desktop-updater-403-cloudflare-ip-block) in Fernando: PSP 48348194, table 10157062382. Verdict working-as-designed, so the card stays in the Sentry column (9956253701) and no effort opened."
+    },
+    {
+      "id": "10114946674",
+      "bucket": "43795599",
+      "title": "HEY-DESKTOP-645 — Error: net::ERR_NETWORK_CHANGED",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224669568 (hey-desktop-updater-transient-net-errors-flood-sentry) in Fernando: PSP 48348194, table 10157062382. Verdict working-as-designed for builds 1.3.5+ and already-fixed for 1.3.3 and earlier, so the card stays in the Sentry column (9956253701) and no effort opened."
+    },
+    {
+      "id": "10031447375",
+      "bucket": "43795599",
+      "title": "HEY-DESKTOP-64F - Error (cancelled Save Image As download)",
+      "designated": "2026-08-20",
+      "reason": "Sentry-column intake with the Sentry card itself as the human surface; Fernando started the column on 2026-08-20. Adopted by psp-intake-plan on 2026-08-20; pairs with bot card 10224640048 (hey-desktop-save-image-as-cancel-unhandled-rejection) in Fernando: PSP 48348194, table 10157062382. Verdict was benign noise - working-as-designed in hey-electron, defect in third-party electron-context-menu 4.1.2 - so the card was deliberately LEFT IN THE SENTRY COLUMN (9956253701) rather than moved to In progress. No prose of the agent goes on this card; the summary is written by the dispatching session."
+    },
+    {
+      "id": "10225261584",
+      "bucket": "43795599",
+      "title": "HEY iOS freezes and is killed while saving your sign-in to the keychain",
+      "designated": "2026-08-21",
+      "reason": "Adopted by psp-intake-plan on 2026-08-21 as the human surface for the keychain main-thread-hang effort, on Fernando's ruling of 2026-08-21: \"Ok, let's create a new card in this board that handles the keychain debugging.\" Created by on-call-bot in Triage (9027546451) rather than filed by MobileBot. Pairs with bot card 10225258542 (hey-ios-keychain-write-blocks-main-thread-on-identity-refresh) in Fernando: PSP 48348194, table 10157062382. No prose of the agent goes on this card beyond its title; the summary is written by the dispatching session."
     }
   ],
   "tables": [
