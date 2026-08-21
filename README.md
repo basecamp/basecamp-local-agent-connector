@@ -89,14 +89,14 @@ the agent runs and replies.
 
 **Watch several projects at once** — repeat `--project` (name, URL, or ID).
 A single connector run registers one webhook per project and multiplexes them all
-onto one funnel, so the same `@agent` watches every listed project simultaneously:
+onto one funnel path, so the same `@agent` watches every listed project simultaneously:
 
 ```
 /basecamp-connect @Clawdito --project "BC5.1" --project "On Call" --project 20361308
 ```
 
 - `--project` takes a **name, URL, or ID** — the CLI resolves it.
-- Watch GitHub PR reviews too, over the **same** funnel: add `--repo <owner>/<repo>`
+- Watch GitHub PR reviews too, over the **same** server: add `--repo <owner>/<repo>`
   (repeatable). You need at least one `--project` or `--repo`; `--project` also
   needs an `@agent`.
 
@@ -104,7 +104,7 @@ onto one funnel, so the same `@agent` watches every listed project simultaneousl
 
 While running, the connector exposes a **public URL** (via Tailscale Funnel) and
 registers a **real webhook** on each watched project. **Always stop it when
-you’re done** — stopping deletes every webhook and closes the funnel
+you’re done** — stopping deletes every webhook and unmounts its funnel paths
 automatically. In Claude Code, ending the skill does this; from a terminal, press
 **Ctrl-C**. Nothing is left running or exposed.
 
@@ -225,9 +225,12 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    (refreshing an expired token once). Warns if agent == operator.
 2. **Open the endpoint.** Starts a WEBrick server on `127.0.0.1:<port>` that only
    accepts `POST /hook/<random-secret>`; everything else is 404. One server + one
-   funnel + one secret path serves every watched project.
-3. **Expose it.** `tailscale funnel` publishes the server at a public
-   `https://<host>.ts.net` URL.
+   secret path serves every watched project.
+3. **Expose it.** `tailscale funnel --set-path` mounts each of the connector's
+   paths (`/hook/<secret>`, plus `/gh/<secret>` when watching repos) on this
+   host's funnel, publishing the server at a public `https://<host>.ts.net` URL.
+   Only those paths are touched, so funnel paths other tools mounted keep
+   working.
 4. **Register webhooks.** Creates one webhook per project (with retry on transient
    failures), recording their IDs for cleanup.
 5. **Listen.** For each delivery: respond `200` immediately, then off the hot
@@ -247,14 +250,17 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 ```
 
 **Teardown.** On `SIGINT`/`SIGTERM` it deletes **every** registered webhook
-(best-effort, reporting any it couldn’t) and resets the funnel, then stops the
-server. The funnel and webhooks live only for the lifetime of the process. If it
+(best-effort, reporting any it couldn’t) and unmounts its own funnel paths
+(`tailscale funnel --set-path <path> off` — never `funnel reset`, which would
+also tear down other tools' paths), then stops the server. The mounted paths and
+webhooks live only for the lifetime of the process. If it
 is ever `SIGKILL`ed, clean up manually:
 
 ```bash
 basecamp webhooks list   --project "<project>"        # find leftovers
 basecamp webhooks delete <id> --project "<project>"
-tailscale funnel reset
+tailscale funnel status                              # find leftover /hook/… and /gh/… paths
+tailscale funnel --set-path /hook/<secret> off
 ```
 
 ### Useful `basecamp` CLI commands
@@ -300,10 +306,10 @@ boundary rather than mocking the gem’s own classes.
 ```
 bin/connect                          # shim → Connector.start(ARGV) — Basecamp and/or GitHub
 lib/basecamp_agent_connector/
-  connector        # unified: one funnel + one multi-route server, mounts each transport's bridge
+  connector        # unified: one multi-route server on shared-funnel paths, mounts each transport's bridge
   command_runner   # shared: runs subprocesses; the seam tests stub
   server           # shared: WEBrick server, path→handler routes; 200-fast, raw body + headers
-  tunnel           # shared: Tailscale Funnel lifecycle (start / reset)
+  tunnel           # shared: mounts/unmounts our own paths on the host's Tailscale Funnel
   emitter          # shared: NDJSON writer
   basecamp/        # Basecamp:: — the Basecamp webhook transport
     bridge         #   one route: secret path, register webhooks, handler, teardown

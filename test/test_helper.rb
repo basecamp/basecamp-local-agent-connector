@@ -2,6 +2,7 @@ $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "basecamp_agent_connector"
 require "minitest/autorun"
+require "minitest/mock"
 require "base64"
 require "json"
 require "openssl"

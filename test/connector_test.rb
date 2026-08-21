@@ -48,4 +48,35 @@ class ConnectorTest < Minitest::Test
       BasecampAgentConnector::Connector.parse_options([ "--project", "Queenbee" ])
     end
   end
+
+  class FakeServer
+    def start; end
+    def stop; end
+  end
+
+  def test_start_mounts_only_its_own_bridge_paths_on_the_shared_funnel
+    runner = FakeCommandRunner.new
+    runner.stub "tailscale funnel", exit_status: 0
+    runner.stub "tailscale status --json", stdout: JSON.generate("Self" => { "DNSName" => "desktop.example.ts.net." })
+    runner.stub "/hooks", stdout: '{"id":888}'
+    runner.stub "-X DELETE", exit_status: 0
+
+    start_connector [ "--repo", "acme/a", "--port", "4567" ], runner
+
+    mounted = runner.commands_matching(/funnel --bg/)
+    assert_equal 1, mounted.length
+    path = mounted.first[4]
+    assert_match %r{\A/gh/[0-9a-f]+\z}, path
+    assert_equal [ "tailscale", "funnel", "--bg", "--set-path", path, "http://127.0.0.1:4567#{path}" ], mounted.first
+    assert_equal [ [ "tailscale", "funnel", "--set-path", path, "off" ] ], runner.commands_matching(/funnel --set-path/)
+    assert_empty runner.commands_matching(/reset/)
+  end
+
+  private
+    def start_connector(argv, runner)
+      connector = BasecampAgentConnector::Connector.new(BasecampAgentConnector::Connector.parse_options(argv))
+      connector.instance_variable_set(:@command_runner, runner)
+
+      BasecampAgentConnector::Server.stub(:new, FakeServer.new) { capture_io { connector.start } }
+    end
 end
