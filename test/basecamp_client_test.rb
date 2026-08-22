@@ -34,6 +34,32 @@ class BasecampClientTest < Minitest::Test
       runner.commands_matching(/me/).length
   end
 
+  # The CLI omits "data" entirely on an empty listing, so unwrap returns the
+  # envelope. Verbatim from `basecamp cards list --project 43795599 --column
+  # 9956253701 -j`, 2026-08-22.
+  EMPTY_LISTING = '{"ok": true, "summary": "0 cards"}'.freeze
+
+  def test_an_empty_column_listing_is_no_cards_rather_than_the_envelope
+    runner = FakeCommandRunner.new
+    runner.stub "cards list", stdout: EMPTY_LISTING
+
+    assert_equal [], build_cli(runner).cards_in_column(project: 1, column: 2)
+  end
+
+  def test_an_empty_assignment_listing_is_no_cards
+    runner = FakeCommandRunner.new
+    runner.stub "cards list", stdout: EMPTY_LISTING
+
+    assert_equal [], build_cli(runner).cards_assigned_to("Clawdito")
+  end
+
+  def test_an_empty_event_listing_is_no_events
+    runner = FakeCommandRunner.new
+    runner.stub "events", stdout: '{"ok": true, "summary": "0 events"}'
+
+    assert_equal [], build_cli(runner).events(789)
+  end
+
   def test_me_returns_unwrapped_data
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: envelope("id" => 123, "email_address" => "clawdito@example.com")

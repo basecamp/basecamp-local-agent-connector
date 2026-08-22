@@ -40,18 +40,18 @@ class BasecampAgentConnector::Basecamp::Client
   end
 
   def cards_in_column(project:, column:, profile: nil)
-    json "cards", "list", "--project", project.to_s, "--column", column.to_s, *profile_flag(profile)
+    listing json("cards", "list", "--project", project.to_s, "--column", column.to_s, *profile_flag(profile))
   end
 
   # Account-wide, and the only listing that reports assignment at all: a
   # project-scoped card listing omits `assignees` entirely, so detecting an
   # assignment from one would cost a fetch per card on the board.
   def cards_assigned_to(assignee, profile: nil)
-    json "cards", "list", "--all-projects", "--assignee", assignee.to_s, *profile_flag(profile)
+    listing json("cards", "list", "--all-projects", "--assignee", assignee.to_s, *profile_flag(profile))
   end
 
   def events(id_or_url, profile: nil)
-    json "events", id_or_url.to_s, *profile_flag(profile)
+    listing json("events", id_or_url.to_s, *profile_flag(profile))
   end
 
   def create_webhook(url:, project:, types:)
@@ -99,6 +99,17 @@ class BasecampAgentConnector::Basecamp::Client
     def detail_of(result)
       detail = result.stderr.strip
       detail.empty? ? result.stdout.strip : detail
+    end
+
+    # An empty listing comes back as {"ok": true, "summary": "0 cards"} with NO
+    # "data" key, so unwrap hands the envelope itself to a caller expecting rows.
+    # `flat_map` does not splay a Hash, so it arrived downstream as one phantom
+    # record with a nil id: card_payload built a payload around it, emit dropped
+    # it for having no recording id, and remember wrote a blank key that the
+    # blank-key guard discarded. Harmless, and harmless only because two guards
+    # added for other reasons both happened to catch it.
+    def listing(parsed)
+      parsed.is_a?(Array) ? parsed : []
     end
 
     def unwrap(parsed)
