@@ -22,7 +22,7 @@ So staleness is a state here too (defects row 4532).
   agent-watch.py --stale MINUTES silence that counts as stalled (default 20)
   agent-watch.py --dir PATH      a specific session's tasks directory
 """
-import glob, json, os, re, sys, time
+import calendar, glob, json, os, re, sys, time
 
 SESSIONS = "/private/tmp/claude-501/-Users-fernando-on-call-bot"
 AGENT = re.compile(r"/(a[0-9a-f]{16})\.output$")
@@ -93,6 +93,20 @@ def awaiting_tool(path):
                for part in content)
 
 
+# The file's own mtime is not a clock here. A live agent's transcript grew by 45
+# records while stat still reported a modification time 74 minutes old, so a
+# working agent read as long-silent and a genuinely wedged one would have read
+# the same. Every record carries its own ISO timestamp; that is the clock.
+def last_activity(record, path):
+    stamp = record.get("timestamp")
+    if isinstance(stamp, str):
+        try:
+            return calendar.timegm(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            pass
+    return os.path.getmtime(path)
+
+
 def last_record(path):
     last = None
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -126,9 +140,11 @@ def main():
         if not m:
             continue
         agent = m.group(1)
-        dead = bool(last_record(f).get(DEAD_MARKER))
-        quiet = (time.time() - os.path.getmtime(f)) / 60
-        rows.append((os.path.getmtime(f), agent, dead, agent in handled, f, quiet))
+        record = last_record(f)
+        dead = bool(record.get(DEAD_MARKER))
+        seen = last_activity(record, f)
+        quiet = (time.time() - seen) / 60
+        rows.append((seen, agent, dead, agent in handled, f, quiet))
 
     limit = float(argv[argv.index("--stale") + 1]) if "--stale" in argv else STALE_MINUTES
     show_all = "--all" in argv
