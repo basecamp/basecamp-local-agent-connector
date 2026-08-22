@@ -9,9 +9,17 @@ watched for it, and the front thread's memory said they had been resumed.
 
 This reads the transcripts instead of remembering them.
 
-  agent-watch.py                 dead agents nobody has acknowledged
+Death is not the only way work stops. A build agent on Fernando's top-priority
+effort polled `until HEAD changes` against a worktree only it could commit to,
+and span for 53 minutes emitting no transcript records at all -- no marker, no
+error, nothing for the death check to see. A wedged agent and a working one look
+identical from outside; the only signal is that the transcript stopped growing.
+So staleness is a state here too (defects row 4532).
+
+  agent-watch.py                 dead or stalled agents nobody has acknowledged
   agent-watch.py --all           every agent, with its state
-  agent-watch.py --ack ID [ID..] mark a death handled (restarted, or dropped)
+  agent-watch.py --ack ID [ID..] mark one handled (restarted, cleared, dropped)
+  agent-watch.py --stale MINUTES silence that counts as stalled (default 20)
   agent-watch.py --dir PATH      a specific session's tasks directory
 """
 import glob, json, os, re, sys, time
@@ -24,6 +32,11 @@ AGENT = re.compile(r"/(a[0-9a-f]{16})\.output$")
 DEAD = re.compile(r"terminated early|hit your session limit|hit your usage|"
                   r"API error|Delta: Agent terminated", re.I)
 TAIL = 4000
+# Long silences are normal for an agent inside one slow command -- a package
+# resolve, a simulator boot, a full suite. The threshold is set above those and
+# below "nobody would leave this alone", and the report says how long it has been
+# rather than only that it crossed a line.
+STALE_MINUTES = 20
 
 
 def tasks_dir(argv):
@@ -56,6 +69,35 @@ def label(path):
         return "(unreadable)"
 
 
+# Silence alone means nothing: a transcript that finished stops growing exactly
+# like one that wedged, and every completed agent in the directory is quiet
+# forever. What separates them is the LAST RECORD. An agent waiting on a tool
+# call ends on an assistant message carrying a tool_use with no tool_result after
+# it; an agent that finished ends on its final text. A first cut of this check
+# keyed on silence alone and reported two hundred long-finished agents as
+# stalled, which is worse than not checking -- a report nobody can read is a
+# report nobody reads.
+def awaiting_tool(path):
+    last = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.strip():
+                last = line
+    if last is None:
+        return False
+    try:
+        record = json.loads(last)
+    except ValueError:
+        return False
+    if record.get("type") != "assistant":
+        return False
+    content = record.get("message", {}).get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(part, dict) and part.get("type") == "tool_use"
+               for part in content)
+
+
 def tail_of(path):
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
@@ -82,28 +124,37 @@ def main():
         if not m:
             continue
         agent, dead = m.group(1), bool(DEAD.search(tail_of(f)))
-        rows.append((os.path.getmtime(f), agent, dead, agent in handled, f))
+        quiet = (time.time() - os.path.getmtime(f)) / 60
+        rows.append((os.path.getmtime(f), agent, dead, agent in handled, f, quiet))
 
+    limit = float(argv[argv.index("--stale") + 1]) if "--stale" in argv else STALE_MINUTES
     show_all = "--all" in argv
     rows.sort()
     unhandled = 0
-    for mtime, agent, dead, acked, f in rows:
-        if not show_all and not (dead and not acked):
+    for mtime, agent, dead, acked, f, quiet in rows:
+        # A dead transcript stops growing by definition, so staleness only means
+        # something for one that never recorded a death.
+        stalled = not dead and quiet >= limit and awaiting_tool(f)
+        if not show_all and not ((dead or stalled) and not acked):
             continue
-        state = "DEAD" if dead else "ok"
-        if dead and acked:
-            state = "dead/acked"
-        if dead and not acked:
+        state = "DEAD" if dead else "STALLED" if stalled else "ok"
+        if (dead or stalled) and acked:
+            state = state.lower() + "/acked"
+        elif dead or stalled:
             unhandled += 1
-        print(f"[{state:10}] {time.strftime('%m-%d %H:%M', time.localtime(mtime))}  "
-              f"{agent}\n              {label(f)}")
+        note = f"  quiet {quiet:.0f}m" if stalled else ""
+        print(f"[{state:11}] {time.strftime('%m-%d %H:%M', time.localtime(mtime))}  "
+              f"{agent}{note}\n               {label(f)}")
 
     if not rows:
         print("no agent transcripts in", path)
     elif unhandled:
-        print(f"\n{unhandled} agent(s) stopped without a result and without a restart.")
+        print(f"\n{unhandled} agent(s) stopped or went quiet without a result. "
+              f"A stalled agent may be inside one slow command -- check what it is "
+              f"waiting on before restarting it.")
     elif not show_all:
-        print("every agent death has been acknowledged")
+        print(f"no unacknowledged deaths, and nothing waiting on a tool call "
+              f"for {limit:.0f}+ minutes")
     return 1 if unhandled else 0
 
 
