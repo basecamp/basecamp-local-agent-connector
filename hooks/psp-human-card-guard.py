@@ -179,9 +179,17 @@ METAPHOR = [
 
 # Named referents. "both checks" makes him ask which two. A quantified plural
 # stands only when the sentence also names the things it counts.
+# The counter has to be followed by a NOUN. "either goes unrecorded" and "both
+# runs green" are not counted-but-unnamed, and denying them costs a round each.
+# Nothing here does part-of-speech tagging, so the verbs that actually turn up
+# after these counters are listed and skipped.
+VERBS = (r"goes|does|is|was|has|gets|takes|makes|needs|runs|says|means|comes|"
+         r"stays|keeps|lands|reads|writes|holds|sits|ships|fires|costs|counts|"
+         r"matches|carries|leaves|ends|starts|stops|fails|passes|wins|looks|"
+         r"points|names|calls|shows|tells|asks|wants|works|helps|adds|drops")
 COUNTED = re.compile(
     r"\b(?:both|either|the two|all three|all four|the three)\s+"
-    r"(?:the\s+)?[a-z][a-z-]*s\b", re.I)
+    r"(?:the\s+)?(?!(?:" + VERBS + r")\b)[a-z][a-z-]*s\b", re.I)
 
 # The same failure with the noun supplied and the items still missing:
 # "those five instrumentation parts", "the four events". He asked "what
