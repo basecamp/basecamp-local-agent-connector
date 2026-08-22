@@ -25,6 +25,18 @@ BASECAMP = re.compile(r"(?:^|[;&|(\n]|&&|\|\|)\s*(?:sudo\s+)?basecamp\s")
 # matches --quality, --queue, or a -q inside a quoted argument's interior.
 QUIET = re.compile(r"(?:^|\s)-(?:[a-pr-z]*q[a-z]*)(?=\s|$)|(?:^|\s)--quiet(?=\s|$)")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1.*?^\s*\2\b", re.S | re.M)
+# Quoted spans are payload, not command. A commit message that wraps so a line
+# begins "basecamp constantly, so the two collide" put `basecamp` right after a
+# newline -- a separator by this pattern -- and the `-q` it was matched against
+# belonged to `git commit`. The deny blocked a commit that touches no Basecamp
+# read at all.
+QUOTED = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", re.S)
+# Only this invocation's own pipeline counts. A `-q` in a LATER command is not
+# ours -- but a `-q` downstream in the same pipeline is, because `basecamp read |
+# grep -q` collapses "the read failed" and "the pattern is absent" into the same
+# exit code, which is the hazard this hook exists for wearing another tool's
+# clothes. So `;`, `&&`, `||` and newline separate; a bare `|` does not.
+SEGMENT = re.compile(r"[;&\n]|&&|\|\|")
 
 
 def main():
@@ -32,8 +44,10 @@ def main():
     if payload.get("tool_name") != "Bash":
         sys.exit(0)
     cmd = (payload.get("tool_input") or {}).get("command", "")
-    body = HEREDOC.sub(" ", cmd)
-    if not BASECAMP.search(body) or not QUIET.search(body):
+    body = QUOTED.sub(" ", HEREDOC.sub(" ", cmd))
+    quiet_read = any(BASECAMP.search(" " + segment) and QUIET.search(segment)
+                     for segment in SEGMENT.split(body))
+    if not quiet_read:
         sys.exit(0)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
