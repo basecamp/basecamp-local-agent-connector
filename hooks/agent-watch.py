@@ -26,12 +26,17 @@ import glob, json, os, re, sys, time
 
 SESSIONS = "/private/tmp/claude-501/-Users-fernando-on-call-bot"
 AGENT = re.compile(r"/(a[0-9a-f]{16})\.output$")
-# A transcript that ends in one of these ended because it was stopped, not
-# because the work finished. Matched against the tail only: an agent that merely
-# discusses a session limit has not hit one.
-DEAD = re.compile(r"terminated early|hit your session limit|hit your usage|"
-                  r"API error|Delta: Agent terminated", re.I)
-TAIL = 4000
+# Death is read from the LAST RECORD'S SHAPE, never from the words in it. The
+# harness stamps isApiErrorMessage on the record it writes when it stops an
+# agent; a transcript that finished ends on an ordinary assistant message.
+#
+# Grepping the tail for "hit your session limit" or "API error" cannot work here,
+# because this fleet's whole subject matter is agent deaths: an agent that reads
+# defects row 4513, or this very file, or writes a report containing the words
+# "API error", matches its own detector. It produced two false positives out of
+# nine on first use -- including the agent validating this script, mid-run -- and
+# I restarted two agents that had in fact completed.
+DEAD_MARKER = "isApiErrorMessage"
 # Long silences are normal for an agent inside one slow command -- a package
 # resolve, a simulator boot, a full suite. The threshold is set above those and
 # below "nobody would leave this alone", and the report says how long it has been
@@ -78,17 +83,7 @@ def label(path):
 # stalled, which is worse than not checking -- a report nobody can read is a
 # report nobody reads.
 def awaiting_tool(path):
-    last = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if line.strip():
-                last = line
-    if last is None:
-        return False
-    try:
-        record = json.loads(last)
-    except ValueError:
-        return False
+    record = last_record(path)
     if record.get("type") != "assistant":
         return False
     content = record.get("message", {}).get("content")
@@ -98,11 +93,18 @@ def awaiting_tool(path):
                for part in content)
 
 
-def tail_of(path):
-    with open(path, "rb") as f:
-        f.seek(0, os.SEEK_END)
-        f.seek(max(0, f.tell() - TAIL))
-        return f.read().decode("utf-8", "replace")
+def last_record(path):
+    last = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.strip():
+                last = line
+    if last is None:
+        return {}
+    try:
+        return json.loads(last)
+    except ValueError:
+        return {}
 
 
 def main():
@@ -123,7 +125,8 @@ def main():
         m = AGENT.search(f)
         if not m:
             continue
-        agent, dead = m.group(1), bool(DEAD.search(tail_of(f)))
+        agent = m.group(1)
+        dead = bool(last_record(f).get(DEAD_MARKER))
         quiet = (time.time() - os.path.getmtime(f)) / 60
         rows.append((os.path.getmtime(f), agent, dead, agent in handled, f, quiet))
 
