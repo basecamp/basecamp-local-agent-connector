@@ -121,6 +121,23 @@ def last_record(path):
         return {}
 
 
+# A promise gated on "when the agents are done" has nowhere to live but a
+# session's memory, and tonight is a catalogue of what that costs. The gate
+# announces itself here, where the answer to "are they done" is already being
+# printed.
+PENDING = os.path.expanduser("~/on-call-bot/PENDING.md")
+
+
+def pending():
+    if not os.path.isfile(PENDING):
+        return
+    items = [l for l in open(PENDING) if l.startswith("## ")]
+    if items:
+        print(f"\n{len(items)} thing(s) owed in {PENDING}:")
+        for line in items:
+            print("   " + line[3:].strip())
+
+
 def main():
     argv = sys.argv[1:]
     path = tasks_dir(argv)
@@ -174,6 +191,7 @@ def main():
     elif not show_all:
         print(f"no unacknowledged deaths, and nothing waiting on a tool call "
               f"for {limit:.0f}+ minutes")
+        pending()
     return 1 if unhandled else 0
 
 
