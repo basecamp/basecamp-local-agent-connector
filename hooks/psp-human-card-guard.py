@@ -479,6 +479,34 @@ def paragraphs(cmd):
     return blocks
 
 
+# One command can carry more than one heredoc. A compound that edits a draft with
+# a python heredoc and then posts the draft with `< path` had the python source
+# read as the comment body, and the guard denied the post with specific
+# complaints about text that was never in it. Whatever feeds the invocation wins;
+# the scan of the whole command stays as the fallback it always was.
+def feeding_the_comment(cmd):
+    m = re.search(r"basecamp\s+comments\s+(?:create|update)\b[^\n;&|]*", cmd)
+    if m is None:
+        return None
+    invocation = m.group(0)
+
+    delimiter = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", invocation)
+    if delimiter:
+        body = re.search(r"<<-?\s*['\"]?" + re.escape(delimiter.group(1)) + r"['\"]?\n(.*?)\n"
+                         + re.escape(delimiter.group(1)), cmd, re.S)
+        return [ body.group(1) ] if body else None
+
+    redirect = re.search(r"<\s*([^\s;|)<>]+)", invocation)
+    if redirect:
+        expanded = os.path.expanduser(redirect.group(1))
+        if os.path.isfile(expanded):
+            try:
+                return [ open(expanded).read() ]
+            except OSError:
+                return None
+    return None
+
+
 def heredoc_or_file_body(cmd):
     """Bodies that do not arrive as printf arguments.
 
@@ -489,17 +517,19 @@ def heredoc_or_file_body(cmd):
     runs before the command does, so a file the same command is about to write
     does not exist yet — but its heredoc text is right there in the command.
     """
-    blocks = []
-    for body in re.findall(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1", cmd, re.S):
-        blocks.append(body[1])
-    if not blocks:
-        for path in re.findall(r"(?:<|\$\(cat\s+)\s*([^\s;|)<>]+)", cmd):
-            expanded = os.path.expanduser(path)
-            if os.path.isfile(expanded):
-                try:
-                    blocks.append(open(expanded).read())
-                except OSError:
-                    pass
+    blocks = feeding_the_comment(cmd)
+    if blocks is None:
+        blocks = []
+        for body in re.findall(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1", cmd, re.S):
+            blocks.append(body[1])
+        if not blocks:
+            for path in re.findall(r"(?:<|\$\(cat\s+)\s*([^\s;|)<>]+)", cmd):
+                expanded = os.path.expanduser(path)
+                if os.path.isfile(expanded):
+                    try:
+                        blocks.append(open(expanded).read())
+                    except OSError:
+                        pass
     out = []
     for text in blocks:
         for para in re.split(r"\n\s*\n", text.strip()):
