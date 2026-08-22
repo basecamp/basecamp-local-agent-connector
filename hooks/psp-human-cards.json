@@ -2,6 +2,27 @@
   "_comment": "Human-facing surfaces outside the PSP Human Card Table. `cards` are individual cards Fernando ruled human-facing; `tables` are whole card tables whose every card is one. The guard enforces the sister-card contract on both. A card the intake agent adopts is appended to `cards`; the `tables` entry is the backstop for one it forgets.",
   "cards": [
     {
+      "id": "10202116051",
+      "bucket": "43795599",
+      "title": "[BC-desktop] Sign out from inside the web view",
+      "designated": "2026-08-21",
+      "reason": "Adopted on Fernando's instruction of 2026-08-21, verbatim: \"let's treat this as the human card from now on. Where did we stop? What's next?\" (comment 10227038271 on this card). Pairs with bot card 10219002524 (desktop-web-signout-leaves-shell-signed-in) in Fernando: PSP 48348194, table 10157062382, and RETIRES the private sister card 10219002757 as the human surface for this effort - 10219002757 carries the whole ruling thread through 2026-08-20 and stays published as the record, but every human-facing word from now on goes here. Card was already in In progress (9027546460) when adopted and was NOT moved: the effort really is in progress - bc3 PR 12810 is open with parts 1 and 2 plus the demo-row gate, and the remaining gate is Fernando's, not a column's. No prose of the agent goes on this card; the summary is written by the dispatching session."
+    },
+    {
+      "id": "10194619132",
+      "bucket": "43795599",
+      "title": "[Help Scout] Cross-device Beacon history",
+      "designated": "2026-08-21",
+      "reason": "Triage-column intake on the Issues board, adopted as its own human surface on Fernando's instruction (he retracted an earlier no-adopt constraint mid-run and directed adoption with no sister card). Pairs with bot card 10227085268 (bc3-ios-support-history-device-isolated-no-beacon-secure-mode) in Fernando: PSP 48348194, table 10157062382. No sister card created. VERDICT never-designed: the iOS app never had a Help Scout Secure Mode path and nobody ever decided it should or should not, so this is scope work for /psp-plan rather than a defect - iOS sized at 105 new-and-changed app LOC across bc3-ios and core-ios, 415 minutes. NOT A REGRESSION: the live beacon config carries secureModeOnly false, so the web's 2026-08-10 change did not break the apps. The card is a SHARED CROSS-TEAM CARD - Chase Clemons, Jay Ohms and Rosa Gutierrez are subscribed and Rosa is waiting on the routing answer - and no prose of the agent goes on it; the summary is written by the dispatching session. Verify steps added by the agent. Moved Triage (9027546451) -> Not now (9027546455) only after psp-intake-postmortem posted."
+    },
+    {
+      "id": "9956272214",
+      "bucket": "43795599",
+      "title": "🍎 [HEY iOS] Unable to access full photo gallery after already attaching photos | May 29",
+      "designated": "2026-08-21",
+      "reason": "Fernando's instruction on the card, verbatim (comment 10227039098, 2026-08-21T15:29:13Z): \"OnCallBot-Fernando-O let's treat this as the human card from now on. Where did we stop and what's next?\" Adopted as the human surface for the fix-hey-email-limited-photo-access effort. Pairs with bot card 10216692304 (Fix: hey-email-limited-photo-access-unreachable-after-first-pick) in Fernando: PSP 48348194, table 10157062382. NOTE: a PSP-table human sister card already exists for this effort - 10216692325 (\"Attaching another photo only offers the photos already picked\", Review column 10216674135) - and is superseded as the surface by this board card; it was not archived or touched. No sister card created and no column change: the board card was already in In progress (9027546460), which matches the effort's real phase (PR basecamp/hey-ios#1665 open and green, awaiting Fernando's approving review). No prose of the agent goes on this card; the summary is written by the dispatching session."
+    },
+    {
       "id": "10225366163",
       "bucket": "43795599",
       "title": "🍎🏕️ NSInvalidArgumentException: Can't add self as subview",
@@ -77,6 +98,20 @@
       "title": "HEY iOS freezes and is killed while saving your sign-in to the keychain",
       "designated": "2026-08-21",
       "reason": "Adopted by psp-intake-plan on 2026-08-21 as the human surface for the keychain main-thread-hang effort, on Fernando's ruling of 2026-08-21: \"Ok, let's create a new card in this board that handles the keychain debugging.\" Created by on-call-bot in Triage (9027546451) rather than filed by MobileBot. Pairs with bot card 10225258542 (hey-ios-keychain-write-blocks-main-thread-on-identity-refresh) in Fernando: PSP 48348194, table 10157062382. No prose of the agent goes on this card beyond its title; the summary is written by the dispatching session."
+    },
+    {
+      "id": "9956451955",
+      "bucket": "43795599",
+      "title": "🍎📧 WatchdogTermination: The OS watchdog terminated your app, possibly because it overused RAM.",
+      "designated": "2026-08-21",
+      "reason": "Sentry-column intake on the Issues board (MobileBot filed it 2026-06-02; Fernando started the intake with 'let's get this going with psp-intake-plan', comment 10227040366). Adopted as its own human surface per the standing on-call board-card contract - no sister card created. Pairs with bot card 10227182347 (hey-ios-watchdog-terminations-collapse-into-one-stackless-issue) in Fernando: PSP 48348194, table 10157062382. Card was ALREADY in In progress (9027546460) when adopted and was NOT moved - the column map's post-diagnosis target for a Plan/Design bot card is exactly In progress, and a card past Triage never moves backwards. No prose of the agent goes on this card; the summary is written by the dispatching session. Verify steps are the one exception and are the agent's to add."
+    },
+    {
+      "id": "10227988226",
+      "bucket": "43795599",
+      "title": "Validate Sentry for bc3-ios and hey-ios for hidden events marked solved while still firing",
+      "designated": "2026-08-21",
+      "reason": "Triage-column intake on the Issues board (Fernando filed it 2026-08-21 19:27 asking whether the mobile-alerts process has marked issues solved while they are still firing). Adopted as its own human surface per the standing on-call board-card contract - no sister card created. Holds TWO distinguishable bugs and pairs with TWO bot cards in Fernando: PSP 48348194, table 10157062382: 10228034813 (sentry-ios-archived-issues-fire-unseen-by-on-call-triage) and 10228035110 (sentry-ios-resolved-in-commit-issues-never-reopen); a card split is recommended. The dispatching session moved this card to In progress (9027546460) and assigned Fernando at dispatch time under the standing rule set 2026-08-21, so the intake agent did NOT move it and does not own its column. No prose of the agent goes on this card; the summary is written by the dispatching session. Verify steps are the one exception and are the agent's to add."
     }
   ],
   "tables": [

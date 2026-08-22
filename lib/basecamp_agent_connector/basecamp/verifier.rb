@@ -33,7 +33,7 @@ class BasecampAgentConnector::Basecamp::Verifier
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
 
-      @basecamp_cli.show(locator)
+      @basecamp_cli.show(locator, profile: @agent.profile)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       raise Unreachable, "could not corroborate #{locator}: #{error.message}" if UNREACHABLE.match?(error.message)
 
