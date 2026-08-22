@@ -1,6 +1,39 @@
 require "test_helper"
 
 class BasecampClientTest < Minitest::Test
+  # Measured 2026-08-21: the CLI reads credentials under a global mutual
+  # exclusion, so exactly one of N simultaneous calls comes back authenticated.
+  # The loser is not logged out and must not be reported as an error.
+  LOCKED_OUT = "Not authenticated for profile:on-call-bot: credentials not found for profile:on-call-bot".freeze
+
+  def test_a_call_that_lost_the_credential_race_is_retried
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stderr: LOCKED_OUT, exit_status: 1, once: true
+    runner.stub "basecamp me", stdout: envelope("id" => 123)
+
+    assert_equal 123, build_cli(runner).me.fetch("id")
+    assert_equal 2, runner.commands_matching(/me/).length
+  end
+
+  def test_a_failure_that_is_not_the_credential_race_is_reported_at_once
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stderr: "not found", exit_status: 1
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).me }
+    assert_equal 1, runner.commands_matching(/me/).length, "a 404 must not be retried"
+  end
+
+  def test_a_call_that_never_wins_the_race_still_raises
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stderr: LOCKED_OUT, exit_status: 1
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).me }
+
+    assert_includes error.message, "credentials not found"
+    assert_equal BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS.length + 1,
+      runner.commands_matching(/me/).length
+  end
+
   def test_me_returns_unwrapped_data
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: envelope("id" => 123, "email_address" => "clawdito@example.com")

@@ -3,6 +3,13 @@ require "json"
 class BasecampAgentConnector::Basecamp::Client
   class Error < StandardError; end
 
+  # Only the keychain contention below is retried. Every other failure -- a 404,
+  # a bad argument, a real logout -- is returned on the first attempt, because
+  # retrying it just spends the interval saying the same thing.
+  CREDENTIAL_LOCK = /credentials not found|not authenticated for profile/i
+
+  RETRY_DELAYS = [ 0.15, 0.4, 1.0 ].freeze
+
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp")
     @command_runner = command_runner
     @executable = executable
@@ -57,15 +64,41 @@ class BasecampAgentConnector::Basecamp::Client
 
   private
     def json(*arguments)
-      result = run(*arguments, "-j")
+      result = attempt(*arguments)
 
       unless result.success?
-        detail = result.stderr.strip
-        detail = result.stdout.strip if detail.empty?
+        detail = detail_of(result)
         raise Error, "`basecamp #{arguments.join(' ')}` failed: #{detail}"
       end
 
       unwrap JSON.parse(result.stdout)
+    end
+
+    # The CLI keeps credentials in the keychain and reads them under a global
+    # mutual exclusion: measured 2026-08-21 at concurrency 1, 2, 3, 4 and 8,
+    # exactly ONE simultaneous call comes back authenticated and every other one
+    # reports the profile logged out, whatever profiles they name. A serial read
+    # always succeeds, so the loser of a race is not out of credentials -- it was
+    # standing in the wrong place. Retry it, spaced so the retries do not collide
+    # with each other the way the originals did.
+    def attempt(*arguments)
+      RETRY_DELAYS.each do |delay|
+        result = run(*arguments, "-j")
+        return result if result.success? || !locked_out?(result)
+
+        sleep delay
+      end
+
+      run(*arguments, "-j")
+    end
+
+    def locked_out?(result)
+      CREDENTIAL_LOCK.match? detail_of(result)
+    end
+
+    def detail_of(result)
+      detail = result.stderr.strip
+      detail.empty? ? result.stdout.strip : detail
     end
 
     def unwrap(parsed)
