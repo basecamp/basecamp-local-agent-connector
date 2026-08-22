@@ -80,7 +80,21 @@ POSTMORTEM = re.compile(r"\bpost-?mortem\b", re.I)
 # for. The three prose paragraphs still have to be there and still have to obey
 # every cap. The tone rules apply to everything, extras included: a metaphor
 # inside a bullet is still a metaphor.
-NONPROSE = re.compile(r"<(?:table|tr|td|th|ul|ol|li|figure|img|bc-attachment)\b", re.I)
+# A mention expands to <bc-attachment><figure><img>…</figure></bc-attachment> and
+# sits INSIDE the opening sentence. Classifying that paragraph as a picture drops
+# the prose count from 3 to 2 and denies the comment: 121 of 143 real comments
+# carry a mention and 120 of their denials had no other cause. Strip mentions
+# before deciding what a paragraph is.
+MENTION = re.compile(r"<bc-attachment\b[^>]*\bcontent-type=[\"']application/vnd\.basecamp\.mention"
+                     r"[^>]*>.*?</bc-attachment>", re.I | re.S)
+NONPROSE = re.compile(r"<(?:table|tr|td|th|figure|img|bc-attachment)\b", re.I)
+
+# Bullet lists are gone. Fernando, on the voice: "Let's get rid of bullet points
+# in the voice. They don't serve other purpose than to extend comments." He is
+# describing what they were being used for -- a list is exempt from the word and
+# sentence caps, so five bullets carry what three paragraphs are not allowed to
+# say. Tables and images stay; they carry things prose genuinely cannot.
+LISTS = re.compile(r"<(?:ul|ol|li)\b", re.I)
 
 ACCOUNTING = [
     (r"\b\d+\s*(?:minutes?|mins?|hours?)\b", "counts our minutes"),
@@ -563,12 +577,21 @@ def main():
     text = "\n".join(paras)
 
     problems = []
-    prose = [p for p in paras if not NONPROSE.search(p)]
+    prose = [p for p in paras if not NONPROSE.search(MENTION.sub(" ", p))]
     extras = len(paras) - len(prose)
     if len(prose) != 3:
         problems.append(f"{len(prose)} prose paragraphs; the contract requires exactly 3 "
-                        "(two of explanation, one of next steps). Tables, lists and "
-                        f"images are additional and do not count — {extras} found.")
+                        "(two of explanation, one of next steps). Tables and images "
+                        f"are additional and do not count — {extras} found. A "
+                        "bullet list is not additional; it is prose that skipped "
+                        "the caps, and it counts.")
+    if LISTS.search(text):
+        problems.append(
+            "bullet list. Lists are exempt from the word and sentence caps, so a "
+            "list is where a comment goes to say more than three paragraphs allow. "
+            "Say it in the prose or leave it on the bot card. Tables and images "
+            "still stand.")
+
     low = text.lower()
     hits = [b for b in BANNED if b in low]
     if hits:
@@ -698,8 +721,9 @@ def main():
              "also named. No effort accounting - minutes, estimate error and finding "
              "counts belong on the bot card, unless the comment is a postmortem. "
              "Stripped-down directive register - no CTA, no soft ask, no filler. "
-             "Tables, bullet lists and images are welcome as extra explanation and "
-             "are exempt from the caps, but the three prose paragraphs still stand. "
+             "Tables and images are welcome as extra explanation and are exempt from "
+             "the caps; bullet lists are not, because a list is how a comment says "
+             "more than three paragraphs allow. The three prose paragraphs stand. "
              "Every factual claim carries a clickable GitHub or Basecamp link.",
              card=card)
     sys.exit(0)
