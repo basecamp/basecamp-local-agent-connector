@@ -37,6 +37,23 @@ AGENT = re.compile(r"/(a[0-9a-f]{16})\.output$")
 # nine on first use -- including the agent validating this script, mid-run -- and
 # I restarted two agents that had in fact completed.
 DEAD_MARKER = "isApiErrorMessage"
+# A user interrupt writes no marker at all: the last record is plain text saying
+# the request was interrupted. So the death check missed it, and the stall check
+# missed it too, because that keys on an unanswered tool call and an interrupted
+# agent's last record is text. Both blind to the same stop.
+INTERRUPTED = "[Request interrupted by user]"
+# The shapes above are the stops seen so far, which is the trap this file keeps
+# falling into: each revision has detected the specific stop just witnessed. The
+# catch-all below reports absence of progress alone, with no claim about why,
+# because the next stop mode will have a shape nobody has seen yet.
+#
+# It cannot tell a finished agent from an abandoned one -- both stop writing --
+# and no reading of the transcript ever will, because the difference is whether
+# anyone is still waiting on it. Only the dispatcher knows that. So the tool
+# reports every stop and `--ack` is where that knowledge is recorded; a finished
+# agent is acknowledged once and stays quiet, and anything unacknowledged is
+# something nobody has accounted for.
+IDLE_HOURS = 2
 # Long silences are normal for an agent inside one slow command -- a package
 # resolve, a simulator boot, a full suite. The threshold is set above those and
 # below "nobody would leave this alone", and the report says how long it has been
@@ -82,6 +99,12 @@ def label(path):
 # keyed on silence alone and reported two hundred long-finished agents as
 # stalled, which is worse than not checking -- a report nobody can read is a
 # report nobody reads.
+def interrupted(record):
+    content = record.get("message", {}).get("content")
+    parts = content if isinstance(content, list) else [{"text": content}]
+    return any(INTERRUPTED in str(p.get("text") or "") for p in parts if isinstance(p, dict))
+
+
 def awaiting_tool(path):
     record = last_record(path)
     if record.get("type") != "assistant":
@@ -170,10 +193,15 @@ def main():
     for mtime, agent, dead, acked, f, quiet in rows:
         # A dead transcript stops growing by definition, so staleness only means
         # something for one that never recorded a death.
-        stalled = not dead and quiet >= limit and awaiting_tool(f)
+        stopped = interrupted(record)
+        idle = quiet >= IDLE_HOURS * 60
+        stalled = not dead and (stopped or idle or (quiet >= limit and awaiting_tool(f)))
         if not show_all and not ((dead or stalled) and not acked):
             continue
-        state = "DEAD" if dead else "STALLED" if stalled else "ok"
+        state = ("DEAD" if dead else
+                 "INTERRUPTED" if stopped else
+                 "IDLE" if idle else
+                 "STALLED" if stalled else "ok")
         if (dead or stalled) and acked:
             state = state.lower() + "/acked"
         elif dead or stalled:
