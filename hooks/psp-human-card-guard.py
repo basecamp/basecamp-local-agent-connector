@@ -166,6 +166,40 @@ EDITORIAL = [
     r"\bthe right call\b", r"\bis what matters\b", r"\bneedless to say\b",
     r"\bto be fair\b", r"\bin fairness\b",
 ]
+# ORNAMENT: writerly vocabulary that carries no information. A third habit,
+# next to the two above and doing a different job. EMPHASIS turns up the volume
+# on a fact; EDITORIAL scores it; an ornament REPLACES it. "The follow-up is
+# load-bearing" says the follow-up matters without saying what breaks without
+# it, and the reader cannot act on the word. Fernando, 2026-08-24, on
+# "load-bearing" - it reached the human card twice that day.
+#
+# A term this fleet uses with a technical meaning stays out of this list however
+# writerly it looks elsewhere, because denying it would deny the only word for
+# the thing: `lens` is a reviewer in the battery, `cadence` is the release
+# cadence a shelf survey has to report for a layer-4 candidate, and `blast
+# radius`, `single source of truth`, `mutation`, `acceptance ledger`, `fix
+# ladder`, `cast` and `retreat map` are all named parts of the process.
+# "at the end of the day" is not here either - BANNED already carries it, and
+# one fault should be reported once.
+ORNAMENT = [
+    r"\bload-bearing\b", r"\bnon-trivial\b", r"\borthogonal\b",
+    r"\bfirst-class\b", r"\bnorth star\b", r"\bsurface area\b",
+    r"\bin anger\b", r"\bmoves? the needle\b", r"\btable stakes\b",
+    r"\btexture\b", r"\belegant(?:ly)?\b", r"\bseamless(?:ly)?\b",
+    r"\bmeaningfully\b", r"\bmaterially\b", r"\bfundamentally\b",
+    r"\bessentially\b", r"\bcrucially\b", r"\bnotably\b",
+    r"\bimportantly\b", r"\binterestingly\b", r"\barguably\b",
+    # Verb forms only. The noun ("the leverage it gives us") is a different word
+    # and is not what leaks.
+    r"\b(?:leverages|leveraged|leveraging)\b",
+    r"\b(?:can|could|will|would|should|to|we|it|they)\s+leverage\b",
+    # Sentence-opening discourse marker only: "the ruling that said nothing
+    # would be built" is a relative clause and is not this fault.
+    r"(?:^|(?<=[.!?]\s))\s*That said\b",
+    # The reading sense only. "unpack the archive" is what the word is for.
+    r"\bunpack(?:s|ed|ing)?\s+(?:the\s+|that\s+|this\s+|its\s+|their\s+)?"
+    r"(?:argument|reasoning|claim|idea|question|thinking|point|logic|history)\b",
+]
 # Restatement. A paragraph that says one thing four ways spends the sentence
 # budget on paraphrase instead of facts. Whether two sentences carry the same
 # fact is semantic and a regex cannot see it - but restating an ABSENCE has a
@@ -218,6 +252,104 @@ POINTED = re.compile(
 URL = re.compile(r"https?://\S+")
 SENT = re.compile(r"[.!?]+(?:\s|$)")
 TAG = re.compile(r"<[^>]+>")
+CODE = re.compile(r"<code\b[^>]*>(.*?)</code>", re.I | re.S)
+
+
+# The empty sentence. Fernando, 2026-08-24, quoting one of mine: "One gap this
+# makes reachable, which I left alone rather than widen a reviewed branch." He
+# said he would not know how to catalogue it. The sentence asserts nothing; its
+# whole job is to announce that a sentence is coming, and the fact it stood in
+# for (the picker never re-derives authorization on return) arrived in the NEXT
+# sentence. Two faults were separable in it:
+#
+# (a) No finite main verb. Every verb - makes, left, widen - sits inside a
+#     subordinate clause, so nothing predicates anything.
+# (b) A placeholder subject. "gap" stands in for the thing instead of naming it,
+#     and the sentence carries no number, no path, no identifier.
+#
+# ONLY (b) IS IMPLEMENTED, and (a) was built, measured and thrown away. Over the
+# 53 comments this bot posted to the on-call cards on 2026-08-22 through 08-24, a
+# verbless test fired 13 times and was right ONCE - on the sentence above. The
+# twelve others were ordinary sentences with ordinary main verbs, and the two
+# causes are not tunable:
+#
+#   "That page event only drives the adapter" - `that` here is a determiner, and
+#   "Per hour that family went up" and "That was my error" are the same word
+#   again as determiner and pronoun. Telling those from the relativizer in "the
+#   check that runs" is a tagging problem.
+#
+#   "They name which mechanism it is", "Keep 262 anyway", "Then decide the
+#   remaining fix" - bare-form main verbs. A plural present, an imperative and a
+#   noun are the same string, so no word list can find the predicate; adding one
+#   invents a false verb somewhere else. VERBS below works because it is asked
+#   one narrow question in one narrow slot (what follows a counter), not to parse
+#   a sentence.
+#
+# A guard nobody can satisfy gets worked around - that is how the bullet-list
+# exemption happened - and 12 false denials in 53 comments is that guard. Left
+# out deliberately; do not re-add it without measuring it again.
+# No possessives. A possessive names an owner, which makes the noun referential
+# rather than a stand-in: "My note that night predicted a different trigger" is
+# a fact about a specific note and the only false denial this rule produced over
+# the 53 posted comments it was measured against.
+DETERMINER = (r"a|an|the|this|that|these|those|one|two|three|four|five|six|"
+              r"seven|eight|nine|ten|another|each|every|some|any|no|both|"
+              r"several|few|many|most|\d+")
+# The nouns that stand in for the thing instead of naming it.
+PLACEHOLDER = (r"gaps?|things?|points?|parts?|half|halves|pieces?|items?|"
+               r"notes?|corrections?|follow-?ups?|questions?|issues?|"
+               r"wrinkles?|catch(?:es)?|upshots?|takeaways?")
+ANNOUNCEMENT = re.compile(
+    r"^(?:" + DETERMINER + r")\s+(?:" + PLACEHOLDER + r")\b", re.I)
+
+# What a reader can act on: a number, a quoted span, a path, an identifier, a
+# proper noun. A sentence carrying none of them has named nothing, and a
+# placeholder subject on top of that leaves it with nothing to say. The evidence
+# half is what keeps the rule off the sentences that merely START this way -
+# "Two things turned up in HEY-DESKTOP-64Q" names its subject and stands.
+EVIDENCE = re.compile(
+    r"\d|`[^`]+`|/[\w.-]+/|\b\w+[._]\w+\b|\b[a-z]+[A-Z]\w*\b")
+PROPER = re.compile(r"\b[A-Z][A-Za-z0-9-]+")
+
+
+def sentences(para):
+    """The paragraph's sentences, with the markup that is not prose removed.
+
+    Mentions go first: a mention expands to an attachment carrying a person's
+    name, and reading that name as a proper noun would let every sentence
+    sharing a paragraph with one claim it had named something.
+    """
+    text = CODE.sub(r"`\1`", MENTION.sub(" ", para))
+    text = TAG.sub(" ", URL.sub(" ", text))
+    return [" ".join(s.split()) for s in SENT.split(text) if s.strip()]
+
+
+def names_something(sent, blind=0):
+    """Whether the sentence points at anything the reader can act on.
+
+    `blind` masks the opening determiner and placeholder without moving the rest
+    of the sentence, because the count in "2 corrections to what I put here
+    earlier" is part of the stand-in and not evidence of anything. Masking with
+    spaces rather than slicing keeps the offsets, so a proper noun that opens the
+    remainder still reads as non-initial.
+    """
+    sent = " " * blind + sent[blind:]
+    if EVIDENCE.search(sent):
+        return True
+    return any(m.start() > 0 for m in PROPER.finditer(sent))
+
+
+def empty_sentences(prose):
+    """Sentences whose subject is a placeholder and which name nothing."""
+    found = []
+    for para in prose:
+        for sent in sentences(para):
+            if len(sent.split()) < 3:
+                continue
+            opener = ANNOUNCEMENT.match(sent)
+            if opener and not names_something(sent, opener.end()):
+                found.append(sent)
+    return found
 
 
 # A Basecamp record link whose visible text is the URL itself. Basecamp resolves a
@@ -229,7 +361,7 @@ BARE_LINK = re.compile(
     r'<a[^>]+href="(https://(?:app\.basecamp\.com|3\.basecampapi\.com)/[^"]+)"[^>]*>\s*'
     r'(?:https?://|#?\d{6,})', re.I)
 
-MAX_TOTAL_WORDS = 200
+MAX_TOTAL_WORDS = 180
 MAX_PARA_WORDS = 90
 MAX_PARA_SENTENCES = 5
 MAX_SENTENCE_WORDS = 25
@@ -666,6 +798,25 @@ def main():
         if m_:
             problems.append(f"editorial - judges instead of reporting ({m_.group(0)!r}). "
                             "Report the finding and let him judge it.")
+    for pat in ORNAMENT:
+        m_ = re.search(pat, text, re.I)
+        if m_:
+            problems.append(
+                f"ornament ({m_.group(0).strip()!r}) - the word is doing the work "
+                "the fact should do. It tells him the thing matters without "
+                "telling him what breaks, what it costs or what it touches. "
+                "Say that, and the word stops being needed.")
+
+    # Prose only. A table cell is a noun phrase by design and a caption names
+    # nothing; counting either as an empty sentence would deny the tables he
+    # asked for.
+    for sent in empty_sentences(prose):
+        problems.append(
+            f"empty sentence ({sent!r}) - its subject stands in for the thing "
+            "instead of naming it, and it carries no number, identifier, path or "
+            "proper noun, so its only job is to announce the sentence after it. "
+            "Put the fact in this sentence, or delete it and let the next one "
+            "stand on its own.")
 
     for pat, why, fix in VOICE:
         m_ = re.search(pat, text, re.I)
@@ -716,7 +867,11 @@ def main():
              "Every claim about a mechanism names the actor and the action - never "
              "what it will not do. "
              "No emphasis written for effect and no editorial - report the finding, "
-             "do not score it. Every sentence carries a fact the previous one did not; "
+             "do not score it. No ornament: a word that says the thing matters is "
+             "standing where the fact belongs. Every sentence has a main verb and "
+             "names what it is about - a placeholder subject with nothing named "
+             "only announces the sentence after it. "
+             "Every sentence carries a fact the previous one did not; "
              "no paragraph restates itself. No metaphors, and anything counted is "
              "also named. No effort accounting - minutes, estimate error and finding "
              "counts belong on the bot card, unless the comment is a postmortem. "
