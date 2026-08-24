@@ -34,6 +34,27 @@ class BasecampClientTest < Minitest::Test
       runner.commands_matching(/me/).length
   end
 
+  # A permanent absence is the one failure a caller may stop asking about. Told
+  # apart by the code in the CLI's envelope, so a timeout carrying the same HTTP
+  # shape stays retryable.
+  def test_a_deleted_recording_is_reported_as_gone
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: '{"ok": false, "error": "Resource not found: x", "code": "not_found"}', exit_status: 1
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("x") }
+
+    assert error.gone?
+  end
+
+  def test_a_timeout_is_not_reported_as_gone
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: '{"ok": false, "error": "context deadline exceeded", "code": "api_error"}', exit_status: 1
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("x") }
+
+    refute error.gone?
+  end
+
   # The CLI omits "data" entirely on an empty listing, so unwrap returns the
   # envelope. Verbatim from `basecamp cards list --project 43795599 --column
   # 9956253701 -j`, 2026-08-22.

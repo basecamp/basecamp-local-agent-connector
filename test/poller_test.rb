@@ -47,6 +47,53 @@ class PollerTest < Minitest::Test
     refute state.seen?(BasecampAgentConnector::Basecamp::Poller::NOTIFICATIONS, 4940356197)
   end
 
+  # The noise leak this pair exists for, measured on 2026-08-24: a comment
+  # deleted in early August was still pointed at by a notification, so every
+  # round re-fetched it, logged the same 404, and left it unremembered because it
+  # could never be corroborated. Four identical failures in two rounds, forever.
+  def test_a_recording_that_is_gone_for_good_is_settled_rather_than_retried
+    runner = FakeCommandRunner.new
+    stub_listings runner, notifications: [ notification ]
+    runner.stub "show ", stdout: DELETED, exit_status: 1
+    state = FakePollState.new
+    log = StringIO.new
+
+    assert_empty poller(runner, state: state, logger: log).payloads
+
+    assert state.seen?(BasecampAgentConnector::Basecamp::Poller::NOTIFICATIONS, 4940356197)
+    assert_includes log.string, "is gone for good, so it will not be read again"
+  end
+
+  # Seen and undeliverable, not delivered: RECORDINGS is the memory that says an
+  # event was emitted, and nothing was.
+  def test_a_recording_that_is_gone_for_good_is_never_recorded_as_delivered
+    runner = FakeCommandRunner.new
+    stub_listings runner, notifications: [ notification ]
+    runner.stub "show ", stdout: DELETED, exit_status: 1
+    state = FakePollState.new
+    polling = poller(runner, state: state)
+
+    assert_empty polling.payloads
+    assert_empty polling.payloads
+
+    refute state.seen?(BasecampAgentConnector::Basecamp::Poller::RECORDINGS, 456)
+    assert_equal 1, runner.commands_matching(/show/).length, "a deleted recording must be read once, not every round"
+  end
+
+  # And the failure from the same run that recovered by itself on the next round
+  # has to keep recovering: a timeout is the question never landing, not an
+  # answer.
+  def test_a_timed_out_fetch_is_still_retried
+    runner = FakeCommandRunner.new
+    stub_listings runner, notifications: [ notification ]
+    runner.stub "show ", stdout: TIMED_OUT, exit_status: 1
+    state = FakePollState.new
+
+    assert_empty poller(runner, state: state).payloads
+
+    refute state.seen?(BasecampAgentConnector::Basecamp::Poller::NOTIFICATIONS, 4940356197)
+  end
+
   def test_a_notification_from_an_unwatched_project_is_skipped_and_not_re_examined
     runner = FakeCommandRunner.new
     stub_listings runner, notifications: [ notification("bucket_name" => "Somebody Else's Project") ]
@@ -229,10 +276,28 @@ class PollerTest < Minitest::Test
       payloads.first
     end
 
-    def poller(runner, state: FakePollState.new, watched_columns: [], projects: [])
+    # Verbatim from the bridge's log on 2026-08-24, for comment 10161769878 in
+    # Fernando: PSP. Both URL forms answer this, with and without the bucket
+    # segment, and both forms return an existing comment — so the absence is the
+    # comment's, not the path's.
+    DELETED = JSON.generate(
+      "ok" => false,
+      "error" => "Resource not found: https://3.basecampapi.com/000/comments/456.json",
+      "code" => "not_found",
+      "meta" => { "request_id" => "9036e67f-dcc1-4c48-9056-3a8854c733b2" }
+    ).freeze
+
+    # From the same run, on a column read, and gone by the next round.
+    TIMED_OUT = JSON.generate(
+      "ok" => false,
+      "error" => %(Get "https://3.basecampapi.com/000/comments/456.json": context deadline exceeded (Client.Timeout exceeded while awaiting headers)),
+      "code" => "api_error"
+    ).freeze
+
+    def poller(runner, state: FakePollState.new, watched_columns: [], projects: [], logger: StringIO.new)
       BasecampAgentConnector::Basecamp::Poller.new \
         basecamp_cli: build_cli(runner), agent: agent_identity, state: state,
-        watched_columns: watched_columns, projects: projects, logger: StringIO.new
+        watched_columns: watched_columns, projects: projects, logger: logger
     end
 
     # Both account-wide listings are stubbed together: the poller reads them on

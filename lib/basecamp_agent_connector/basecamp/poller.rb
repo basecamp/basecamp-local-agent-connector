@@ -47,6 +47,15 @@ class BasecampAgentConnector::Basecamp::Poller
   # different ids, and each copy starts its own agent on the same work.
   RECORDINGS = "recordings"
 
+  # Raised when the recording a pointer names is gone for good — deleted, most
+  # often. A read that merely failed is left unremembered on purpose so the next
+  # round retries it, and that is what keeps a blip from swallowing one of
+  # Fernando's mentions. An absence is not a blip: it answers the same way
+  # forever, so the same pointer was re-fetched and re-logged every round for as
+  # long as the bridge ran. Measured 2026-08-24: one comment deleted in early
+  # August, read twice a minute, indefinitely.
+  Gone = Class.new(StandardError)
+
   def initialize(basecamp_cli:, agent:, state:, watched_columns: [], projects: [], logger: $stderr)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -93,6 +102,12 @@ class BasecampAgentConnector::Basecamp::Poller
     # reason that will still hold next round. A record whose fetch failed is left
     # unremembered on purpose: a blip on a bad connection would otherwise drop one
     # of Fernando's mentions silently, and retrying costs a listing entry.
+    #
+    # A record whose recording is gone counts as decided, and is remembered here
+    # rather than in RECORDINGS: the pointer is settled, but nothing was emitted,
+    # so nothing may claim the event was delivered. Corroboration still comes
+    # before any record of delivery — this only stops asking a question Basecamp
+    # has already answered for good.
     def mentioned
       unseen(NOTIFICATIONS, notifications).filter_map do |notification|
         next remember(NOTIFICATIONS, notification) unless watched_bucket?(notification["bucket_name"])
@@ -101,6 +116,9 @@ class BasecampAgentConnector::Basecamp::Poller
           remember NOTIFICATIONS, notification
           stage payload, NOTIFICATIONS, notification["id"]
         end
+      rescue Gone => error
+        log error.message
+        remember NOTIFICATIONS, notification
       end
     end
 
@@ -234,12 +252,19 @@ class BasecampAgentConnector::Basecamp::Poller
       nil
     end
 
+    # Two failures that read alike and must not be handled alike. A `not_found`
+    # is Basecamp answering: the recording is gone, and asking again next minute
+    # asks the same question of the same absence. Everything else — a timeout, a
+    # dropped connection, a lost credential race — is the question never landing,
+    # and stays retryable.
     def fetch(url)
       return nil if url.nil?
 
       recording = basecamp_cli.show(url, profile: agent.profile)
       recording.is_a?(Hash) && recording["id"] ? recording : nil
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      raise Gone, "#{url} is gone for good, so it will not be read again: #{error.message}" if error.gone?
+
       log "could not read #{url}: #{error.message}"
       nil
     end

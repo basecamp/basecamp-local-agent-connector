@@ -1,7 +1,18 @@
 require "json"
 
 class BasecampAgentConnector::Basecamp::Client
-  class Error < StandardError; end
+  class Error < StandardError
+    # A resource that is permanently absent -- deleted, or never there at all --
+    # told apart from every other failure by the code the CLI prints in its JSON
+    # envelope. Deliberately narrow, and matched on the message because nothing
+    # else survives the raise: every other failure might answer differently a
+    # minute from now, and only this one is safe to stop asking about.
+    GONE = /"code":\s*"not_found"/
+
+    def gone?
+      GONE.match?(message)
+    end
+  end
 
   # Only the keychain contention below is retried. Every other failure -- a 404,
   # a bad argument, a real logout -- is returned on the first attempt, because
