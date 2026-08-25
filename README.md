@@ -77,6 +77,26 @@ You need three things in place:
    allowed to trigger the agent). The agent and the operator **must be different
    Basecamp users**, otherwise the agent’s own replies would trigger it again.
 
+### The PSP layer (optional)
+
+The PSP bug-intake agents (`psp-intake-plan` and its siblings) live in the
+[mobile-alerts](https://github.com/basecamp/mobile-alerts) repository, under
+`psp-intake/`, because they are the Mobile team's on-call
+process rather than part of this connector. They run on top of what is set up
+above: this connector delivers the Basecamp events, and they do the diagnosis.
+
+Set them up from that repo — `psp/bin/install` and `psp/bin/psp-setup` — and see
+its `psp/README.md`. Its PreToolUse hooks moved there too, on Fernando's ruling
+of 2026-08-24 that this repo holds only the work of connecting to Basecamp:
+`psp/bin/install` links them into `~/.claude/hooks` and registers them in
+`~/.claude/settings.json`.
+
+What stays here is the connection itself, plus two hooks that guard this fleet
+whatever process is running: `basecamp-write-identity.py` and
+`basecamp-quiet-read.py` for Basecamp calls, and `git-author-identity.py` and
+`agent-watch.py`, which belong to neither repo by purpose and are awaiting a
+decision on where they should live.
+
 ### Using it
 
 From Claude Code:
@@ -213,7 +233,9 @@ waiting to be told, so it needs only outbound HTTPS:
 
 ```bash
 bin/poll @Clawdito --project "BC5 Calendar"
-bin/poll @Clawdito --project 43795599 --watch-column 43795599:9956253701:52498414
+bin/poll @Clawdito --project 43795599 \
+  --watch-column 43795599:9956253701:52498414 \
+  --watch-column 43795599:9027546451
 ```
 
 It emits the **same NDJSON** on stdout as `bin/connect`, through the same

@@ -7,12 +7,11 @@ description: |
   agent that gathers context and does the work. Replies are written by the front thread so they carry the
   session's output style, and only when the item's subscribers are just the
   operator and the bot; otherwise the result comes back in the session. In
-  Fernando: PSP a two-table routing applies instead: comments on the standing
-  intake card start a psp-intake-plan diagnosis on the verbose Bot Card Table, and
-  a short human-readable sister card carries the summary. On the Mobile: On Call
-  Issues board the same intake runs with the board's own card as the human surface
-  — started by Fernando assigning the bot, or fired automatically when MobileBot
-  files a Sentry crash card.
+  Mobile: On Call a two-table routing applies instead: a card on the Issues board
+  starts a psp-intake-plan diagnosis on the verbose Bot Card Table beside it, and
+  that same board card carries the human-readable summary — started by Fernando
+  assigning the bot or @mentioning it, or fired automatically when MobileBot files
+  a Sentry crash card or when anyone files a card into Triage.
   Invoked without arguments it recalls the last-used agent and projects from
   ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
@@ -98,7 +97,7 @@ The skill remembers the last successful connection in
   "agent": "clawdito",
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
-  "watched_columns": [ "43795599:9956253701:52498414" ],
+  "watched_columns": [ "<project>:<sentry-column>:<mobilebot>", "<project>:<triage-column>" ],
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
@@ -373,28 +372,57 @@ The instruction here is the **card/todo content**, not a comment body. Everythin
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
 
-### PSP bug intake — the two-table routing in Fernando: PSP
+### PSP bug intake — the two-table routing in Mobile: On Call
 
-Events in **Fernando: PSP (48348194)** route by which card they land on, not by
-their content. The project holds two card tables with identical columns (Triage,
-Not now, Plan, Design, Code, Review, Test, QA, Postmortem, Done):
+Both tables live in **Mobile: On Call** as of 2026-08-24. The human surface is
+the team's own Issues board; the Bot Card Table is a shared context store beside
+it, carrying the PSP phase columns.
 
-| Table | Id | Purpose |
-|---|---|---|
-| **Human Card Table** | `10216651629` (Plan `10216651634`, Triage `10216651631`) | Fernando's interaction surface. Short, plain, human-readable. |
-| **Bot Card Table** | `10157062382` (Plan `10157062387`) | The agent's context store. As verbose as the work needs. |
+**Every id — both tables, all their columns, the operator, the agent — lives in
+`~/.config/psp/board.json` and nowhere else.** Print them with:
 
-**The standing intake card is `10216674310`** ("On Call Work Card"), permanently in
-Human Triage. It never moves; its comment thread is the work history.
+```bash
+python3 ~/.claude/skills/psp-intake/scripts/psp-board.py --surfaces
+```
 
-Route on the card the triggering comment sits on:
+Nothing below quotes an id, and neither should you or anything you dispatch. That
+is not tidiness: when these tables moved projects an agent briefed with a
+remembered id created a card and posted twelve comments into a retired board and
+read them back clean, because a moved card's old id **resolves on read** while
+writes against it return `{"id": null}` inside an ok-shaped envelope. The config
+is written once by mobile-alerts `psp-intake/scripts/psp-setup` and verified with `psp-board.py --check`.
 
-- **Comment on the standing card `10216674310`** — a **new intake**. It carries a
-  source card URL. Dispatch `psp-intake-plan` with the comment and that URL. The
-  agent resolves the repo from the source card, splits the report into one bug per
-  distinguishable wrong-vs-right result, and for each creates a Bot-table card in
-  Plan carrying the simplified plan and a code-backed theory. **When `psp-intake-plan` returns, dispatch `psp-intake-plan-reviewer` before
-  writing anything to the Human table.** It sweeps every open question, blocker and
+| Table | Purpose |
+|---|---|
+| **Human Card Table — Issues** | Fernando's interaction surface, shared with the mobile team. Short, plain, human-readable. |
+| **Bot Card Table** | The agents' context store, shared across the team so dedupe sees every prior effort. As verbose as the work needs. |
+
+**There is no standing intake card any more.** It lived in the retired PSP human
+table and was a second door into a room the board already opens: every card on
+Issues is dispatchable directly, by the three triggers below. Intake starts on the
+card that carries the bug, never on a card about starting intake.
+
+**Bot cards before 2026-08-24 lived in Fernando: PSP (48348194, table
+`10157062382`).** The twenty-one with a live human card were teleported across and
+their `projects.jsonl` rows repointed; the rest stayed as closed history. An old
+id **still resolves on read and silently drops writes** — `basecamp comments
+create` against one returns `id: null` inside an ok-shaped envelope — so a card id
+that did not come out of the current ledger row is a write that vanishes.
+
+Route on the card the triggering event lands on:
+
+- **A card on the Issues board, by one of the three triggers below** — a **new
+  intake**. Dispatch `psp-intake-plan` with the card. The agent resolves the repo
+  from it, splits the report into one bug per distinguishable wrong-vs-right
+  result, and for each creates a Bot-table card in Plan carrying the simplified
+  plan and a code-backed theory. **The reviewer pass is
+  the agent's, not yours — `psp-intake-plan` §7c launches `psp-intake-plan-reviewer`
+  itself, and this route no longer dispatches one.** The instruction used to live
+  here, in this route's prose, and it was skipped 10 times out of 10 on the night a
+  second route was added that never mentioned it; owning the launch inside the agent
+  is what makes the pass route-independent. Read its result for the pass and say so
+  if it is missing — do not launch a second one, because exactly once means exactly
+  once. It sweeps every open question, blocker and
   `UNVERIFIED` claim against the reported-facts ledger and the source card, kills the
   ones the report already answers, and checks the intent verdict, the citations, the
   split and the sizing. Its report is what the human summary is written from — an
@@ -404,7 +432,7 @@ Route on the card the triggering comment sits on:
   and returns `defect`, `working-as-designed` or `never-designed`. Only `defect`
   opens an effort; the other two are scope changes that belong to /psp-plan, and
   intake halts and says so (defects row 3760).
-- **Comment on the standing card carrying a card URL *and* a pull request URL** — a
+- **A comment carrying a card URL *and* a pull request URL** — a
   **code review intake**. Somebody else has already worked the card and opened a PR,
   and the question is whether that PR is right. Dispatch `psp-intake-code-review`
   with the comment, the card URL and the PR URL. It runs the same intake as
@@ -423,37 +451,40 @@ Route on the card the triggering comment sits on:
   `psp-intake-plan`; when the ask is genuinely ambiguous, ask him in his chat room
   rather than guessing, because the two agents produce different artifacts and the
   wrong one costs a full run.
-- **Comment on a sister card** — a **response about that one bug**, Fernando's
+- **Comment on a human card** — a **response about that one bug**, Fernando's
   approval included. The card identity says which bug; never parse it out of the
   body. When that comment approves the theory and asks for design ("sounds good,
-  let's run psp-intake-design"), dispatch `psp-intake-design` with the sister card
+  let's run psp-intake-design"), dispatch `psp-intake-design` with the human card
   and its bot card. It runs all nine steps of `psp-design` at fix scale, finalizes
   the Approach into the bot card's description, moves **both** cards to Design, and
   halts.
-- **Comment on a sister card approving the Approach** — dispatch `psp-intake-code` with the same
+- **Comment on a human card approving the Approach** — dispatch `psp-intake-code` with the same
   two cards. It absorbs `psp-code` and `psp-test` at fix scale and **runs unattended**: his
   approval is the go for the whole effort, not for its first part, so it never asks permission to
   open one (his ruling 2026-08-19). It opens the PR with an **empty description and leaves it
   empty** — **Fernando writes the description and merges, always.** Its terminal state is a green,
   reviewed PR handed back with the implementation-only diff range, the fix-round count, and the
-  manual scenarios queued as unticked `Verify` steps on the bot card; this session posts that
-  handoff on the human card, @mentioning him, under the usual contract.
+  manual scenarios queued as unticked `Verify` steps on the human card; this session posts that
+  handoff there, @mentioning him, under the usual contract.
 
-**Both cards are created by the agent the moment a symptom clears dedupe** — the
-bot card and its sister, back to back, before any diagnosis. Their appearing is how
-Fernando sees that work started. The sister is created with a **plain-language
-title and the source card URL as its body**; that title is the only prose the agent
-may write in the Human table. Both cards carry the source URL — it is the only
-route back to the original report from the card Fernando is looking at.
+**The pair is made by the agent the moment a symptom clears dedupe** — the bot card
+and its human card, back to back, before any diagnosis. Their appearing is how
+Fernando sees that work started. When the trigger was a board card, that card is
+the human card and no second one is made; otherwise the agent creates one in Issues
+Triage with a **plain-language title and the source card URL as its body**, and
+that title is the only prose it may write there. The pairing has to read from both
+ends — the bot card carries the human card's URL, the human card carries the
+report's — because that is the only route back to the original complaint from the
+card Fernando is looking at.
 
 **The summary is the front thread's.** When an agent returns, this session writes a
 short summary in Fernando's voice, @mentions him, and posts it as a comment on the
-sister card that already exists. **It always names the proposed direction** — what
+human card that already exists. **It always names the proposed direction** — what
 the fix would look like, **its size as new-and-changed LOC**, and roughly how far
 away it is — and any decision that is his to make. LOC is the measurement the
 postmortem computes estimate error against; a summary without it leaves the effort
 outside size calibration (defects row 3740). A summary carrying only the mechanism cannot serve a decision, and the
-Human table is the decision surface (defects row 3738).
+human card is the decision surface (defects row 3738).
 
 **When intake offers a product alternative, the summary carries the choice, not the winner with a
 footnote.** Both directions, each with its size and what it gives up, and the recommendation. This
@@ -533,7 +564,7 @@ less useful than one that asserts little and proves it. So:
   move them to the bot card; never cut the connective tissue to make room.
 - **Never an inventory of unknowns.** Intake's bar is that the card arrives with
   none open (`psp-intake-plan` step 7b): each is settled, or carried as an evaluated
-  hypothesis with its consequence. What reaches the sister card is the hypothesis
+  hypothesis with its consequence. What reaches the human card is the hypothesis
   and what it means, never the list. "Six unknowns remain" is the phase reporting
   that it did not finish.
 - **No internal vocabulary.** Numbered items, "verdict", "retired", "conditional",
@@ -571,9 +602,9 @@ had it in context — a range has no failure condition you can check yourself ag
 so it reads as permission to reach its top. Three paragraphs either is or is not.
 
 **And it is enforced, not merely written down.** A `PreToolUse` hook
-(`~/.claude/hooks/psp-human-card-guard.py`, wired in `~/.claude/settings.json`)
+(`~/.claude/hooks/psp-human-card-guard.py`, wired in `~/.claude/settings.json`; it lives in mobile-alerts `psp/hooks/` and is linked from there by `psp/bin/install`)
 intercepts every `basecamp comments create|update` whose target resolves into the
-Human Card Table and denies the call on: a paragraph count other than three, more
+Human Card Table — the Issues board — and denies the call on: a paragraph count other than three, more
 than **150 words total**, more than **60 words** or **4 sentences** in any
 paragraph, any single sentence over **40 words**, any banned soft-ask/CTA/filler
 phrase, any emoji, or a final paragraph with no stated next step. URLs do not count
@@ -592,10 +623,12 @@ reached 350 words by gaining one mandatory element per defect fixed — directio
 size, ranked decisions, the count — with nothing bounding the total. If a new element
 genuinely must appear, say which one it displaces. That @mention is the only
 notification he gets — the Campfire escalation channel does not apply in this
-project, because the sister card replaces it.
+project, because the human card replaces it.
 
-The sister mirrors its bot card on **every** column transition from creation
-onward. During intake both simply sit in Plan.
+The human card follows its bot card on **every** column transition from creation
+onward — through the column map, not by mirroring, since the two tables keep
+different vocabularies. During intake the bot card sits in Plan and the human card
+in Triage until the theory lands, then In progress.
 
 **An intake that ends without a build gets a postmortem, and the card waits for it.**
 When an effort closes with no code written — Not now, retired as a scope change, superseded,
@@ -622,14 +655,23 @@ since `psp-postmortem` measures a build and none of them built anything.
 **Division of labor, absolute:**
 
 - The **agent** owns the Bot table outright — cards, comments, moves — plus the
-  Human table's structural actions: creating sister cards with their titles, and
-  column moves. **The bot never boosts anything, anywhere.** Every action ends in a
+  human card's structural actions: creating one with its title when there is none
+  yet, and column moves. **The bot never boosts anything, anywhere.** Every action ends in a
   card or a comment, so a boost is only a second, weaker acknowledgement of something
   already visible.
-- **This session** owns every Human-table **comment**. The agent never comments
-  there. **`Verify` steps are the one exception to the agent's no-writing rule** — a
-  checklist belongs on the card of the person who runs it, and they are structure rather
-  than prose, so the agent creates them on the human card directly (defects row 3971).
+- **This session** owns every human-card **comment** that is prose. The agent has
+  exactly two exceptions, both structure rather than prose. **`Verify` steps** — a
+  checklist belongs on the card of the person who runs it (defects row 3971). And
+  **the phase line**: whenever an agent moves the human card it posts one comment of
+  one line, `<Phase> began: <bot card url>`, in the same round as the move. The
+  permitted openers are `Planning began`, `Design began`, `Code began`,
+  `Review began`, `Test began`, `QA began` and `Closing out`, and nothing may be
+  appended. It exists because the card the team watches sits silent for the length
+  of a diagnosis running on a board they never open, and a card that moves with no
+  line reads as a card nobody touched. The guard hook matches the whole body exactly
+  and refuses a phase line with prose on it, an invented opener, a missing URL, or a
+  second paragraph beside it — "a short line" is not a category a guard can check,
+  so the exemption is a fixed form rather than a length.
 - The **source card is never touched** — no comment, no move, no edit. It
   usually lives on a shared team board, where a PSP gate notifies people about our
   internal process instead of about their bug.
@@ -644,25 +686,52 @@ The subscriber gate is not consulted here. Fernando: PSP has exactly two members
 so every card in it is private by construction; the routing above, not the gate, is
 what decides where words go.
 
-### On-call board intake — the source card is the human card
+### On-call board intake — the triggers
 
-The routing above splits one effort across two cards in one project. On **Mobile:
-On Call (43795599)**, card table **Issues (`9027546450`)**, it splits across two
-*projects* instead: the bot card stays in Fernando: PSP exactly as above, and the
-**card on the Issues board plays the sister card's part**. Nothing about the Bot
-Card Table changes.
+There is one route now, and this section is its trigger list rather than a second
+road. Before 2026-08-24 the bot card sat in Fernando: PSP and a board card was
+*adopted* into a private sister's place; both tables now live in Mobile: On Call,
+so a board card is simply the human card and adoption has nothing left to mean.
 
-**Two triggers, and only two:**
+**Three triggers, and only three:**
 
 - **Fernando assigns the bot to a card, or @mentions it in a comment on one.**
   The ordinary trust path — he authored the event and pointed it at the agent.
-  Every card on the board is reachable this way and none is reached any other way.
-- **MobileBot files a card into the Sentry column (`9956253701`).** This one fires
-  with no involvement from him at all, via
-  `--watch-column 43795599:9956253701:52498414`. It is the single place the
-  operator-author gate is relaxed, and it is relaxed because the cards worth
-  catching there are filed by a robot: six landed between June and July and not one
-  was ever triaged. Roughly three a month. Nothing else on the board self-triggers.
+  Every card on the board is reachable this way.
+- **MobileBot files a card into the Sentry column.** This one fires with no
+  involvement from him at all, via a `--watch-column` on that column filtered to
+  MobileBot — the ids from `psp-board.py` (`human_table.columns.sentry`,
+  `third_parties.mobilebot`). It is relaxed because the cards
+  worth catching there are filed by a robot: six landed between June and July and
+  not one was ever triaged. Roughly three a month.
+- **Anyone files a card into the Triage column.** Via a `--watch-column` on
+  `human_table.columns.triage`, with **no creator filter** — added
+  2026-08-21 on Fernando's ruling that on-call board cards are treated as real
+  cards. The filter is absent deliberately: Triage is where the support team files,
+  so its cards come from people like Chase Clemons and Jillian Pearce and never from
+  Fernando or from MobileBot. Any creator filter at all makes this watch dead, and
+  scoping it to the operator would be the same as not having it. Volume is low —
+  two cards were resident on 2026-08-21, filed six weeks apart.
+
+  **A Triage card is assigned to the operator and moved to In progress the moment
+  the watch fires** — `--assignee $(python3 $BOARD operator.id)`, then a
+  `cards move` to `human_table.columns.in_progress`. The **front thread** does both, in the same turn it
+  dispatches, and not the agent it dispatches: an agent that dies before its first
+  write leaves the card sitting in Triage looking untouched, and this fleet lost
+  seven agents to interruptions on 2026-08-21 alone. Assigning him is what makes
+  the board readable — Triage then means nobody has looked, and In progress with
+  his name on it means somebody has.
+
+Two of the three relax the operator-author gate, so the corroboration in `Verifier`
+is what carries the trust, not the authorship check. Nothing else on the board
+self-triggers.
+
+**Adding a watched column to a live state file replays that column.** Seeding runs
+only when `poll-state.json` is empty (`PollRunner#seed_unless_backfilling`), so a
+column added to an existing state has none of its residents marked handled and every
+one of them emits on the first round, each starting its own intake. Before adding a
+column, either mark its current cards seen — append their ids to `cards` and
+`recordings` in the state file — or decide deliberately that you want them worked.
 
 `sentry-card-verdict` used to own that column. It was **deleted on 2026-08-20** —
 nothing invoked it, none of its cards carried a comment, and its constants still
@@ -677,19 +746,20 @@ is the right disposition while old builds are still emitting.
 **The subscriber gate is not consulted here either.** The board is shared with the
 mobile team and the gate would block every reply, and an Issues card can carry an
 empty subscriber list, which would make the gate permit one for the wrong reason.
-Routing decides, as it does in Fernando: PSP. Fernando ruled the notification cost
-acceptable on 2026-08-19: people watching the board do not get notified of a card
-they are not subscribed to, so making the process public costs nothing here.
+Routing decides. Fernando ruled the notification cost acceptable on 2026-08-19:
+people watching the board do not get notified of a card they are not subscribed
+to, so making the process public costs nothing here.
 
-**Division of labor is unchanged, with the source card in the sister's place.**
-This session owns every comment on it. The agent owns column moves and `Verify`
-steps and never comments there. The card is adopted, so the standing "never touch
-the source card" rule does not apply to it — it still applies to any *other* card
-the report links to.
+**Division of labor is the same one stated above.** This session owns every comment
+on the human card. The agent owns its title at creation, its column moves and its
+`Verify` steps, and never comments there. A board card the bot was dispatched onto
+is the human card, so the standing "never touch the source card" rule does not
+apply to it — it still applies to any *other* card the report links to.
 
-**Column map**, because Issues has none of PSP's columns:
+**Column map**, because the two tables in this project keep different vocabularies —
+the bot table carries the PSP phases, the Issues board carries the team's workflow:
 
-| Bot card (PSP) | Issues board |
+| Bot card phase | Issues board |
 |---|---|
 | Plan, Design | Triage until diagnosed, then In progress |
 | Code, Review | In progress → Ready for PR Review |
@@ -708,10 +778,11 @@ without inference and gives dedupe an exact key. It needs one: a plain `resolve`
 makes MobileBot re-card the same signature within hours, and prose matching will
 not catch that.
 
-**Adoption is recorded, not assumed.** When intake adopts a card, append it to
-`hooks/psp-human-cards.json` under `cards`. The board is also listed there under
-`tables`, so the comment contract is enforced either way — the append is what keeps
-the record honest, not what turns the guard on.
+**The per-card append is retired.** Intake used to append every adopted card to
+mobile-alerts `psp/hooks/psp-human-cards.json` under `cards`. With the whole board designated under
+`tables`, and every human card now on it, that append recorded nothing the table
+entry did not already cover. The existing `cards` list stays as the record of what
+was adopted before the move; nothing new goes in it.
 
 ### The front thread is a thin orchestrator
 
@@ -721,7 +792,7 @@ into another's prompt. Every event reaches it first — the monitor wakes nothin
 and its only decision is which of three routes the event takes.
 
 **Answer directly** when the answer is already in this session: what an agent
-reported, what was decided, what a card says. Post the reply on the sister card in
+reported, what was decided, what a card says. Post the reply on the human card in
 Fernando's voice. Reporting only in session is not answering — that mistake left a
 card standing with a recommendation the evidence had already killed.
 
@@ -733,7 +804,47 @@ context dies with the session, so resume while you still can.
 
 **Spawn fresh only for new investigation** — work no existing agent has done.
 
-### Claims are reviewed before they reach the Human table
+**Tell every agent its own id the moment you have it.** The spawn result hands you the
+child's `agentId`; the child is never told it, and neither is any grandchild told the
+child's. That is the whole reason five findings in one day were addressed to a role
+like `psp-intake-code`, refused, and dumped back on you to hand-relay. So: read the id
+off the spawn result and send it straight back — "your agent id is X; give it to any
+agent you dispatch as its reply address." You are reachable as `main`; nobody below you
+is reachable at all until somebody says so.
+
+### An agent finishing is an event
+
+The monitor wakes on inbound Basecamp events, so "the agent I launched just
+finished" is not an event in this loop — and that single gap is why **every effort
+stops after exactly one agent until Fernando restarts it.** He is the one person who
+must never be the scheduler.
+
+**A completed agent re-enters the three routes above, in the same turn that writes
+the human comment.** Read its result for a next action. If it names one, dispatch it
+and *then* post the comment; if it names none, say on the card that the effort is
+done and why. Posting the comment is the receipt for a transition, never the
+transition itself. "Next step: none from you" is a promise that the next move is
+mine, and it is the exact sentence that preceded an hour of nothing.
+
+**And sweep the board on a cadence, because restarting finished agents does not find
+the effort nobody ever started.** Every card in a working column is waiting on a
+named person or has a live agent id; a card that is neither gets named out loud.
+
+Eight efforts stalled in one evening, and Fernando found all eight himself:
+
+- Five idled after a finished agent's own report named the remaining work — design
+  complete and no builder dispatched, a replan reported and no build started, a
+  question answered and the sixth part's remaining work left where the report put it.
+- One reply to "what's the progress here?" was rejected by the human-card guard and
+  never reposted, so a direct question went unanswered while the card read
+  In progress. **A rejected write is not a completed write** — it goes back on the
+  queue with the guard's reason attached, and it is never dropped for the next
+  interrupt.
+- One card stayed In progress after he had already closed the question.
+- One had sat in that column since 17 August with no bot card, no ledger row and no
+  agent behind it.
+
+### Claims are reviewed before they reach the human card
 
 **Anything that makes or revises a factual claim goes through
 `psp-intake-plan-reviewer` before it reaches Fernando's card.** Not only the
@@ -922,7 +1033,7 @@ webhook or an open funnel behind.
   always the front thread's, never the background agent's.
 - **Fernando: PSP is routed, not gated.** Its two members make every card private
   by construction, so the gate never decides anything there — "PSP bug intake"
-  above does, and its sister card replaces the Campfire ping.
+  above does, and its human card replaces the Campfire ping.
 - **Campfire cannot be a trigger.** Basecamp refuses every chat type at webhook
   registration (`Chat::Line`, `Chat::Transcript::Line`, `Campfire` and friends all
   return `types: must be eligible`), so a chat mention never reaches the bridge.
