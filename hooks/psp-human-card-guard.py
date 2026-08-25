@@ -96,10 +96,72 @@ NONPROSE = re.compile(r"<(?:table|tr|td|th|figure|img|bc-attachment)\b", re.I)
 # say. Tables and images stay; they carry things prose genuinely cannot.
 LISTS = re.compile(r"<(?:ul|ol|li)\b", re.I)
 
+# Build artifacts, the same fault as the minutes below. The patterns here count
+# what a phase COST in time; they never counted what the work TOUCHED, and
+# Fernando named that on 2026-08-24: "there's no need to state files changed,
+# number of tests passed." He called the passage "mostly useless" rather than
+# useless, and the word is doing real work - inside the same paragraph
+# "Missing those would have left Xcode pointed at 4.2.1" is a consequence he can
+# act on. So this matches the COUNT, not the sentence carrying it: a sentence
+# that states a consequence and happens to sit beside an inventory keeps its
+# place, and only a body that actually counts our work is refused.
+#
+# The discriminator is the noun, never the number. "353 events and 126 users",
+# "1.3.6 carries 654 users against 61 on 1.3.3" and "five events and three users
+# sit under 100" measure the world and stand. "ten files", "1246 tests" and "Two
+# commits" measure our own labour and do not.
+#
+# Three of the nouns he listed are deliberately absent, each for a measured
+# reason (65 comments, the on-call cards, 22-25 August):
+#
+#   `lines` - fourteen sentences carry a line count and ten of them are
+#   FORECASTS of work not yet done: "about seventy-five lines", "the tag is three
+#   lines", "about fifty lines across three files". That number is the answer to
+#   the question he is being asked - is this worth building - and refusing it
+#   deletes the decision, not the bookkeeping. Hedges do not separate the two
+#   ("The code fix is five lines" carries none), and keying on "about" would only
+#   teach the bot to write it.
+#
+#   `runs` - ten of its twelve appearances are the verb ("the same write still
+#   runs on the thread that draws the screen"), and the noun's one real use was
+#   "two runs at once make the loser report skipped", a concurrency defect rather
+#   than a count of our test passes.
+#
+#   `rows` - never once appears as a count in the corpus, while LEDGER already
+#   refuses the ledger sense, and tables are welcome on this card by his own
+#   ruling, so "five rows" is as likely to describe one of those.
+NUMERAL = (r"\d[\d,]*|"
+           r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+           r"(?:-(?:one|two|three|four|five|six|seven|eight|nine))?|"
+           r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+           r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+           r"a dozen|dozens")
+ARTIFACT = r"\w*files?|tests?|assertions?|failures?|insertions?|deletions?|commits?"
+# `(?<![.\d])` keeps a version out of the count: these cards are thick with
+# dotted versions AND with artifact nouns, and "the 1.34.13 tests" would
+# otherwise read as thirteen of them. It is precautionary - it saves nothing in
+# the 65-comment corpus, because the one sentence that needed it ("the 1.34.10
+# comparison runs on identical capture settings") stopped matching when `runs`
+# was dropped. Kept because the collision is one keystroke away, not because it
+# was measured to fire.
+#
+# One adjective may sit between the count and the noun, but never a plural noun,
+# which is what stops "a quarter's 1,252 events file as one issue" from reading
+# as a file count. And a commit count that is a DISTANCE is a fact about the
+# world, not about our labour: "seven commits behind" measures how far a pin
+# lags its branch, which is true whether or not we ever touch it, so it stands
+# for the same reason "654 users" does.
+COUNTS_OUR_WORK = (
+    r"(?<![.\d])\b(?:" + NUMERAL + r")\s+"
+    r"(?:[a-z][a-z-]*(?<!s)\s+)?"
+    r"(?:" + ARTIFACT + r")\b(?!\s+(?:behind|ahead|back)\b)")
+
 ACCOUNTING = [
     (r"\b\d+\s*(?:minutes?|mins?|hours?)\b", "counts our minutes"),
     (r"\bagainst an? (?:planned|estimated?)\b", "reports estimate error"),
-    (r"\b\d+\s+(?:findings?|blockers?|defects?|errata|nits?)\b", "counts our findings"),
+    (COUNTS_OUR_WORK, "counts our own work - files touched, tests run, commits made"),
+    (r"\b(?:" + NUMERAL + r")\s+(?:findings?|blockers?|defects?|errata|nits?)\b",
+     "counts our findings"),
     (r"\b(?:estimated?|priced|sized) at\b", "reports our estimate"),
     (r"\b(?:overrun|under-?ran|est\.|LOC)\b", "estimate vocabulary"),
     (r"\b(?:planning|design|intake|review|testing|postmortem|the battery)\s+"
@@ -801,9 +863,12 @@ def main():
     for pat, why in (ACCOUNTING if not POSTMORTEM.search(paras[0]) else []):
         m_ = re.search(pat, text, re.I)
         if m_:
-            problems.append(f"effort accounting - {why} ({m_.group(0)!r}). What a phase "
-                            "cost us is bot-card material. If the cost changes his "
-                            "decision, give him the decision, not the arithmetic.")
+            problems.append(f"effort accounting - {why} ({m_.group(0)!r}). What a "
+                            "phase cost us and what it touched are both bot-card "
+                            "material. If the number changes his decision, give him "
+                            "the decision, not the arithmetic; the consequence in "
+                            "the same paragraph is what he can act on, and it keeps "
+                            "its place once the count around it goes.")
 
     for pat, why in LEDGER:
         m_ = re.search(pat, text, re.I)
@@ -943,8 +1008,9 @@ def main():
              "only announces the sentence after it. "
              "Every sentence carries a fact the previous one did not; "
              "no paragraph restates itself. No metaphors, and anything counted is "
-             "also named. No effort accounting - minutes, estimate error and finding "
-             "counts belong on the bot card, unless the comment is a postmortem. "
+             "also named. No effort accounting - minutes, estimate error, finding counts "
+             "and the count of what the work touched (files, tests, commits) all "
+             "belong on the bot card, unless the comment is a postmortem. "
              "Stripped-down directive register - no CTA, no soft ask, no filler. "
              "Tables and images are welcome as extra explanation and are exempt from "
              "the caps; bullet lists are not, because a list is how a comment says "
