@@ -106,6 +106,73 @@ class HumanCardGuardTest < Minitest::Test
     assert_match(/empty sentence/, guard(sentence_body("2 corrections to what I put here earlier.")))
   end
 
+  # --- The method preamble ---------------------------------------------------
+
+  # Fernando, 2026-08-24: "I don't need meta-statements like 'Measuring the file
+  # instead of the culprit:'. The rest of the sentence is useful enough."
+  def test_refuses_a_clause_that_narrates_the_measuring
+    report = guard(sentence_body("Measuring the file instead of the culprit: 353 events and 126 users, spread over 1.34.9 and 1.32.7."))
+
+    assert_match(/method preamble/, report)
+    assert_includes report, "Measuring the file instead of the culprit:"
+  end
+
+  # The handoff is a comma as often as a colon, and this one is his too.
+  def test_refuses_the_comma_form_of_the_preamble
+    report = guard(sentence_body("Queried directly, it is 356 events and 125 users over ninety days."))
+
+    assert_match(/method preamble/, report)
+    assert_includes report, "Queried directly,"
+  end
+
+  # A full sentence whose subject is a person and whose verb is the inspection is
+  # a claim about verification, and it stands. It opens with the subject, not the
+  # participle, which is the whole reason the rule can stay this narrow.
+  def test_allows_a_person_saying_they_did_the_checking
+    refute_match(/method preamble/, guard(sentence_body("I ran it myself rather than taking the agent's figure.")))
+  end
+
+  # The same claim punctuated the way anyone would actually write it. The
+  # inspection verb now has a comma after it and content behind that, so only the
+  # sentence-initial anchor keeps it out -- which is the narrowing the whole rule
+  # rests on.
+  def test_an_inspection_verb_mid_sentence_is_not_a_preamble
+    refute_match(/method preamble/, guard(sentence_body("I ran it myself, rather than taking the agent's figure.")))
+  end
+
+  # The gerund is the subject of a general claim about the system, with no
+  # handoff to a separate finding.
+  def test_allows_a_gerund_subject_making_a_claim_about_the_system
+    refute_match(/method preamble/, guard(sentence_body("Running the suite serially avoids the port collision.")))
+  end
+
+  # The same claim with a trailing subordinate clause. A comma alone must not
+  # pull it in -- this is what the length bound and the finite-verb veto are for.
+  def test_a_trailing_comma_does_not_make_a_claim_into_a_preamble
+    refute_match(/method preamble/, guard(sentence_body("Running the suite serially avoids the port collision, which is why we serialize.")))
+  end
+
+  # Nothing is handed off, so there is no finding standing behind a preamble.
+  def test_allows_a_participial_clause_that_is_the_whole_sentence
+    refute_match(/method preamble/, guard(sentence_body("Counting the retries: twelve.")))
+  end
+
+  # Isolates the finite-verb veto. The clause is short enough to clear the length
+  # bound, so only the verb inside it keeps this out -- a gerund subject with its
+  # own predicate is a claim, not a preamble.
+  def test_a_short_gerund_subject_with_its_own_verb_is_not_a_preamble
+    refute_match(/method preamble/, guard(sentence_body("Testing this fails, which we already knew.")))
+  end
+
+  # Isolates the length bound on the comma form, which is deliberately shorter
+  # than the colon's. A comma is the ambiguous handoff, so the rule under-reaches
+  # there on purpose: this sentence IS a preamble and is knowingly let through,
+  # because widening the comma to the colon's reach is what would start pulling
+  # in gerund-subject claims. Measured cost over the corpus: nothing.
+  def test_the_comma_form_stays_deliberately_narrow
+    refute_match(/method preamble/, guard(sentence_body("Comparing the release list against the crash list, the fixed builds carry none of these.")))
+  end
+
   private
     def guard(body)
       Tempfile.create([ "body", ".html" ]) do |file|

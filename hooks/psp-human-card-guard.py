@@ -352,6 +352,68 @@ def empty_sentences(prose):
     return found
 
 
+# The method preamble. Fernando, 2026-08-24, on a sentence of mine from that
+# night: "I don't need meta-statements like 'Measuring the file instead of the
+# culprit:'. The rest of the sentence is useful enough." A sentence-initial
+# clause narrating the act of measuring or looking, handed to the finding by a
+# colon or a comma. The finding stands on its own; the preamble says how we got
+# it, which is our process and belongs on the bot card with the rest of it.
+#
+# Only the forms he listed, spelled out rather than stemmed. Bare "read" and
+# "check" are deliberately absent: "Read the thread, then rule" is an imperative
+# in a next-step paragraph, not a preamble, and stemming would swallow it.
+INSPECTION = (r"measuring|reading|re-reading|checking|querying|queried|measured|"
+              r"counting|counted|running|re-running|ran|looking|grepping|"
+              r"diffing|inspecting|comparing|testing|verifying|scanning|"
+              r"sampling|pulling|fetching")
+
+# Two handoffs, held to different lengths, because they carry different risk.
+#
+# A colon after a sentence-initial participle is unambiguous - a gerund SUBJECT
+# is never handed to a colon before its own verb - so the clause may run long.
+# "Reading every event in the window instead of a sample:" is ten words and is
+# the fault exactly.
+#
+# A comma is where the ambiguity lives, and it is the one Fernando drew a line
+# around: "Running the suite serially avoids the port collision" is a claim about
+# the system whose gerund is the SUBJECT, and a trailing "..., which is why we
+# serialize" would otherwise pull it in. Two things keep it out - the clause must
+# be short (his real one, "Queried directly,", is two words) and it must carry no
+# finite verb of its own. `[^\s:,]+` stops either pattern at the first
+# punctuation, so what matches is the opening clause and not some later one.
+METHOD_PREAMBLE = [
+    (re.compile(r"^(?:" + INSPECTION + r")\b((?:\s+[^\s:,]+){0,12})\s*:\s+(.+)$", re.I), False),
+    (re.compile(r"^(?:" + INSPECTION + r")\b((?:\s+[^\s:,]+){0,4})\s*,\s+(.+)$", re.I), True),
+]
+# The generous -s/-ed shape again, and generous is again the safe direction: a
+# plural noun misread as a verb costs a preamble we do not catch, while a real
+# verb missed would deny a sentence about the system. Never applied to the
+# opening word itself, which is a participle and ends that way by definition.
+PREAMBLE_VERB = re.compile(
+    r"\b(?:" + VERBS + r"|is|are|was|were|has|have|had|does|did|do|will|would|"
+    r"can|could|should|must|may|might|\w{3,}(?:ed|s))\b", re.I)
+
+
+def method_preambles(prose):
+    """Sentence openings that narrate the looking instead of stating the finding."""
+    found = []
+    for para in prose:
+        for sent in sentences(para):
+            for pattern, veto in METHOD_PREAMBLE:
+                m = pattern.match(sent)
+                if not m:
+                    continue
+                if veto and PREAMBLE_VERB.search(m.group(1)):
+                    continue
+                # The finding after the handoff has to be able to stand alone; a
+                # participial clause that IS the whole sentence is not this fault.
+                if len(m.group(2).split()) < 3:
+                    continue
+                found.append((sent[:m.start(2)].rstrip(), m.group(2)))
+                break
+    return found
+
+
 # A Basecamp record link whose visible text is the URL itself. Basecamp resolves a
 # pasted link to the record's name in its own composer, but posting through the API
 # does not: the server only autolinks it (class="autolinked" data-behavior="truncate",
@@ -818,6 +880,13 @@ def main():
             "Put the fact in this sentence, or delete it and let the next one "
             "stand on its own.")
 
+    for preamble, finding in method_preambles(prose):
+        problems.append(
+            f"method preamble ({preamble!r}) - it narrates the looking, and he "
+            "did not ask how the number was got. The finding carries itself: "
+            f"start the sentence at {finding.split()[0]!r}. How it was measured "
+            "is bot-card material.")
+
     for pat, why, fix in VOICE:
         m_ = re.search(pat, text, re.I)
         if m_:
@@ -868,7 +937,8 @@ def main():
              "what it will not do. "
              "No emphasis written for effect and no editorial - report the finding, "
              "do not score it. No ornament: a word that says the thing matters is "
-             "standing where the fact belongs. Every sentence has a main verb and "
+             "standing where the fact belongs. No method preamble - the finding stands "
+             "without the clause narrating how it was measured. Every sentence "
              "names what it is about - a placeholder subject with nothing named "
              "only announces the sentence after it. "
              "Every sentence carries a fact the previous one did not; "
