@@ -91,11 +91,16 @@ of 2026-08-24 that this repo holds only the work of connecting to Basecamp:
 `psp/bin/install` links them into `~/.claude/hooks` and registers them in
 `~/.claude/settings.json`.
 
-What stays here is the connection itself, plus two hooks that guard this fleet
-whatever process is running: `basecamp-write-identity.py` and
-`basecamp-quiet-read.py` for Basecamp calls, and `git-author-identity.py` and
-`agent-watch.py`, which belong to neither repo by purpose and are awaiting a
-decision on where they should live.
+What stays here is the connection itself and the two hooks that guard a Basecamp
+call: `basecamp-write-identity.py`, which refuses a write that names no identity,
+and `basecamp-quiet-read.py`, which refuses a read whose flags would hide an
+error envelope.
+
+`git-author-identity.py` and `agent-watch.py` went to mobile-alerts too, on
+Fernando's ruling of 2026-08-24 that both were designed as part of the intake
+process. Their machine-specific values -- the git author address, the session
+directory root -- are read from `~/.config/psp/board.json` rather than hardcoded,
+so they work for whoever installs them.
 
 ### Using it
 
