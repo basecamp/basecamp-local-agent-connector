@@ -31,7 +31,16 @@ WRITE = re.compile(
     BOUNDARY +
     r"basecamp\s+(?:"
     r"comments?\s+(?:create|update|delete)"
+    # `column`/`columns` and `wormholes` were missing until 2026-08-25. A card table
+    # is structure, and a wormhole teleports a card between projects and deletes the
+    # original -- both louder than the writes already listed here, and both were
+    # landing under Fernando's byline whenever a profile went unsaid. Ten phase
+    # columns created on the migrated bot table that night are recorded as his.
     r"|cards?\s+(?:create|update|move|archive|trash|done|step)"
+    # Bare `cards columns` and `cards wormholes list` are reads and must stay open;
+    # only the verbs under them write.
+    r"|cards?\s+columns?\s+(?:create|update|delete|move|rename)"
+    r"|cards?\s+wormholes?\s+(?:create|update|delete|rm)"
     r"|chat\s+post"
     r"|messages?\s+(?:create|update)"
     r"|todos?\s+(?:create|update|complete)"
