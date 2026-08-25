@@ -4,8 +4,9 @@ description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted events — authored by the operator
   and @mentioning a real Basecamp agent user — and hands each off to a background
-  agent that gathers context and does the work. Replies are written by the front thread so they carry the
-  session's output style, and only when the item's subscribers are just the
+  agent that gathers context and does the work. Replies are written by the
+  `psp-card-writer` agent, which reads the work's own card and composes for a
+  reader, and only when the item's subscribers are just the
   operator and the bot; otherwise the result comes back in the session. In
   Mobile: On Call a two-table routing applies instead: a card on the Issues board
   starts a psp-intake-plan diagnosis on the verbose Bot Card Table beside it, and
@@ -31,7 +32,7 @@ This skill turns a Basecamp comment/message/card into a local Claude Code task.
 You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); a background
 agent on this machine picks it up, gathers the surrounding context from Basecamp,
 and acts on it **as that agent user**. A reply lands in the thread only when the item
-is private to you and the bot, and the **front thread writes it** so it carries this session's output style; on a public item the
+is private to you and the bot, and **`psp-card-writer` writes it** — a dedicated writing agent that reads the work's card and composes for a reader; on a public item the
 agent pings you in your private chat when you need to know, and the result comes
 back to you in the Claude Code session. Events in **Fernando: PSP** route by a
 dedicated two-table scheme — see "PSP bug intake" below.
@@ -285,14 +286,16 @@ Instruct that background agent to, in order:
    treat it as **not private** and stay silent; never guess the audience.
    - **Private item (operator and/or agent only)** — the reply is owed, but the
      **background agent does not write it**. It returns a structured result and
-     posts nothing; the **front thread composes the body in this session's voice**
-     and posts it as the agent, @mentioning the operator so it surfaces as a
-     notification:
+     posts nothing; the front thread dispatches **`psp-card-writer`**, which reads
+     the item and the work's own card, asks the working agent whatever the card
+     leaves unclear, and posts the reply as the agent, @mentioning the operator so
+     it surfaces as a notification:
      ```bash
      basecamp comment <recording.url|id> "<body>" --profile <agent>
      ```
-     A subagent runs its own context and its own voice; routing the words through
-     the front thread is what applies the session's output style. Success posts the
+     A working agent runs its own context and its own voice, and prose drafted
+     between interrupts by the thread that is also routing events reads like it.
+     A separate writer with nothing else to do is what fixes that. Success posts the
      results; failure posts a short error summary. **Never put the agent's own
      mention in a reply body.**
    - **Anyone else subscribed** — say nothing in the thread at all. Nothing visible
@@ -312,9 +315,9 @@ Instruct that background agent to, in order:
 Because the background agent gathers its own context and reports back to the
 session, the front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
-There is **no concurrency cap**; dispatch every event as it arrives. Composing a
-reply at the end of an event is the one piece of work the front thread keeps; it is
-words, not context-gathering, and it does not block the next dispatch.
+There is **no concurrency cap**; dispatch every event as it arrives. The reply at the
+end of an event is a dispatch too — `psp-card-writer`, with pointers — so nothing the
+front thread does is composition, and nothing it does blocks the next event.
 
 **Escalation channel.** When the subscriber gate blocks a reply but the operator
 needs to know something, the agent posts in his private chat in the
@@ -362,8 +365,9 @@ recording itself is the task**. The dispatched background agent should, in order
    follow the green-first lifecycle below).
 3. **Apply the same subscriber gate before replying** — `basecamp subscriptions
    show <recording.url|id> -j --profile <agent>`. Every subscriber the operator or
-   the agent: the agent returns its result and the **front thread** writes and posts
-   the reply as the agent, @mentioning the operator.
+   the agent: the agent returns its result and the front thread dispatches
+   **`psp-card-writer`**, which writes and posts the reply as the agent,
+   @mentioning the operator.
    Anyone else on the list (or a check you cannot complete): no reply — ping the
    operator in his private chat (see "Escalation channel") if he needs to see it.
    Either way, return the result to the front thread for the session report.
@@ -382,7 +386,7 @@ it, carrying the PSP phase columns.
 `~/.config/psp/board.json` and nowhere else.** Print them with:
 
 ```bash
-python3 ~/.claude/skills/psp-intake/scripts/psp-board.py --surfaces
+python3 ~/.claude/skills/psp/scripts/psp-board.py --surfaces
 ```
 
 Nothing below quotes an id, and neither should you or anything you dispatch. That
@@ -477,9 +481,13 @@ ends — the bot card carries the human card's URL, the human card carries the
 report's — because that is the only route back to the original complaint from the
 card Fernando is looking at.
 
-**The summary is the front thread's.** When an agent returns, this session writes a
-short summary in Fernando's voice, @mentions him, and posts it as a comment on the
-human card that already exists. **It always names the proposed direction** — what
+**The summary is `psp-card-writer`'s.** When an agent returns, the front thread
+dispatches that agent with pointers — the human card, the bot card, the route, and the
+finished agent's `agentId` as a reply address. It reads the bot card itself, asks the
+finished agent whatever the card leaves unclear, writes a short summary in Fernando's
+voice, @mentions him, and posts it as a comment on the human card that already exists.
+**The front thread never drafts it, and never hands it the findings** — a finding
+relayed through a prompt arrives without its evidence. **It always names the proposed direction** — what
 the fix would look like, **its size as new-and-changed LOC**, and roughly how far
 away it is — and any decision that is his to make. LOC is the measurement the
 postmortem computes estimate error against; a summary without it leaves the effort
@@ -497,7 +505,7 @@ a 100-line change in one repository into 22 lines in another.
 **A code-review route is not complete until its summary lands on the sister card.** The agent
 halts with the human card holding its title, its two URLs and its unticked `Verify:` steps and
 nothing else — that is its contract, not an oversight — so the verdict exists only on a bot card
-until this thread posts. On the first live run it stayed there until Fernando asked where it was.
+until the writer posts. On the first live run it stayed there until Fernando asked where it was.
 Treat the summary as the last step of the route rather than as a courtesy after it, and post it
 before reporting the run as done.
 
@@ -604,11 +612,39 @@ so it reads as permission to reach its top. Three paragraphs either is or is not
 **And it is enforced, not merely written down.** A `PreToolUse` hook
 (`~/.claude/hooks/psp-human-card-guard.py`, wired in `~/.claude/settings.json`; it lives in mobile-alerts `psp/hooks/` and is linked from there by `psp/bin/install`)
 intercepts every `basecamp comments create|update` whose target resolves into the
-Human Card Table — the Issues board — and denies the call on: a paragraph count other than three, more
-than **150 words total**, more than **60 words** or **4 sentences** in any
-paragraph, any single sentence over **40 words**, any banned soft-ask/CTA/filler
-phrase, any emoji, or a final paragraph with no stated next step. URLs do not count
-toward the word budget — they are proof, not prose.
+Human Card Table — the Issues board — and denies the call on a paragraph count other
+than three, a total or per-paragraph or per-sentence length over its caps, a bullet
+list, a banned soft-ask/CTA/filler phrase, an emoji, internal vocabulary, effort
+accounting, an unlinked claim, or a final paragraph with no stated next step. URLs do
+not count toward the word budget — they are proof, not prose.
+
+**The caps themselves are deliberately not written here.** Every prose copy of them has
+gone stale: this file said 150 words, 60 per paragraph, 4 sentences and 40 words per
+sentence while the hook enforced different numbers, and `psp-intake-code-review` still
+handed those dead figures to whoever drafted. The hook is the only true statement of
+the contract, and it can be run against a draft **before** any CLI call:
+
+```bash
+python3 ~/.claude/hooks/psp-card-preview.py <human-card-id> <draft-file>
+```
+
+It drives the guard itself on a synthesized payload rather than re-implementing a
+single check, so it cannot drift. `psp-card-writer` loops on it until it prints
+`passes`, and nothing reaches the CLI that has not.
+
+**The author is enforced too, not just the prose.** The same hook reads `agent_type`
+off the `PreToolUse` payload — absent on a main-thread call, the subagent's name
+otherwise — and denies any prose comment on the Human Card Table that did not come
+from `psp-card-writer`. The refusal names the handoff rather than just the rule.
+Phase lines exit before that check, so every agent still posts its own.
+
+**This is what makes an amendment to this contract binding.** A session that loaded
+this skill before an edit never sees the edit — the description propagates, the body
+does not. On 2026-08-25 the writing role moved to the writer agent and a live
+connector session went on holding the previous body for three hours, having agreed to
+a change it could not read. Every earlier amendment here was violated the same way,
+and each time the fix was more prose. A rule that binds only sessions started after it
+was written binds nothing.
 
 **Every dimension is capped because capping one displaces the growth into another.**
 Bounding words produced a slot template; bounding paragraphs grew the paragraphs
@@ -641,7 +677,7 @@ how many times the verdict changed and what changed it, which filter caught each
 reached Fernando, and — the reason it exists — the earliest point the closing evidence was
 reachable, which yields a wasted-rounds figure. No LOC, no estimate error, no defects/KLOC: there
 is no build to divide by, and a fabricated zero enters the cross-effort trend as real. Its report
-lands on the bot card and its measures on the `projects.jsonl` row, and **this session then posts a
+lands on the bot card and its measures on the `projects.jsonl` row, and **`psp-card-writer` then posts a
 short summary of it on the human card, @mentioning him** (his ruling 2026-08-19) — same contract,
 same hook, same three paragraphs as every other Human-table comment. The summary leads with the
 wasted-rounds figure and what closed the effort, names the true cost where it differs from the
@@ -659,8 +695,10 @@ since `psp-postmortem` measures a build and none of them built anything.
   yet, and column moves. **The bot never boosts anything, anywhere.** Every action ends in a
   card or a comment, so a boost is only a second, weaker acknowledgement of something
   already visible.
-- **This session** owns every human-card **comment** that is prose. The agent has
-  exactly two exceptions, both structure rather than prose. **`Verify` steps** — a
+- **`psp-card-writer`** owns every human-card **comment** that is prose — dispatched
+  by this session, never drafted by it, and **enforced by the guard hook on
+  `agent_type`** rather than left to whoever read this file most recently. The agent
+  that did the work has exactly two exceptions, both structure rather than prose. **`Verify` steps** — a
   checklist belongs on the card of the person who runs it (defects row 3971). And
   **the phase line**: whenever an agent moves the human card it posts one comment of
   one line, `<Phase> began: <bot card url>`, in the same round as the move. The
@@ -786,21 +824,33 @@ was adopted before the move; nothing new goes in it.
 
 ### The front thread is a thin orchestrator
 
-It routes events, it writes the human-facing prose, and it does nothing else. It does
-not investigate, does not gather context, and does not carry findings from one agent
-into another's prompt. Every event reaches it first — the monitor wakes nothing else —
-and its only decision is which of three routes the event takes.
+It routes events and it does nothing else. It does not investigate, does not gather
+context, does not carry findings from one agent into another's prompt, and **it does
+not write.** Every event reaches it first — the monitor wakes nothing else — and its
+only decision is which of three routes the event takes.
 
-**Answer directly** when the answer is already in this session: what an agent
-reported, what was decided, what a card says. Post the reply on the human card in
-Fernando's voice. Reporting only in session is not answering — that mistake left a
-card standing with a recommendation the evidence had already killed.
+**Prose is never the front thread's.** Every comment owed on the Human Card Table goes
+to `psp-card-writer`, dispatched with pointers — human card, bot card, route, and the
+owning agent's `agentId` as a reply address. That holds for a one-line follow-up answer
+as much as for an intake summary. The thread routing events, restarting finished agents
+and sweeping the board cannot also write for a reader, and what it produced when it
+tried passed every check and read like a machine clearing its throat.
+
+**Answer directly** when the answer is already in this session: what an agent reported,
+what was decided, what a card says. Dispatch the writer with that answer's pointers
+rather than typing it yourself. Reporting only in session is not answering — that
+mistake left a card standing with a recommendation the evidence had already killed.
 
 **Resume the owning agent** — `SendMessage` to its id — whenever the question turns on
 evidence that agent gathered. It still holds its own investigation and can re-derive
 from it; the front thread cannot. This is the default for follow-ups, corrections and
 challenges to a finding. Prefer it over a fresh spawn every time it applies. Its
 context dies with the session, so resume while you still can.
+
+**Resume it for work, not for words.** When the answer is owed to Fernando rather than
+to you, hand the writer that agent's id and let it ask its own questions — it knows
+what it cannot say plainly, and you do not. Passing its answer through you strips the
+evidence off it twice.
 
 **Spawn fresh only for new investigation** — work no existing agent has done.
 
@@ -819,10 +869,10 @@ finished" is not an event in this loop — and that single gap is why **every ef
 stops after exactly one agent until Fernando restarts it.** He is the one person who
 must never be the scheduler.
 
-**A completed agent re-enters the three routes above, in the same turn that writes
+**A completed agent re-enters the three routes above, in the same turn that dispatches
 the human comment.** Read its result for a next action. If it names one, dispatch it
-and *then* post the comment; if it names none, say on the card that the effort is
-done and why. Posting the comment is the receipt for a transition, never the
+and *then* dispatch the writer; if it names none, the writer says on the card that the
+effort is done and why. Posting the comment is the receipt for a transition, never the
 transition itself. "Next step: none from you" is a promise that the next move is
 mine, and it is the exact sentence that preceded an hour of nothing.
 
@@ -850,7 +900,8 @@ Eight efforts stalled in one evening, and Fernando found all eight himself:
 `psp-intake-plan-reviewer` before it reaches Fernando's card.** Not only the
 initial intake run — a resumed agent answering a follow-up produces claims too, and
 a follow-up answer is where an agent is most likely to restate a conclusion more
-confidently than its evidence supports.
+confidently than its evidence supports. An answer `psp-card-writer` gets by asking is a
+claim like any other and is reviewed on the same line before it reaches the card.
 
 The line is claims, not agents and not phases:
 
@@ -1030,7 +1081,7 @@ webhook or an open funnel behind.
   subscribers are the operator and/or the agent — a private item. Any other
   subscriber and nothing visible happens on that item; anything the operator must
   see goes to his private chat (room `10157062379`) and to the session report. An un-enumerable subscriber list counts as public. The words are
-  always the front thread's, never the background agent's.
+  always `psp-card-writer`'s, never the working agent's and never the front thread's.
 - **Fernando: PSP is routed, not gated.** Its two members make every card private
   by construction, so the gate never decides anything there — "PSP bug intake"
   above does, and its human card replaces the Campfire ping.
