@@ -485,6 +485,211 @@ BARE_LINK = re.compile(
     r'<a[^>]+href="(https://(?:app\.basecamp\.com|3\.basecampapi\.com)/[^"]+)"[^>]*>\s*'
     r'(?:https?://|#?\d{6,})', re.I)
 
+
+# A pull request or a Sentry issue named by its id carries a link. Fernando,
+# 2026-08-24: "why are we not catching that all PRs should have links?", and on
+# scope: "Both PRs and Sentry issues should be linked." Four PR references went
+# out that evening as bare text - "Pull request 1667", "Pull request 1648",
+# "PR 133", "PR 1666" - and six Sentry ids alongside them. Each one sends him to
+# go and find it. The discipline had been holding only when he asked for links by
+# name in the message that started the work, which is not a discipline.
+#
+# This is the inverse of BARE_LINK above, not a duplicate of it: that one refuses
+# a link whose visible text is its own URL and demands the record's name instead,
+# and this one refuses the absence of a link. They compose, and the corpus already
+# carries the shape both of them want - `hey-ios#1665` as the anchor text over a
+# github pull URL.
+#
+# Basecamp cards and comments are NOT here. He ruled on pull requests and Sentry
+# issues and said nothing about ids, and the corpus says there is nothing to fix:
+# all thirteen ten-digit record ids in it are already inside a link, none bare.
+#
+# The bare number leaning on a repo established earlier ("Your 1666 shipped a
+# second one doing the same job") is deliberately NOT matched. Telling that from
+# a version, an event count or a build number needs a number detector, and a
+# wrong one denies arithmetic he asked for. It under-reaches by one shape, and
+# that costs nothing here: the comment carrying it also says "Pull request 1667".
+ANCHOR_TEXT = re.compile(r"<a\b[^>]*>.*?</a>", re.I | re.S)
+HREF = re.compile(r"href=[\"']([^\"']+)[\"']", re.I)
+PR_REFERENCE = re.compile(
+    r"\bpull\s+requests?\s+#?(\d+)"      # pull request 1667
+    r"|\bPRs?\s+#?(\d+)"                 # PR 133
+    r"|\b[\w.-]+/[\w.-]+#(\d+)"          # basecamp/bc3#12863
+    r"|\b[a-z][\w.-]*#(\d+)",            # hey-ios#1665
+    re.I)
+# Case-sensitive, and that is load-bearing rather than tidy: the bot cards in this
+# fleet are named `bc3-ios-web-view-bridge-diagnostic-fires-on-live-bridges`, and
+# a case-blind version of this reads `bc3-ios-web` as a Sentry short id and denies
+# every comment that names its own bot card.
+SENTRY_ID = re.compile(
+    r"\b(?:BC3|BC4|HEY)-(?:IOS|DESKTOP|ANDROID|WEB|ELECTRON)-[A-Z0-9]{2,6}\b")
+REFERENCES = [("pull request", PR_REFERENCE), ("Sentry issue", SENTRY_ID)]
+
+
+def unlinked_references(text):
+    """PR and Sentry references outside a link, with nothing else linking that id.
+
+    Deliberately forgiving about WHERE the link is. A comment that links the issue
+    once and then talks about it in prose has already saved him the lookup, so
+    only an id nothing points at is refused. Bare URLs count as links because
+    Basecamp autolinks them, and they are stripped before the scan for the same
+    reason.
+    """
+    body = MENTION.sub(" ", text)
+    outside = URL.sub(" ", TAG.sub(" ", ANCHOR_TEXT.sub(" ", body)))
+    targets = " ".join(HREF.findall(body) + URL.findall(body))
+    found = []
+    for kind, pattern in REFERENCES:
+        for m in pattern.finditer(outside):
+            identifier = next((gr for gr in m.groups() if gr), m.group(0))
+            if re.search(r"(?<![\w-])" + re.escape(identifier) + r"(?![\w-])", targets):
+                continue
+            found.append((kind, " ".join(m.group(0).split())))
+    return found
+
+
+# Tier one of the verifier question, and the only tier that belongs in a hook:
+# the anchor text has to agree with the href it sits on. "Pull request 1667"
+# pointing at /pull/1666 is a transposition no reading catches, and HEY-IOS-669
+# against HEY-IOS-663 is one character. Both are offline, deterministic and cost
+# nothing.
+#
+# Scoped to github pull/issue links and Sentry issue links, because those are the
+# two whose id convention is known. A Basecamp link carries a record TITLE as its
+# anchor text, and a title with a number in it ("... | May 29") would be read as a
+# claim about the card id and denied.
+#
+# The claim is only read off the END of a github label - every one in the corpus
+# is "<repo words> <number>": "Hotwire Native 262", "bc3 12863", "core-ios 133",
+# "PR 1648", "hey-ios#1665". A number anywhere else in the label is describing
+# something, not naming the target.
+LINK_TARGETS = [
+    ("pull request",
+     re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/(\d+)", re.I),
+     lambda label: re.findall(r"#?(\d{2,})\s*$", label)),
+    ("Sentry issue",
+     re.compile(r"sentry\.io/issues/([A-Za-z0-9-]+)", re.I),
+     lambda label: SENTRY_ID.findall(label)),
+]
+
+
+def mismatched_links(text):
+    """Links whose visible id is not the id the href points at."""
+    found = []
+    for m in ANCHOR_TEXT.finditer(MENTION.sub(" ", text)):
+        href = HREF.search(m.group(0))
+        if not href:
+            continue
+        label = " ".join(TAG.sub(" ", m.group(0)).split())
+        for kind, target, shown_ids in LINK_TARGETS:
+            hit = target.search(href.group(1))
+            if not hit:
+                continue
+            shown = shown_ids(label)
+            if not shown:
+                continue
+            if any(one.upper() == hit.group(1).upper() for one in shown):
+                continue
+            found.append((kind, label, hit.group(1)))
+            break
+    return found
+
+
+# Tier two: does the link's target exist. Fernando, 2026-08-24, on the offline
+# check and this one together: "Ok let's try both of these solutions."
+#
+# It reads the HREFS ONLY, never the prose, and that is what makes it possible at
+# all. "Pull request 1667" does not name a repository and could be any of ours,
+# so there is nothing to ask about; the presence rule above already refuses a
+# reference carrying no link, so by the time this runs every reference the reader
+# can follow is a URL naming its owner, its repo and its number.
+#
+# GITHUB ONLY, AND NO SENTRY BRANCH THAT ALWAYS PASSES. Probed 2026-08-24: this
+# environment has `gh` authenticated and answering in under a second, and for
+# Sentry it has no SENTRY_AUTH_TOKEN, no sentry-cli and no ~/.sentryclirc, while
+# the Sentry MCP server a session can call is not reachable from a PreToolUse
+# hook at all. A check that cannot fail reads as coverage, which is worse than no
+# check, so Sentry ids get the two offline tiers and nothing more.
+#
+# FAILS OPEN, AND LEAVES A TRACE. A 404 is an answer, and it denies. A timeout, a
+# missing `gh`, a rate limit or an expired token is NOT an answer: the post goes
+# through, because a hook that blocks a legitimate comment on a network blip is a
+# hook that gets worked around, and every other network path in this file already
+# fails open. What makes that defensible rather than theatre is the trace - the
+# miss is recorded through record_debt and psp-open-steps.py lists it afterwards.
+# cite-check.py reserves a third verdict for exactly this (UNRESOLVED, "silence
+# would read as coverage"); a PreToolUse hook has only allow and deny, so the
+# third verdict has to be written down instead of returned.
+GH = os.environ.get("PSP_GUARD_GH", "gh")
+VERIFIED = os.path.expanduser(os.environ.get(
+    "PSP_GUARD_VERIFY_CACHE", "~/.claude/hooks/.psp-verified-refs.json"))
+VERIFY_TIMEOUT = 5
+VERIFY_BUDGET = 12
+# `issues/N` rather than `pulls/N`: every pull request is an issue on this
+# endpoint, so one call answers for both link shapes.
+GH_TARGET = re.compile(
+    r"github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)", re.I)
+
+
+def github_has(owner, repo, number, deadline):
+    """True, False, or None when nothing definite came back."""
+    left = deadline - time.time()
+    if left <= 0:
+        return None
+    try:
+        out = subprocess.run(
+            [GH, "api", f"repos/{owner}/{repo}/issues/{number}"],
+            capture_output=True, text=True, timeout=min(VERIFY_TIMEOUT, left))
+    except Exception:
+        return None
+    if out.returncode == 0:
+        return True
+    if '"status":"404"' in out.stdout or "HTTP 404" in out.stderr:
+        return False
+    return None
+
+
+def unresolvable_links(text, card=None):
+    """Linked pull requests GitHub does not have. Asks the network; fails open."""
+    body = MENTION.sub(" ", text)
+    targets, seen = [], set()
+    for href in HREF.findall(body) + URL.findall(body):
+        m = GH_TARGET.search(href)
+        if not m:
+            continue
+        key = f"{m.group(1)}/{m.group(2)}#{m.group(3)}"
+        if key not in seen:
+            seen.add(key)
+            targets.append((key, m.group(1), m.group(2), m.group(3)))
+    if not targets:
+        return []
+    try:
+        cache = json.load(open(VERIFIED))
+    except Exception:
+        cache = {}
+    deadline = time.time() + VERIFY_BUDGET
+    missing, fresh = [], False
+    for key, owner, repo, number in targets:
+        if cache.get(key):
+            continue
+        answer = github_has(owner, repo, number, deadline)
+        if answer is True:
+            cache[key] = True
+            fresh = True
+        elif answer is False:
+            missing.append(key)
+        else:
+            record_debt(card, "unverified-link",
+                        f"could not confirm {key} exists; the comment posted "
+                        "without that check")
+    if fresh:
+        try:
+            json.dump(cache, open(VERIFIED, "w"))
+        except Exception:
+            pass
+    return missing
+
+
 MAX_TOTAL_WORDS = 180
 MAX_PARA_WORDS = 90
 MAX_PARA_SENTENCES = 5
@@ -496,7 +701,8 @@ MAX_SENTENCE_WORDS = 25
 # and cannot watch what happens after it, so it records the debt instead: every
 # self-owned step lands in OPEN_STEPS with its card, and psp-open-steps.py lists
 # what is still outstanding. Fernando should never be the thing that restarts us.
-OPEN_STEPS = os.path.expanduser("~/.claude/hooks/.psp-open-steps.json")
+OPEN_STEPS = os.path.expanduser(os.environ.get(
+    "PSP_GUARD_OPEN_STEPS", "~/.claude/hooks/.psp-open-steps.json"))
 SELF_OWNED = re.compile(
     r"next step[^.]*?\b(?:"
     r"none from you|nothing from you|mine,? not yours|is mine\b|ours\b|"
@@ -881,6 +1087,23 @@ def main():
             f"link shows its URL instead of the record's name ({m_.group(1)[:60]}...). "
             "Basecamp resolves a pasted link in its own composer; posting through the "
             "API does not, so fetch the target's title and use it as the anchor text.")
+
+    for kind, reference in unlinked_references(text):
+        problems.append(
+            f"{kind} named without a link ({reference!r}). He has to go and find "
+            "it. Link it, with the id as the anchor text - `repo#N` over the pull "
+            "URL, the short id over the Sentry issue URL - not the bare URL.")
+
+    for kind, label, target in mismatched_links(text):
+        problems.append(
+            f"link says {label!r} but points at {kind} {target!r}. One of the two "
+            "is wrong and reading will not catch which. Check the id you meant "
+            "and make the anchor text and the href name the same thing.")
+
+    for key in unresolvable_links(text, card):
+        problems.append(
+            f"linked pull request does not exist ({key}). GitHub answered 404. "
+            "Check the number before he follows it.")
 
     for i, para in enumerate(prose, 1):
         negs = NEGATION.findall(TAG.sub(" ", URL.sub("", para)))

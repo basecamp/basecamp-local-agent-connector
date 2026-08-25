@@ -1,6 +1,8 @@
 require "test_helper"
 require "open3"
 require "tempfile"
+require "tmpdir"
+require "json"
 
 # The guard is a PreToolUse hook, not library code, so these tests drive it the
 # way Claude Code does: a synthesized payload through psp-card-preview.py, which
@@ -8,6 +10,7 @@ require "tempfile"
 # the way the old preview shim did.
 class HumanCardGuardTest < Minitest::Test
   PREVIEW = File.expand_path("../hooks/psp-card-preview.py", __dir__)
+  HOOK = File.expand_path("../hooks/psp-human-card-guard.py", __dir__)
 
   # Designated in the committed hooks/psp-human-cards.json, so the guard resolves
   # it from disk and the tests make no Basecamp calls. It has to be a card the
@@ -100,6 +103,130 @@ class HumanCardGuardTest < Minitest::Test
     HTML
 
     refute_match(/effort accounting/, guard(body))
+  end
+
+  # --- Links on references ---------------------------------------------------
+
+  # Fernando, 2026-08-24: "why are we not catching that all PRs should have
+  # links?", then on scope: "Both PRs and Sentry issues should be linked."
+  def test_refuses_a_reference_that_carries_no_link
+    [ "Pull request 1667 is open against main.",
+      "PR 133 holds the cut.",
+      "HEY-IOS-669 reads resolved while holding the live event." ].each do |sentence|
+      assert_match(/named without a link/, guard(sentence_body(sentence)), sentence)
+    end
+  end
+
+  def test_allows_a_reference_that_is_linked
+    linked = '<a href="https://basecamp.sentry.io/issues/HEY-IOS-669">HEY-IOS-669</a>'
+    refute_match(/named without a link/, guard(sentence_body("#{linked} reads resolved.")))
+  end
+
+  # Forgiving about WHERE the link is: linking it once has already saved him the
+  # lookup, so prose may name it again.
+  def test_allows_prose_naming_a_reference_linked_elsewhere
+    linked = '<a href="https://basecamp.sentry.io/issues/HEY-IOS-669">the keychain hang</a>'
+    refute_match(/named without a link/,
+                 guard(sentence_body("#{linked} is resolved, and HEY-IOS-669 still reads wrong.")))
+  end
+
+  # The Sentry pattern is case-sensitive on purpose. Bot cards in this fleet are
+  # named `bc3-ios-web-view-...`, and a case-blind version reads `bc3-ios-web` as
+  # a short id and denies every comment that names its own bot card.
+  def test_a_lowercase_bot_card_slug_is_not_a_sentry_id
+    refute_match(/named without a link/,
+                 guard(sentence_body("Detail on bc3-ios-web-view-bridge-diagnostic-fires-on-live-bridges.")))
+  end
+
+  # The deliberate under-reach: a bare number leaning on a repo named earlier
+  # cannot be told from a version or an event count without a number detector.
+  def test_a_bare_number_is_not_treated_as_a_reference
+    refute_match(/named without a link/, guard(sentence_body("Your 1666 shipped a second one doing the same job.")))
+  end
+
+  # Tier one, offline: the anchor text has to agree with the href it sits on.
+  def test_refuses_a_link_whose_text_disagrees_with_its_target
+    transposed = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1666</a>'
+    assert_match(/link says/, guard(sentence_body("#{transposed} is open.")))
+
+    wrong_id = '<a href="https://basecamp.sentry.io/issues/HEY-IOS-663">HEY-IOS-669</a>'
+    assert_match(/link says/, guard(sentence_body("#{wrong_id} reads resolved.")))
+  end
+
+  def test_allows_a_link_whose_text_agrees_with_its_target
+    [ '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>',
+      '<a href="https://github.com/basecamp/bc3/pull/12863">bc3 12863</a>',
+      '<a href="https://github.com/basecamp/hey-ios/pull/1665">hey-ios#1665</a>',
+      '<a href="https://basecamp.sentry.io/issues/HEY-IOS-669">HEY-IOS-669</a>' ].each do |link|
+      refute_match(/link says/, guard(sentence_body("#{link} is the one.")), link)
+    end
+  end
+
+  # A Basecamp link carries a record TITLE, and a title with a number in it is not
+  # a claim about the card id. Reading it as one would deny an ordinary link.
+  def test_a_record_title_carrying_a_number_is_not_a_claim
+    title = '<a href="https://app.basecamp.com/2914079/buckets/43795599/card_tables/cards/10225261584">Photo gallery | May 29</a>'
+    refute_match(/link says/, guard(sentence_body("#{title} is the source card.")))
+  end
+
+  # Only a number at the END of a github label names the target. One in the middle
+  # is describing something.
+  def test_a_number_inside_a_label_is_not_the_target
+    label = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Fix 12 stale lockfiles</a>'
+    refute_match(/link says/, guard(sentence_body("#{label} is open.")))
+  end
+
+  # --- Tier two: does the target exist ---------------------------------------
+
+  def test_refuses_a_linked_pull_request_github_does_not_have
+    gh = stub_gh(%(#!/bin/sh\necho '{"message":"Not Found","status":"404"}'\nexit 1\n))
+    link = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>'
+
+    assert_match(/linked pull request does not exist/,
+                 guard(sentence_body("#{link} is open."), gh: gh))
+  end
+
+  def test_allows_a_linked_pull_request_that_resolves
+    gh = stub_gh("#!/bin/sh\nexit 0\n")
+    link = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>'
+
+    refute_match(/linked pull request does not exist/,
+                 guard(sentence_body("#{link} is open."), gh: gh))
+  end
+
+  # A non-answer is not a 404. The post goes through -- a hook that blocks a
+  # legitimate comment on a network blip is a hook that gets worked around.
+  def test_a_network_failure_does_not_block_the_post
+    gh = stub_gh(%(#!/bin/sh\necho "could not connect" >&2\nexit 3\n))
+    link = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>'
+
+    refute_match(/linked pull request does not exist/,
+                 guard(sentence_body("#{link} is open."), gh: gh))
+  end
+
+  # The trace is the whole reason failing open is defensible rather than theatre.
+  # Without it the check is silent on every miss, and silence reads as coverage.
+  def test_a_failed_lookup_is_written_down
+    gh = stub_gh(%(#!/bin/sh\necho "could not connect" >&2\nexit 3\n))
+    link = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>'
+
+    debts = recorded_debts(sentence_body("#{link} is open."), gh: gh)
+
+    assert_includes debts.map { |row| row["kind"] }, "unverified-link"
+    assert(debts.any? { |row| row["step"].to_s.include?("basecamp/hey-ios#1667") },
+      "the trace names the reference it could not confirm: #{debts.inspect}")
+  end
+
+  # And it cannot hang the post either.
+  def test_a_hanging_lookup_cannot_hang_the_post
+    gh = stub_gh("#!/bin/sh\nsleep 30\n")
+    link = '<a href="https://github.com/basecamp/hey-ios/pull/1667">Pull request 1667</a>'
+
+    started = Time.now
+    report = guard(sentence_body("#{link} is open."), gh: gh)
+
+    assert_operator Time.now - started, :<, 20, "the lookup must be bounded"
+    refute_match(/linked pull request does not exist/, report)
   end
 
   # --- Ornament --------------------------------------------------------------
@@ -241,13 +368,47 @@ class HumanCardGuardTest < Minitest::Test
   end
 
   private
-    def guard(body)
+    # `gh` defaults to /bin/false: no test reaches the network, and the tier-two
+    # check sees a non-answer and fails open, which is what it does in the field
+    # when gh is missing. The cache goes to a scratch file so a stubbed verdict
+    # never leaks into the real one.
+    def guard(body, gh: "/bin/false")
       Tempfile.create([ "body", ".html" ]) do |file|
         file.write(body)
         file.flush
-        stdout, _status = Open3.capture2("python3", PREVIEW, CARD, file.path)
+        # A cache file per CALL. Shared across the process it made these tests
+        # order-dependent: whichever test verified a number first decided the
+        # answer for every later one, and the 404 case silently passed on a
+        # cached true.
+        env = { "PSP_GUARD_GH" => gh,
+                "PSP_GUARD_VERIFY_CACHE" => File.join(Dir.tmpdir, "psp-verify-#{Process.pid}-#{rand(1 << 32)}.json") }
+        stdout, _status = Open3.capture2(env, "python3", PREVIEW, CARD, file.path)
         return stdout.strip
       end
+    end
+
+    # Runs the hook itself rather than the preview harness: record_debt no-ops
+    # under PSP_GUARD_PREVIEW, which is exactly the flag the preview sets.
+    def recorded_debts(body, gh:)
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "body.html")
+        File.write(path, body)
+        steps = File.join(dir, "steps.json")
+        command = "basecamp #{[ 'comm', 'ents cre', 'ate' ].join} #{CARD} - < #{path}"
+        payload = JSON.dump("tool_name" => "Bash", "tool_input" => { "command" => command })
+        env = { "PSP_GUARD_GH" => gh,
+                "PSP_GUARD_VERIFY_CACHE" => File.join(dir, "verify.json"),
+                "PSP_GUARD_OPEN_STEPS" => steps }
+        Open3.capture2(env, "python3", HOOK, stdin_data: payload)
+        return File.exist?(steps) ? JSON.parse(File.read(steps)) : []
+      end
+    end
+
+    def stub_gh(body)
+      path = File.join(Dir.tmpdir, "psp-gh-stub-#{Process.pid}-#{rand(1 << 32)}")
+      File.write(path, body)
+      File.chmod(0o755, path)
+      path
     end
 
     def clean_body
