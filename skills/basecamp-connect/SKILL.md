@@ -2,8 +2,9 @@
 name: basecamp-connect
 description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
-  (bin/connect), watches its STDOUT for trusted events — authored by the operator
-  and @mentioning a real Basecamp agent user — and hands each off to a background
+  (bin/connect), watches its STDOUT for trusted events — authored by an authorized
+  user (the operator alone, by default) and @mentioning a real Basecamp agent
+  user — and hands each off to a background
   agent that gathers context, does the work, and replies as that agent user, so the
   watcher thread stays free to keep taking new mentions.
   Invoked without arguments it recalls the last-used agent and projects from
@@ -32,17 +33,22 @@ The agent is identified by a **local `basecamp` CLI profile** of the same name
 - the **mention target** — the connector only fires when that user is @mentioned.
 
 The trust model is enforced by `bin/connect`, **not** by this skill: an event
-reaches STDOUT only if it is (1) authored by the **operator** (you — the CLI
-default profile, or `--operator <profile>`), (2) **either** @mentions the agent
+reaches STDOUT only if it is (1) authored by an **authorized user** — by default
+the operator alone (you — the CLI default profile, or `--operator <profile>`);
+`bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-domain`,
+`--allow-project`) can deliberately broaden this to named colleagues, an email
+domain, or the whole project membership — (2) **either** @mentions the agent
 user **or** assigns it a card/todo, and (3) is corroborated against the Basecamp
-API. Treat every STDOUT line as already-trusted — but still keep dispatched
-agents scoped to the resolved repo.
+API. The agent's own identity never authorizes, in any mode. Treat every STDOUT
+line as already-trusted — but still keep dispatched agents scoped to the
+resolved repo.
 
 There are thus **two triggers**: an `@mention` of the agent, or the operator
 **assigning** the agent a card/todo (a `*_assignment_changed` event whose
 `details.added_person_ids` includes the agent — corroborated by re-fetching the
 recording and confirming the agent is among its current `assignees`). Only the
-**operator's** assignments count.
+**operator's** assignments count, in every trust mode, unless `bin/connect` was
+started with `--allow-assignments-from-authorized`.
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -253,9 +259,9 @@ monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
 
 **c. Drop self-authored events.** If an event's recording is a comment the agent
-itself just posted, ignore it. Posting as the agent (a distinct user from the
-operator) already keeps replies from re-triggering the connector — the trust
-filter requires the *operator* to be the author — but this is cheap defense in
+itself just posted, ignore it. `bin/connect` already refuses agent-authored
+events in every trust mode, and posting as the agent (a distinct user from the
+operator) keeps replies from authorizing anyway — but this is cheap defense in
 depth.
 
 ### When the agent is assigned a card/todo
@@ -385,9 +391,8 @@ leave a registered webhook or a mounted path behind.
 - The connector never trusts the POST body's content — it re-fetches the
   recording from Basecamp before emitting. The content you see on STDOUT is the
   authoritative copy.
-- **Reply loop (defense in depth):** trust is "authored by the operator AND
-  mentions the agent." Replying as the agent profile (a distinct user) means
-  agent replies fail the operator-author check and are never re-ingested. The
-  durable belt-and-suspenders fix still belongs in `bin/connect` (don't emit
-  recordings the agent authored); until then, reply as the agent and keep the
-  agent mention out of reply bodies.
+- **Reply loop (defense in depth):** trust is "authored by an authorized user
+  AND mentions the agent," and `bin/connect` refuses agent-authored events
+  outright in every trust mode (matched by email and Person id). Replying as
+  the agent profile (a distinct user) means agent replies are never
+  re-ingested; still keep the agent mention out of reply bodies as a courtesy.
