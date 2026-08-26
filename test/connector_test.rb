@@ -10,6 +10,61 @@ class ConnectorTest < Minitest::Test
     assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo", options.types
     assert_equal [ "pull_request_review" ], options.events
     assert_nil options.port
+    assert_equal :operator, options.trust
+    assert_empty options.allowed_emails
+    assert_empty options.allowed_domains
+    refute options.allow_assignments
+  end
+
+  def test_allow_implies_allowlist_trust
+    options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow", "sam@example.com, ana@example.com"
+
+    assert_equal :allowlist, options.trust
+    assert_equal [ "marie@example.com", "sam@example.com", "ana@example.com" ], options.allowed_emails
+  end
+
+  def test_allow_domain_implies_domain_trust
+    options = parse "@clawdito", "--project", "A", "--allow-domain", "example.com"
+
+    assert_equal :domain, options.trust
+    assert_equal [ "example.com" ], options.allowed_domains
+  end
+
+  def test_trust_domain_alone_uses_the_default_domain
+    options = parse "@clawdito", "--project", "A", "--trust", "domain"
+
+    assert_equal :domain, options.trust
+    assert_empty options.allowed_domains
+  end
+
+  def test_allow_project_implies_project_trust
+    options = parse "@clawdito", "--project", "A", "--allow-project"
+
+    assert_equal :project, options.trust
+  end
+
+  def test_parses_the_assignment_opt_in
+    options = parse "@clawdito", "--project", "A", "--allow-project", "--allow-assignments-from-authorized"
+
+    assert options.allow_assignments
+  end
+
+  def test_refuses_value_flags_that_imply_different_trust_modes
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"
+    end
+  end
+
+  def test_refuses_an_explicit_trust_mode_contradicted_by_a_value_flag
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--trust", "operator", "--allow", "marie@example.com"
+    end
+  end
+
+  def test_refuses_an_allowlist_with_no_allowed_emails
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--trust", "allowlist"
+    end
   end
 
   def test_parses_github_only_without_an_agent
@@ -73,6 +128,10 @@ class ConnectorTest < Minitest::Test
   end
 
   private
+    def parse(*argv)
+      BasecampAgentConnector::Connector.parse_options(argv)
+    end
+
     def start_connector(argv, runner)
       connector = BasecampAgentConnector::Connector.new(BasecampAgentConnector::Connector.parse_options(argv))
       connector.instance_variable_set(:@command_runner, runner)

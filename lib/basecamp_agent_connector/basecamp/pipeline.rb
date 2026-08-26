@@ -1,6 +1,6 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(operator:, agent:, verifier:, emitter:, logger: $stderr)
-    @operator = operator
+  def initialize(authorizer:, agent:, verifier:, emitter:, logger: $stderr)
+    @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
@@ -18,7 +18,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
   private
     def actionable?(event)
-      event.actionable_kind? && event.authored_by?(@operator) && targets_agent?(event)
+      event.actionable_kind? && @authorizer.authorizes?(event) && targets_agent?(event)
     end
 
     def targets_agent?(event)
@@ -34,13 +34,18 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
     end
 
+    # Authorization is re-checked on the verified event: corroboration replaces
+    # the claimed creator with the one Basecamp actually recorded, and it is
+    # that authoritative author who must be authorized.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 
-      if verified
+      if verified.nil?
+        log "dropped event #{event.id}: not corroborated by Basecamp"
+      elsif @authorizer.authorizes?(verified)
         @emitter.emit(verified)
       else
-        log "dropped event #{event.id}: not corroborated by Basecamp"
+        log "dropped event #{event.id}: authoritative author is not authorized"
       end
     end
 
