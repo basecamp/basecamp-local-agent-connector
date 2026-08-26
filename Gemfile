@@ -6,6 +6,7 @@ gemspec
 
 group :development, :test do
   gem "minitest"
+  gem "minitest-mock"
   gem "rake"
   gem "rubocop", require: false
   gem "rubocop-37signals", bc: "house-style", require: false
