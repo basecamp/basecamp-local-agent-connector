@@ -1,0 +1,30 @@
+skills/basecamp-connect/SKILL.md
+  s_964922bad4d340::t_1d333128a520a4 78-79,88-93
+  s_964922bad4d340::t_14f5b51cf4d3b3 105,111-113,119-129
+  s_964922bad4d340::t_85885152c4dce5 239-241
+  s_964922bad4d340::t_da6a7b7e419973 150-154
+  s_964922bad4d340::t_439a92af902a6d 280-282
+  s_964922bad4d340::t_68f1c07566681a 355-356
+  s_964922bad4d340::t_1825a898d43a8c 203-208
+  s_964922bad4d340::t_0ec5aa33e6dc5c 94
+lib/basecamp_agent_connector/connector.rb
+  s_964922bad4d340::t_3bab6843479213 47-51
+test/connector_test.rb
+  s_964922bad4d340::t_aa655b8432f85d 70-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "fd91e6ad7ed64349d382dfa1cc466cd0443d03e0",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
