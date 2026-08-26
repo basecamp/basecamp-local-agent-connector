@@ -122,11 +122,18 @@ The skill remembers the last successful connection in
   silently falling back to operator-only) — so the store always reflects the
   last working connection. Create the directory if needed. Launch failures must
   not overwrite it.
-- **Reconstructing the command from the store:** translate `trust` back into the
-  same flags (`allow` → `--allow`, `allow_domain` → `--allow-domain`, mode
-  `project` → `--allow-project`, `allow_assignments` → the assignment opt-in). A
-  missing `trust` block means operator-only (older stores) — do not invent a
-  broader mode.
+- **Reconstructing the command from the store:** always emit **exactly one
+  `--trust <mode>`** for the stored mode, followed by its value flags (`allow` →
+  `--allow`, `allow_domain` → `--allow-domain`, `allow_assignments` → the
+  assignment opt-in; `--trust project` needs no value flag). Emitting the mode
+  explicitly makes `bare --trust domain` (empty `allow_domain`) reconstruct as
+  `domain` — using the built-in default domain — rather than silently dropping
+  to operator, and makes a value flag that disagrees with the stored mode (e.g.
+  `mode:"operator"` with a stray `allow_domain`) get **rejected by the parser**
+  rather than silently broadening trust. A missing `trust` block means
+  operator-only (older stores). If the stored block is internally inconsistent
+  and the parser rejects it, **stop and confirm with the user** — never infer a
+  mode to make it launch.
 
 Project ids are stored (not just names) because name lookup is exact-match;
 launching from the store passes ids.
