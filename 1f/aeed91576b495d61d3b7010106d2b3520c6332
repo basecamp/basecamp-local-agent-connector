@@ -1,0 +1,45 @@
+test/connector_test.rb
+  s_964922bad4d340::t_45bec920dae118 131-134
+  s_964922bad4d340::t_42357204ea5651 13-67
+lib/basecamp_agent_connector/basecamp/pipeline.rb
+  s_964922bad4d340::t_cc4928a36be44b 2-3
+  s_964922bad4d340::t_6fc81363a33f79 21
+  s_964922bad4d340::t_6815b8853f1fd7 37-39,43-45,48
+lib/basecamp_agent_connector/connector.rb
+  s_964922bad4d340::t_fbc8b0247eb965 136,141-145
+  s_964922bad4d340::t_0ff328f1448a09 14,16-17
+  s_964922bad4d340::t_e17e5a2dc93e91 178
+  s_964922bad4d340::t_977a565d6e3b51 33-37,40-42,46-55,66-92
+  s_964922bad4d340::t_19de96bc200158 146-147
+lib/basecamp_agent_connector/basecamp/authorizer.rb
+  s_964922bad4d340::t_77c63be4577e69 23-24,63,65-120
+  s_964922bad4d340::t_644434d4a834a7 1-22,25-62,64,121-122
+test/basecamp_bridge_test.rb
+  s_964922bad4d340::t_b11cac9a9381d7 32-41,43,45,51
+test/pipeline_test.rb
+  s_964922bad4d340::t_081a8ba0a08bcb 88-197,199-202,209,211
+lib/basecamp_agent_connector/basecamp/bridge.rb
+  s_964922bad4d340::t_b65dee3a49d9d6 8-9
+  s_964922bad4d340::t_71b447fc992526 28
+  s_964922bad4d340::t_054bd982be0b38 50
+test/test_helper.rb
+  s_964922bad4d340::t_5f0f4f0cca1ea9 115-120
+test/authorizer_test.rb
+  s_964922bad4d340::t_f3243487f9dcfe 1-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "1faeed91576b495d61d3b7010106d2b3520c6332",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
