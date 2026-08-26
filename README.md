@@ -232,15 +232,34 @@ Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can
 post in a project, and every event is re-fetched from the Basecamp API before it
 acts — a person who cannot post there cannot produce a corroborated recording.
-Authors Basecamp marks as **client** users are refused; note the check reads the
-`client` flag on the corroborated person, so it is only as strong as that flag's
-presence in the API payload.
+
+Three limits of `project` mode are worth stating plainly, because they matter
+only against the forged-POST-with-leaked-secret-path threat (a normal Basecamp
+delivery is unaffected):
+
+- **Corroboration proves the recording exists with that author, not that it
+  lives in a *watched* project.** The API re-fetch follows the URL in the
+  payload, and the operator's CLI can read recordings beyond the watched
+  projects. So `project` mode trusts any corroborated author in *any* project
+  the operator's account can see, not strictly the watched ones. Prefer
+  `allowlist`/`domain` when you need the trust set pinned to specific people.
+- **Client exclusion is only as strong as the `client` flag in the API
+  payload.** Authors Basecamp marks as client users are refused, but the check
+  reads `creator.client` on the corroborated recording; if a recording type
+  omits that field, a client author is not caught. The flag is not
+  attacker-chosen (it comes from Basecamp's authoritative copy), but its absence
+  fails open.
 
 **Assignments are operator-only in every mode** unless
 `--allow-assignments-from-authorized` opts the mode's authors in. An assignment
-is corroborated by the agent really being among the card's assignees, but the
-*assigner's* identity is not independently verifiable — bear that in mind before
-opting in.
+is corroborated by the agent really being among the card's assignees — but the
+*assigner's* identity is **not** independently verifiable: the verifier confirms
+live assignee state and preserves the event's claimed creator. Against a forged
+POST on a leaked secret path, that means the "operator-only" guarantee for the
+assignment trigger rests on the secret path, not on corroboration, in a way the
+mention trigger does not. Bear that in mind before opting assignments in, and
+prefer the mention trigger when the author must be cryptographically pinned to
+the recording.
 
 ---
 

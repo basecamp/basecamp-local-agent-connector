@@ -34,18 +34,24 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
     end
 
-    # Authorization is re-checked on the verified event: corroboration replaces
-    # the claimed creator with the one Basecamp actually recorded, and it is
-    # that authoritative author who must be authorized.
+    # Both trust predicates are re-checked on the verified event, not just the
+    # claimed payload. Corroboration replaces the pre-filter's forgeable POST
+    # fields with what Basecamp actually recorded — the recording's real creator
+    # and its real content — so it is the authoritative author who must be
+    # authorized and the authoritative recording that must target the agent. A
+    # forged payload that pairs a fake mention with a real recording the agent
+    # was never mentioned in is therefore dropped here, not emitted.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 
       if verified.nil?
         log "dropped event #{event.id}: not corroborated by Basecamp"
-      elsif @authorizer.authorizes?(verified)
-        @emitter.emit(verified)
-      else
+      elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
+      elsif !targets_agent?(verified)
+        log "dropped event #{event.id}: authoritative recording does not target the agent"
+      else
+        @emitter.emit(verified)
       end
     end
 

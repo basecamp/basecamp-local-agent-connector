@@ -95,6 +95,19 @@ class PipelineTest < Minitest::Test
     assert_match(/authoritative author is not authorized/, @logs.string)
   end
 
+  def test_drops_a_forged_mention_when_the_authoritative_recording_has_none
+    # The POST claims a mention of the agent (passing the pre-filter) but points
+    # at a real operator recording that never mentioned the agent. The verified
+    # recording is authoritative and carries no mention, so it must not emit.
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>a plain operator note, no mention</p>"))
+
+    pipeline(runner).process(sample_payload)
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+  end
+
   def test_allowlist_emits_for_an_allowed_author
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
