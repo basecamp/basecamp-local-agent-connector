@@ -392,7 +392,7 @@ is not tidiness: when these tables moved projects an agent briefed with a
 remembered id created a card and posted twelve comments into a retired board and
 read them back clean, because a moved card's old id **resolves on read** while
 writes against it return `{"id": null}` inside an ok-shaped envelope. The config
-is written once by mobile-alerts `psp-intake/scripts/psp-setup` and verified with `psp-board.py --check`.
+is written once by mobile-alerts `psp/bin/psp-setup` and verified with `psp-board.py --check`.
 
 | Table | Purpose |
 |---|---|
@@ -896,6 +896,22 @@ mine, and it is the exact sentence that preceded an hour of nothing.
 **And sweep the board on a cadence, because restarting finished agents does not find
 the effort nobody ever started.** Every card in a working column is waiting on a
 named person or has a live agent id; a card that is neither gets named out loud.
+
+**Run the sweep, do not eyeball it** (Fernando's ruling 2026-08-26):
+
+```bash
+python3 ~/.claude/hooks/psp-cards-moving.py --grace 25
+```
+
+It applies the rule above per card — who spoke last decides whose ball it is — and
+it reads the launch record on this machine, so an agent that was dispatched and
+died shows up as silent rather than as busy. It exits non-zero when a card is
+neither. **`--working` is the one flag that can make it lie**: it used to take bare
+card ids, and six typed numbers turned eight real findings into a green run
+(defects row 4555). It now requires `--working-because "<reason>"` of at least
+thirty characters, prints that reason verbatim above the verdict, and labels the
+run ASSERTED rather than OK. If you cannot say which agent is on a card and how
+you know it is alive, that card is the finding.
 
 Eight efforts stalled in one evening, and Fernando found all eight himself:
 
