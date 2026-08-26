@@ -50,7 +50,7 @@ class BasecampAgentConnector::Connector
       parser.on("--allow-domain DOMAIN", "Trust any author whose email is at this domain (repeatable or comma-separated; " \
         "implies --trust domain; --trust domain alone defaults to #{BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN})") \
         { |value| allowed_domains.concat(comma_list(value)) }
-      parser.on("--allow-project", "Trust any corroborated member of the watched projects (implies --trust project)") { allow_project = true }
+      parser.on("--allow-project", "Trust any corroborated non-client author of a recording the operator can read (implies --trust project)") { allow_project = true }
       parser.on("--allow-assignments-from-authorized", "Let any authorized author trigger via assignment too " \
         "(default: assignments are operator-only in every mode)") { allow_assignments = true }
       parser.on("--types TYPES", "Comma-separated Basecamp event types") { |value| types = value }

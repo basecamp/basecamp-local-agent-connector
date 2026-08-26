@@ -151,8 +151,10 @@ class PipelineTest < Minitest::Test
   def test_project_trust_ignores_an_event_authored_by_the_agent_itself
     runner = FakeCommandRunner.new
 
+    # client=>false so the drop is the Person-id self-exclusion guard, not the
+    # fail-closed client check masking a regression in it.
     pipeline(runner, authorizer: authorizer(trust: :project))
-      .process(sample_payload("creator" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }))
+      .process(sample_payload("creator" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com", "client" => false }))
 
     assert_empty @output.string
     assert_empty runner.commands

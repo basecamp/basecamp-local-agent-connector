@@ -61,8 +61,9 @@ class AuthorizerTest < Minitest::Test
     project = authorizer(trust: :project)
 
     refute project.authorizes?(mention_by(AGENT))
-    # matched by Person id even when the email claims someone else
-    refute project.authorizes?(mention_by("id" => 200, "email_address" => "someone@example.com"))
+    # matched by Person id even when the email claims someone else; client=>false
+    # so it is the self-exclusion guard, not the fail-closed client check, that drops it
+    refute project.authorizes?(mention_by("id" => 200, "email_address" => "someone@example.com", "client" => false))
   end
 
   def test_domain_mode_authorizes_matching_domains_only

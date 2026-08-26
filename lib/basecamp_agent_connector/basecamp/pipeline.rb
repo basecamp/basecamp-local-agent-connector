@@ -41,10 +41,10 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # author who must be authorized and the authoritative recording that must
     # target the agent; a forged payload pairing a fake mention with a real
     # recording the agent was never mentioned in is dropped here, not emitted.
-    # For an assignment the verifier corroborates the agent's live assignee
+    # For an assignment the verifier corroborates the agent's current assignee
     # state but keeps the claimed assigner, so this re-check re-tests that same
-    # claimed identity (the verifier, not this method, is what proves the
-    # assignment real).
+    # claimed identity (the verifier confirms the live assignee state, not that
+    # the claimed assigner is who performed the assignment).
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 

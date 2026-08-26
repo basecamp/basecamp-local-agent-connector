@@ -175,9 +175,12 @@ What `bin/connect` has in place, at a glance:
 - **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
   ingress is the Tailscale Funnel over HTTPS.
 - **Replay de-duplication** — events are de-duplicated by id within a run.
-- **No reply loop** — replies post as the agent (a distinct user), so they fail
-  the operator-author check and can't re-trigger the connector; startup warns if
-  the agent and operator resolve to the same user.
+- **No reply loop** — the agent's own identity never authorizes in any mode (an
+  explicit guard on email and Person id), so replies posted as the agent can't
+  re-trigger the connector even under `domain`/`project` trust where the agent
+  shares the domain or is a project member; in operator mode they also simply
+  fail the author check. Startup warns if the agent and operator resolve to the
+  same user.
 - **Ephemeral exposure** — the funnel and per-project webhooks exist only while
   the process runs and are torn down on exit.
 
@@ -289,7 +292,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
-| `--allow-project` | Trust any corroborated member of the watched projects. Implies `--trust project`. | off |
+| `--allow-project` | Trust any corroborated non-client author of a recording the operator's account can read. Implies `--trust project`. | off |
 | `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
 | `--types` | Comma-separated Basecamp event types to subscribe to. | `Comment,Message,Kanban::Card,Kanban::Step,Todo` |
 | `--port` | Local port for the webhook server. | an unused high port |
