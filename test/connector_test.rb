@@ -67,6 +67,18 @@ class ConnectorTest < Minitest::Test
     end
   end
 
+  def test_refuses_a_repeated_trust_flag_with_different_modes
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--trust", "operator", "--trust", "project"
+    end
+  end
+
+  def test_allows_a_repeated_trust_flag_with_the_same_mode
+    options = parse "@clawdito", "--project", "A", "--trust", "project", "--trust", "project"
+
+    assert_equal :project, options.trust
+  end
+
   def test_parses_github_only_without_an_agent
     options = BasecampAgentConnector::Connector.parse_options([ "--repo", "basecamp/bc3" ])
 

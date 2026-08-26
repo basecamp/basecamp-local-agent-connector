@@ -44,7 +44,11 @@ class BasecampAgentConnector::Connector
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--trust MODE", TRUST_MODES, "Who may trigger the agent: #{TRUST_MODES.join(", ")} (default: operator only; " \
-        "value flags below imply their mode)") { |value| trust = value.to_sym }
+        "value flags below imply their mode)") do |value|
+        raise ArgumentError, "--trust given twice with different modes (#{trust} then #{value})" if !trust.nil? && trust != value.to_sym
+
+        trust = value.to_sym
+      end
       parser.on("--allow EMAIL", "Also trust this author email (repeatable or comma-separated; implies --trust allowlist)") \
         { |value| allowed_emails.concat(comma_list(value)) }
       parser.on("--allow-domain DOMAIN", "Trust any author whose email is at this domain (repeatable or comma-separated; " \

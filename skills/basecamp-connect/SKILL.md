@@ -75,6 +75,8 @@ run `bin/setup` (see the repo README).
 /basecamp-connect @Clawdito --project "BC5 Calendar"                 # one project
 /basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY    # several
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
+/basecamp-connect @Clawdito --project "BC5 Calendar" --allow marie@37signals.com  # + a named coworker
+/basecamp-connect @Clawdito --project "BC5 Calendar" --allow-domain 37signals.com # any 37signals author
 ```
 
 `<agent>` is a real Basecamp user backed by a local CLI profile (the leading `@`
@@ -82,6 +84,13 @@ is optional; it's lowercased to the profile name). `--project` is **required**
 (Basecamp has no global webhook) — pass a name, URL, or ID. The connector
 **validates the agent profile exists locally at startup** and aborts with setup
 guidance if not.
+
+**Who may trigger** defaults to the operator alone. Broaden it deliberately with
+the trust flags — `--allow <email>`, `--allow-domain <domain>`, `--allow-project`,
+or explicit `--trust <mode>` — and pass them straight through to `bin/connect`;
+the bridge enforces them and logs the active set. See the connector README's
+"Trust modes" for the full semantics and the agent-self / assignments-operator-only
+safeguards.
 
 ### Stored connection params (no-args invocation)
 
@@ -93,21 +102,31 @@ The skill remembers the last successful connection in
   "agent": "clawdito",
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
+  "trust": { "mode": "domain", "allow": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false },
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
 
 - **Invoked without arguments:** read that file and **confirm the stored params
-  with the user before starting** — show the agent and the project list and ask
-  whether to go with them, adjust them (add/drop projects, different agent), or
+  with the user before starting** — show the agent, the project list, **and the
+  trust configuration (mode + the concrete allowed set)** and ask whether to go
+  with them, adjust them (add/drop projects, different agent, change trust), or
   start fresh. Never launch on stored params silently. If the file doesn't
   exist, ask for the agent and projects as usual.
 - **Invoked with arguments:** arguments win; the store is not consulted.
 - **After every successful registration** (the `Listening for mentions of …`
   line), write the params that were actually used back to the file — agent
-  profile, operator override (or null), and the projects with their resolved
-  ids and names — so the store always reflects the last working connection.
-  Create the directory if needed. Launch failures must not overwrite it.
+  profile, operator override (or null), the projects with their resolved ids and
+  names, **and the trust configuration** (the mode and its value flags, so a
+  later no-argument launch reconstructs the same trust boundary rather than
+  silently falling back to operator-only) — so the store always reflects the
+  last working connection. Create the directory if needed. Launch failures must
+  not overwrite it.
+- **Reconstructing the command from the store:** translate `trust` back into the
+  same flags (`allow` → `--allow`, `allow_domain` → `--allow-domain`, mode
+  `project` → `--allow-project`, `allow_assignments` → the assignment opt-in). A
+  missing `trust` block means operator-only (older stores) — do not invent a
+  broader mode.
 
 Project ids are stored (not just names) because name lookup is exact-match;
 launching from the store passes ids.
@@ -128,9 +147,11 @@ agent/bot account):
 basecamp auth login --profile clawdito
 ```
 
-If the agent profile resolves to the **same** user as the operator, replies would
-re-trigger the connector — `bin/connect` warns about this at startup. Use a
-distinct bot account for the agent.
+If the agent profile resolves to the **same** user as the operator, **nothing
+will trigger**: the connector refuses the agent's own identity in every trust
+mode, so if the agent *is* the operator, the operator's own mentions are dropped
+too. `bin/connect` warns about this at startup. Use a distinct bot account for
+the agent.
 
 ## Procedure
 
@@ -179,8 +200,12 @@ Each STDOUT line is one trusted event as NDJSON:
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}}}
 ```
 
-`creator` is the operator (you). The mention of the agent lives in
-`recording.content` as a mention attachment. STDERR carries diagnostics
+`creator` is the **triggering author** — the person whose mention/assignment
+drove this event. In the default operator-only mode that is always you; under a
+broadened trust mode (`--allow`, `--allow-domain`, `--allow-project`) it may be
+an authorized coworker instead. Treat `creator` as *the requester* — that is who
+to @mention on failure — not as "the operator." The mention of the agent lives
+in `recording.content` as a mention attachment. STDERR carries diagnostics
 (dropped/uncorroborated events, registration notices) — surface them but don't
 act on them.
 
@@ -211,7 +236,9 @@ everything it needs to finish **without the front thread**:
   rest of the raw HTML (links, other mentions) intact;
 - the **recording** URL/id and its parent URL;
 - the **agent profile name** (its reply identity);
-- the **operator's** name/id (to @mention on failure).
+- the **requester's** name/id — i.e. the event `creator` (to @mention on
+  failure). This is the triggering author, who under a broadened trust mode is
+  not necessarily the operator.
 
 Instruct that background agent to, in order:
 
@@ -250,7 +277,9 @@ Instruct that background agent to, in order:
    ```
    - **Success** — post the results where the mention was written.
    - **Failure** (it errored or couldn't finish) — post a short error summary and
-     **@mention the operator** so it surfaces as a notification.
+     **@mention the requester** (the event `creator`) so it surfaces as a
+     notification for whoever asked — the operator in the default mode, or the
+     authorized coworker who triggered it under a broadened mode.
    - **Never put the agent mention in a reply body.**
 
 Because the background agent gathers its own context and posts its own reply, the
@@ -323,8 +352,8 @@ green** — getting CI green is part of finishing the task, not a follow-up:
    what local passed).
 5. **Only now reply "done"** on Basecamp, with the PR link. Never communicate
    success on a red or unchecked branch. If you cannot get it green after a
-   reasonable effort, reply with **what is failing** and @mention the operator —
-   not a false "done."
+   reasonable effort, reply with **what is failing** and @mention the requester
+   (the event `creator`) — not a false "done."
 
 #### Review / approval loop (GitHub webhook)
 
