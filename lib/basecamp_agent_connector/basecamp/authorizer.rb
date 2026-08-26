@@ -88,12 +88,15 @@ end
 
 # Any corroborated author: only project members can post in a project, and the
 # verifier confirms the recording really exists with that author, so
-# corroboration is the membership proof. Client (external) users are excluded
-# when Basecamp marks the person as one.
+# corroboration is the membership proof. Client (external) users are excluded,
+# and the exclusion fails *closed*: the corroborated recording must positively
+# say the author is not a client (`creator.client == false`). An absent or
+# non-boolean flag is treated as untrusted rather than assumed employee, so a
+# recording representation that omits it cannot slip a client author through.
 class BasecampAgentConnector::Basecamp::Authorizer::Project < BasecampAgentConnector::Basecamp::Authorizer
   private
     def authorized_author?(event)
-      !event.creator_id.nil? && event.creator["client"] != true
+      !event.creator_id.nil? && event.creator["client"] == false
     end
 
     def mode_description

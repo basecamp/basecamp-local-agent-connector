@@ -165,6 +165,10 @@ What `bin/connect` has in place, at a glance:
   the agent's Person id encoded in the mention SGID.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
+  For a mention the fetched recording carries the authoritative creator *and*
+  content, so both the author and the mention are re-checked against it. An
+  assignment corroborates the agent's live assignee state but keeps the POST's
+  claimed assigner — see the assignment caveat under [Trust modes](#trust-modes).
 - **Secret webhook path** — the server accepts only `POST /bc5/<secret>`, where
   `<secret>` is a fresh 128-bit random token generated per run; every other path
   returns 404.
@@ -188,22 +192,28 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    CLI default profile, or `--operator <profile>`), matched by email: a third
    party who can comment in the project cannot make your agent do anything.
    Trust modes (below) can deliberately extend this to named colleagues, a
-   domain, or the whole project membership — and the check is applied **twice**:
-   once on the claimed webhook payload as a cheap pre-filter, and again on the
-   corroborated event, so authorization binds to the author Basecamp actually
-   recorded, never to forgeable POST text.
+   domain, or the whole project membership — and for a **mention** the check is
+   applied **twice**: once on the claimed webhook payload as a cheap pre-filter,
+   and again on the corroborated event, so authorization binds to the author
+   Basecamp actually recorded, never to forgeable POST text. (An **assignment**
+   corroborates the agent's assignee state but not the assigner — see the
+   assignment caveat under [Trust modes](#trust-modes).)
 2. **@mentions the agent.** `recording.content` must contain a real Basecamp
    mention of the agent user — a mention *attachment*
    (`application/vnd.basecamp.mention`) naming the agent, not just loose text
-   that happens to contain the name.
+   that happens to contain the name. This too is re-checked on the corroborated
+   recording, so a forged mention paired with a real un-mentioning recording is
+   dropped.
 3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
-   API and confirmed (it exists, with the claimed creator). The funnel URL is
-   public and Basecamp sends no signature, so a forged POST is possible — but it
-   can’t survive API corroboration. A random secret URL path is a cheap first
-   gate on top.
+   API and confirmed. For a mention that means it exists **with the claimed
+   creator and the claimed mention** — so a forged POST cannot survive. For an
+   assignment it means the agent is really among the recording's current
+   assignees; the assigner's identity is not independently corroborated, so
+   there the secret URL path — a fresh 128-bit token per run — is the gate that
+   stops a forged operator-assignment, not corroboration.
 
-The content acted on is the **authoritative copy fetched from Basecamp**, never
-the raw POST body.
+For a mention, the content acted on is the **authoritative copy fetched from
+Basecamp**, never the raw POST body.
 
 **No reply loop.** Replies are posted *as the agent*, a different user than the
 operator. The agent's own identity **never authorizes, in any mode** — an
@@ -226,29 +236,26 @@ concrete allowed set so it is never implicit.
 | `operator` *(default)* | You only. No flags = exactly this. | — |
 | `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) |
 | `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default |
-| `project` | Any corroborated member of the watched projects (client users excluded). | `--allow-project` or `--trust project` |
+| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` |
 
 Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can
 post in a project, and every event is re-fetched from the Basecamp API before it
 acts — a person who cannot post there cannot produce a corroborated recording.
+**Client (external) users are excluded fail-closed**: the corroborated recording
+must positively report `creator.client == false`; an absent or non-boolean flag
+is treated as untrusted, so a recording representation that omits it cannot slip
+a client author through.
 
-Three limits of `project` mode are worth stating plainly, because they matter
-only against the forged-POST-with-leaked-secret-path threat (a normal Basecamp
-delivery is unaffected):
-
-- **Corroboration proves the recording exists with that author, not that it
-  lives in a *watched* project.** The API re-fetch follows the URL in the
-  payload, and the operator's CLI can read recordings beyond the watched
-  projects. So `project` mode trusts any corroborated author in *any* project
-  the operator's account can see, not strictly the watched ones. Prefer
-  `allowlist`/`domain` when you need the trust set pinned to specific people.
-- **Client exclusion is only as strong as the `client` flag in the API
-  payload.** Authors Basecamp marks as client users are refused, but the check
-  reads `creator.client` on the corroborated recording; if a recording type
-  omits that field, a client author is not caught. The flag is not
-  attacker-chosen (it comes from Basecamp's authoritative copy), but its absence
-  fails open.
+One limit of `project` mode is worth stating plainly, because it matters only
+against the forged-POST-with-leaked-secret-path threat (a normal Basecamp
+delivery is unaffected): **corroboration proves the recording exists with that
+author, not that it lives in a *watched* project.** The API re-fetch follows the
+URL in the payload, and the operator's CLI can read recordings beyond the
+watched projects. So `project` mode trusts any corroborated non-client author in
+*any* project the operator's account can see, not strictly the watched ones.
+Prefer `allowlist`/`domain` when you need the trust set pinned to specific
+people.
 
 **Assignments are operator-only in every mode** unless
 `--allow-assignments-from-authorized` opts the mode's authors in. An assignment

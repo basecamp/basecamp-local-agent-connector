@@ -1,10 +1,10 @@
 require "test_helper"
 
 class AuthorizerTest < Minitest::Test
-  OPERATOR = { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" }
-  COLLEAGUE = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
-  STRANGER = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
-  AGENT = { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }
+  OPERATOR = { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com", "client" => false }
+  COLLEAGUE = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com", "client" => false }
+  STRANGER = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net", "client" => false }
+  AGENT = { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com", "client" => false }
 
   def test_operator_mode_authorizes_only_the_operator
     assert authorizer.authorizes?(mention_by(OPERATOR))
@@ -45,6 +45,16 @@ class AuthorizerTest < Minitest::Test
 
     refute project.authorizes?(mention_by(COLLEAGUE.merge("client" => true)))
     refute project.authorizes?(mention_by({}))
+  end
+
+  def test_project_mode_fails_closed_when_the_client_flag_is_absent
+    project = authorizer(trust: :project)
+
+    # No leaked secret path needed: if the corroborated recording omits the
+    # client flag, the author is untrusted rather than assumed an employee.
+    refute project.authorizes?(mention_by("id" => 300, "email_address" => "marie@example.com"))
+    refute project.authorizes?(mention_by(COLLEAGUE.merge("client" => nil)))
+    refute project.authorizes?(mention_by(COLLEAGUE.merge("client" => "false")))
   end
 
   def test_project_mode_never_authorizes_the_agent

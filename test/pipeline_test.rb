@@ -210,7 +210,7 @@ class PipelineTest < Minitest::Test
 
   private
     def colleague
-      { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
+      { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com", "client" => false }
     end
 
     def corroborating_runner
