@@ -1,0 +1,33 @@
+lib/basecamp_agent_connector/basecamp/bridge.rb
+  s_964922bad4d340::t_aa949ed8c9cc6b 7-12,14-19,23,27,37-48,55-64,75,79-82,84-99,102-112
+README.md
+  s_964922bad4d340::t_773247c755f0af 297-298,370-373
+docs/built-in-support.md
+  s_964922bad4d340::t_12bbc12feeb3c0 29
+docs/spec.md
+  s_964922bad4d340::t_b129623d7c6bf5 149-153,346
+lib/basecamp_agent_connector/connector.rb
+  s_964922bad4d340::t_2bdddde441763b 12-14,19,40,45,63-69,82-83,151
+skills/basecamp-connect/SKILL.md
+  s_964922bad4d340::t_f8770d4087d8c7 326-350
+test/basecamp_bridge_test.rb
+  s_964922bad4d340::t_3b018d6a912386 42-90,92,97,99
+test/connector_test.rb
+  s_964922bad4d340::t_c3c582be5118af 10,52-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "e2026d59fdb238ab6166903d3fc6609cf555cf2a",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
