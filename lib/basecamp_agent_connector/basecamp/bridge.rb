@@ -5,8 +5,8 @@ require "securerandom"
 # its secret path, registers a webhook per project against the shared funnel, and
 # turns each delivery into a verified, emitted event.
 class BasecampAgentConnector::Basecamp::Bridge
-  def initialize(operator:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr)
-    @operator = operator
+  def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr)
+    @authorizer = authorizer
     @agent = agent
     @projects = projects
     @types = types
@@ -25,6 +25,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     url = "#{base_url}#{path}"
     @webhooks.register_all(projects: @projects, url: url, types: @types)
     log "Listening for mentions of @#{@agent.name || @agent.profile} on #{@projects.length} project(s) at #{url}"
+    log "Trust: #{@authorizer.description}"
   end
 
   def handler
@@ -46,7 +47,7 @@ class BasecampAgentConnector::Basecamp::Bridge
   private
     def pipeline
       @pipeline ||= BasecampAgentConnector::Basecamp::Pipeline.new \
-        operator: @operator,
+        authorizer: @authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent),
         emitter: @emitter

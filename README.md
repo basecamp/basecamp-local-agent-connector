@@ -149,22 +149,38 @@ The bridge is dumb-and-safe; the driver is smart-and-contextual. You can run
 
 What `bin/connect` has in place, at a glance:
 
-- **Operator-only triggering** — an event acts only when its creator is the
-  operator (the CLI default profile, or `--operator <profile>`), matched by email.
+- **Operator-only triggering by default** — with no trust flags, an event acts
+  only when its creator is the operator (the CLI default profile, or
+  `--operator <profile>`), matched by email. Trust can be **deliberately
+  broadened** per run — see [Trust modes](#trust-modes) below.
+- **Agent-self exclusion** — the agent's own identity never authorizes, in any
+  mode, matched by email *and* Person id. Even when trust is broadened to a
+  domain or project the agent belongs to, its own posts cannot re-trigger it.
+- **Assignments stay operator-only** — assigning the agent a card/todo is
+  higher-privilege (the assigner's identity is not corroborated), so broadened
+  modes apply to mentions only unless `--allow-assignments-from-authorized`
+  explicitly opts assignments in.
 - **Mention gating** — the recording must contain a real Basecamp mention
   *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
   the agent's Person id encoded in the mention SGID.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
+  For a mention the fetched recording carries the authoritative creator *and*
+  content, so both the author and the mention are re-checked against it. An
+  assignment corroborates the agent's live assignee state but keeps the POST's
+  claimed assigner — see the assignment caveat under [Trust modes](#trust-modes).
 - **Secret webhook path** — the server accepts only `POST /bc5/<secret>`, where
   `<secret>` is a fresh 128-bit random token generated per run; every other path
   returns 404.
 - **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
   ingress is the Tailscale Funnel over HTTPS.
 - **Replay de-duplication** — events are de-duplicated by id within a run.
-- **No reply loop** — replies post as the agent (a distinct user), so they fail
-  the operator-author check and can't re-trigger the connector; startup warns if
-  the agent and operator resolve to the same user.
+- **No reply loop** — the agent's own identity never authorizes in any mode (an
+  explicit guard on email and Person id), so replies posted as the agent can't
+  re-trigger the connector even under `domain`/`project` trust where the agent
+  shares the domain or is a project member; in operator mode they also simply
+  fail the author check. Startup warns if the agent and operator resolve to the
+  same user.
 - **Ephemeral exposure** — the funnel and per-project webhooks exist only while
   the process runs and are torn down on exit.
 
@@ -175,26 +191,85 @@ What `bin/connect` has in place, at a glance:
 A webhook payload is attacker-influenceable text that flows into an agent which
 can run commands. `bin/connect` emits an event only when **all** of these hold:
 
-1. **Authored by the operator.** The event creator must be *you* (the CLI default
-   profile, or `--operator <profile>`), matched by email. A third party who can
-   comment in the project cannot make your agent do anything.
+1. **Authored by an authorized user.** By default that means *you* alone (the
+   CLI default profile, or `--operator <profile>`), matched by email: a third
+   party who can comment in the project cannot make your agent do anything.
+   Trust modes (below) can deliberately extend this to named colleagues, a
+   domain, or the whole project membership — and for a **mention** the check is
+   applied **twice**: once on the claimed webhook payload as a cheap pre-filter,
+   and again on the corroborated event, so authorization binds to the author
+   Basecamp actually recorded, never to forgeable POST text. (An **assignment**
+   corroborates the agent's assignee state but not the assigner — see the
+   assignment caveat under [Trust modes](#trust-modes).)
 2. **@mentions the agent.** `recording.content` must contain a real Basecamp
    mention of the agent user — a mention *attachment*
    (`application/vnd.basecamp.mention`) naming the agent, not just loose text
-   that happens to contain the name.
+   that happens to contain the name. This too is re-checked on the corroborated
+   recording, so a forged mention paired with a real un-mentioning recording is
+   dropped.
 3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
-   API and confirmed (it exists, with the claimed creator). The funnel URL is
-   public and Basecamp sends no signature, so a forged POST is possible — but it
-   can’t survive API corroboration. A random secret URL path is a cheap first
-   gate on top.
+   API and confirmed. For a mention that means it exists **with the claimed
+   creator and the claimed mention** — so a forged POST cannot survive. For an
+   assignment it means the agent is really among the recording's current
+   assignees; the assigner's identity is not independently corroborated, so
+   there the secret URL path — a fresh 128-bit token per run — is the gate that
+   stops a forged operator-assignment, not corroboration.
 
-The content acted on is the **authoritative copy fetched from Basecamp**, never
-the raw POST body.
+For a mention, the content acted on is the **authoritative copy fetched from
+Basecamp**, never the raw POST body.
 
 **No reply loop.** Replies are posted *as the agent*, a different user than the
-operator. Because the trust filter requires the *operator* to be the author, the
-agent’s own replies can never re-trigger the connector. (`bin/connect` warns at
-startup if the agent and operator resolve to the same Basecamp user.)
+operator. The agent's own identity **never authorizes, in any mode** — an
+explicit guard, matched by email and Person id, refuses agent-authored events
+before any mode is consulted. So even under `--trust domain` (where the agent's
+email may share the domain) or `--trust project` (where the agent is a member),
+its own replies can never re-trigger the connector. (`bin/connect` warns at
+startup if the agent and operator resolve to the same Basecamp user — a
+configuration in which nothing can trigger.)
+
+### Trust modes
+
+Who may drive the agent is a per-run, explicit choice. The agent acts with the
+operator's full machine authority, so broadening trust means handing that
+authority to more people — the startup log prints the active mode and the
+concrete allowed set so it is never implicit.
+
+| Mode | Who triggers | CLI |
+|------|--------------|-----|
+| `operator` *(default)* | You only. No flags = exactly this. | — |
+| `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) |
+| `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default |
+| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` |
+
+Every mode implicitly includes the operator and excludes the agent itself. In
+`project` mode, membership is proven by corroboration: only project members can
+post in a project, and every event is re-fetched from the Basecamp API before it
+acts — a person who cannot post there cannot produce a corroborated recording.
+**Client (external) users are excluded fail-closed**: the corroborated recording
+must positively report `creator.client == false`; an absent or non-boolean flag
+is treated as untrusted, so a recording representation that omits it cannot slip
+a client author through.
+
+One limit of `project` mode is worth stating plainly, because it matters only
+against the forged-POST-with-leaked-secret-path threat (a normal Basecamp
+delivery is unaffected): **corroboration proves the recording exists with that
+author, not that it lives in a *watched* project.** The API re-fetch follows the
+URL in the payload, and the operator's CLI can read recordings beyond the
+watched projects. So `project` mode trusts any corroborated non-client author in
+*any* project the operator's account can see, not strictly the watched ones.
+Prefer `allowlist`/`domain` when you need the trust set pinned to specific
+people.
+
+**Assignments are operator-only in every mode** unless
+`--allow-assignments-from-authorized` opts the mode's authors in. An assignment
+is corroborated by the agent really being among the card's assignees — but the
+*assigner's* identity is **not** independently verifiable: the verifier confirms
+live assignee state and preserves the event's claimed creator. Against a forged
+POST on a leaked secret path, that means the "operator-only" guarantee for the
+assignment trigger rests on the secret path, not on corroboration, in a way the
+mention trigger does not. Bear that in mind before opting assignments in, and
+prefer the mention trigger when the author must be cryptographically pinned to
+the recording.
 
 ---
 
@@ -214,7 +289,12 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `@AGENT` | Agent user / local `basecamp` profile to watch for and reply as. Leading `@` optional; lowercased to the profile name. **Required**, validated at startup. | — |
 | `--project` | Basecamp project name, URL, or ID. **Required**, repeatable. | — |
 | `--operator` | Profile whose user is allowed to trigger. | CLI default profile |
-| `--types` | Comma-separated Basecamp event types to subscribe to. | `Comment,Message,Kanban::Card` |
+| `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
+| `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
+| `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
+| `--allow-project` | Trust any corroborated non-client author of a recording the operator's account can read. Implies `--trust project`. | off |
+| `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
+| `--types` | Comma-separated Basecamp event types to subscribe to. | `Comment,Message,Kanban::Card,Kanban::Step,Todo` |
 | `--port` | Local port for the webhook server. | an unused high port |
 
 **What it does, in order:**
@@ -234,9 +314,10 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 4. **Register webhooks.** Creates one webhook per project (with retry on transient
    failures), recording their IDs for cleanup.
 5. **Listen.** For each delivery: respond `200` immediately, then off the hot
-   path — pre-filter (operator-authored + mentions agent + actionable kind),
-   de-duplicate by event id, verify against the Basecamp API, and **print the
-   trusted event as one line of NDJSON** to STDOUT. Dropped/diagnostic lines go
+   path — pre-filter (authorized author + mentions agent + actionable kind),
+   de-duplicate by event id, verify against the Basecamp API, re-check that the
+   **corroborated** author is authorized, and **print the trusted event as one
+   line of NDJSON** to STDOUT. Dropped/diagnostic lines go
    to STDERR.
 
 **Emitted event (STDOUT, one JSON object per line):**
@@ -280,6 +361,8 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   --profile <agent>`).
 - **Operator** — the user allowed to trigger; defaults to the CLI default
   profile, override with `--operator <profile>`. Must differ from the agent.
+- **Trust mode** — who beyond the operator may trigger; defaults to nobody.
+  See [Trust modes](#trust-modes).
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)
   maps Basecamp project-name tokens to local repo paths. The skill uses it to
   decide where to run each agent; if nothing matches, it asks you.

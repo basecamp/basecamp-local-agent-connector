@@ -29,15 +29,25 @@ class BasecampBridgeTest < Minitest::Test
     assert_equal 1, runner.commands_matching(/webhooks delete/).length
   end
 
+  def test_register_logs_the_active_trust_mode
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    logs = StringIO.new
+
+    bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
+
+    assert_match(/Trust: operator only \(operator@example\.com\); assignments: operator only/, logs.string)
+  end
+
   private
-    def bridge(runner, projects: [ "A" ])
+    def bridge(runner, projects: [ "A" ], logger: StringIO.new)
       BasecampAgentConnector::Basecamp::Bridge.new \
-        operator: operator_identity,
+        authorizer: authorizer,
         agent: agent_identity,
         projects: projects,
         types: "Comment",
         basecamp_cli: build_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: StringIO.new),
-        logger: StringIO.new
+        logger: logger
     end
 end
