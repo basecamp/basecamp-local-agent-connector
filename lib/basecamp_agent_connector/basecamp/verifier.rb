@@ -10,9 +10,14 @@ class BasecampAgentConnector::Basecamp::Verifier
   # rejection and stays one. These are the failures that mean the question was
   # never asked -- the profile's credentials read as missing while the token is
   # valid for another fortnight, or the network dropped underneath the call.
-  UNREACHABLE = /not authenticated|credentials not found|no such profile|
-                 timed out|timeout|connection (refused|reset)|could not connect|
-                 network is (down|unreachable)|temporarily unavailable|
+  # Spaces are written `\s` because `/x` discards literal whitespace: every
+  # multi-word phrase here was dead from the day it was written, and only the one
+  # single-word alternative and the status codes ever matched. What that cost is
+  # exactly what this class exists to prevent -- a lost credential race read as a
+  # forgery, dropped, and recorded as handled.
+  UNREACHABLE = /not\sauthenticated|credentials\snot\sfound|no\ssuch\sprofile|
+                 timed\sout|timeout|connection\s(refused|reset)|could\snot\sconnect|
+                 network\sis\s(down|unreachable)|temporarily\sunavailable|
                  \b(429|500|502|503|504)\b/xi
 
   def initialize(basecamp_cli:, agent:)

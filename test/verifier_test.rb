@@ -71,6 +71,35 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(assignment_payload))
   end
 
+  # `/x` discards literal whitespace, so every multi-word alternative in
+  # UNREACHABLE matched nothing until 2026-08-26 -- a lost credential race, the
+  # failure the class was built for, read as a forgery and was dropped.
+  UNREACHABLE_MESSAGES = [
+    "not authenticated for profile:on-call-bot",
+    "credentials not found for profile:on-call-bot",
+    "no such profile",
+    "timed out",
+    "timeout",
+    "connection refused",
+    "connection reset by peer",
+    "could not connect",
+    "network is down",
+    "network is unreachable",
+    "temporarily unavailable",
+    "502 Bad Gateway"
+  ].freeze
+
+  def test_every_failure_that_means_the_question_never_landed_is_retryable
+    UNREACHABLE_MESSAGES.each do |message|
+      assert BasecampAgentConnector::Basecamp::Verifier::UNREACHABLE.match?(message),
+        "#{message.inspect} must be treated as unreachable, not as a rejection"
+    end
+  end
+
+  def test_a_real_absence_is_still_a_rejection
+    refute BasecampAgentConnector::Basecamp::Verifier::UNREACHABLE.match?("Resource not found: https://example.com/x.json")
+  end
+
   private
     def verifier(runner)
       BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)
