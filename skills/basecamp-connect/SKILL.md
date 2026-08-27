@@ -774,19 +774,17 @@ since `psp-postmortem` measures a build and none of them built anything.
 - **`psp-card-writer`** owns every human-card **comment** that is prose — dispatched
   by the agent that did the work, never by this session and never drafted by it, and
   **enforced by the guard hook on `agent_type`** rather than left to whoever read this
-  file most recently. The agent that did the work has exactly two exceptions of its
-  own, both structure rather than prose. **`Verify` steps** — a
-  checklist belongs on the card of the person who runs it (defects row 3971). And
-  **the phase line**: whenever an agent moves the human card it posts one comment of
-  one line, `<Phase> began: <bot card url>`, in the same round as the move. The
-  permitted openers are `Planning began`, `Design began`, `Code began`,
-  `Review began`, `Test began`, `QA began` and `Closing out`, and nothing may be
-  appended. It exists because the card the team watches sits silent for the length
-  of a diagnosis running on a board they never open, and a card that moves with no
-  line reads as a card nobody touched. The guard hook matches the whole body exactly
-  and refuses a phase line with prose on it, an invented opener, a missing URL, or a
-  second paragraph beside it — "a short line" is not a category a guard can check,
-  so the exemption is a fixed form rather than a length.
+  file most recently. On a full-loop card the agent that did the work has one
+  exception of its own, structure rather than prose: **`Verify` steps**, because a
+  checklist belongs on the card of the person who runs it (defects row 3971).
+- **On an intake effort the human card takes no comment from anyone.** Its summary
+  is a ping; its `Verify` steps are on the bot card and travel in that ping. The
+  card carries its title and its column moves and nothing else.
+  **The phase line is gone** — agents used to post `<Phase> began: <bot card url>`
+  beside every move, and Fernando refused it on 2026-08-26 seeing `Design began` on
+  card 10243215150: *"The agents are still announcing their stages. They
+  shouldn't."* The move already says the card moved; the line added our phase
+  vocabulary and a link into a board the team does not open. The guard denies it.
 - The **source card is never touched** — no comment, no move, no edit. It
   usually lives on a shared team board, where a PSP gate notifies people about our
   internal process instead of about their bug.
