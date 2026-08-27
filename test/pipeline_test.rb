@@ -283,6 +283,38 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  def test_allowlist_emits_for_an_allowed_authors_comment_on_a_subscribed_recording
+    # The subscription trigger passes the same trust gate as a mention: a
+    # broadened mode's authors can drive the agent through a followed thread.
+    recording = sample_recording("content" => "<p>no mention, just an update</p>", "creator" => colleague)
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+      .process(sample_payload("creator" => colleague, "recording" => recording))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+  end
+
+  def test_project_trust_drops_a_client_authors_comment_on_a_subscribed_recording
+    # Subscription targeting never bypasses the authorizer: even when the agent
+    # really subscribes, the corroborated author must still be authorized. The
+    # claimed payload denies client status (passing the pre-filter); Basecamp's
+    # authoritative copy marks the author a client, and that copy decides.
+    recording = sample_recording("content" => "<p>no mention</p>", "creator" => colleague.merge("client" => true))
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner, authorizer: authorizer(trust: :project))
+      .process(sample_payload("creator" => colleague, "recording" => recording))
+
+    assert_empty @output.string
+    assert_match(/authoritative author is not authorized/, @logs.string)
+  end
+
   def test_broadened_trust_keeps_assignments_operator_only
     runner = FakeCommandRunner.new
 
