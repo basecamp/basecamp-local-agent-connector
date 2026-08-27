@@ -88,6 +88,48 @@ class ChatPollerTest < Minitest::Test
     assert_match(/not corroborated/, @logs.string)
   end
 
+  def test_malformed_discovery_output_is_logged_and_retried
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: '{"data": [{"id": 333', once: true
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([])
+    poller = poller(runner)
+
+    poller.poll
+    assert_match(/could not list chats.*malformed JSON/, @logs.string)
+
+    poller.poll
+    assert_equal 1, runner.commands_matching(/chat messages/).length
+  end
+
+  def test_the_poll_thread_survives_an_exception_escaping_a_poll
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([])
+    ticks = Queue.new
+    polled = Queue.new
+    poller = poller(runner, wait: ->(_seconds) { ticks.pop })
+    attempts = 0
+    # start itself calls rooms once (the synchronous discovery); the second
+    # call is the first one made from the thread.
+    poller.define_singleton_method(:rooms) do
+      attempts += 1
+      polled << attempts
+      raise "surprise" if attempts == 2
+      super()
+    end
+
+    poller.start
+    ticks << true
+    ticks << true
+    polled.pop until attempts >= 3
+
+    assert_match(/chat poll failed: surprise/, @logs.string)
+    assert_predicate poller.instance_variable_get(:@thread), :alive?
+  ensure
+    poller&.stop
+  end
+
   def test_authoritative_recheck_drops_a_line_whose_fetched_content_lost_the_mention
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])

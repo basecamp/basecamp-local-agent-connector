@@ -113,10 +113,18 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       nil
     end
 
+    # The loop is the only chat thread there is; an exception that escapes a
+    # poll (discovery is outside poll_room's own rescue) must cost one tick,
+    # not all coverage for the rest of the session.
     def poll_loop
       until @stopping
         @wait.call(@interval)
-        poll
+
+        begin
+          poll
+        rescue => error
+          log "chat poll failed: #{error.message}"
+        end
       end
     end
 
