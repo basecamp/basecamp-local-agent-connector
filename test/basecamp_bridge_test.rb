@@ -91,8 +91,55 @@ class BasecampBridgeTest < Minitest::Test
     assert_empty runner.commands_matching(/chat line /)
   end
 
+  def test_register_starts_the_boost_poller_and_logs_after_the_webhook_readiness_line
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, boost_poll_interval: 60)
+
+    bridge.register(base_url: "https://host.ts.net")
+
+    listening = logs.string.index("Listening for mentions")
+    polling = logs.string.index("Polling @Clawdito's received-boosts feed every 60s")
+    refute_nil polling
+    assert_operator listening, :<, polling
+    # The poller starts but fetches nothing until its first interval pass, so
+    # no event can beat the readiness lines to the funnel.
+    assert_empty runner.commands_matching(%r{api get /my/boosts\.json})
+  ensure
+    bridge.teardown
+  end
+
+  def test_a_nil_boost_poll_interval_disables_the_poller
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, boost_poll_interval: nil)
+
+    bridge.register(base_url: "https://host.ts.net")
+    bridge.teardown
+
+    refute_match(/received-boosts feed/, logs.string)
+  end
+
+  def test_handler_refuses_boost_kind_webhook_payloads
+    runner = FakeCommandRunner.new
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, output: output)
+
+    bridge.handler.call(Struct.new(:body).new(JSON.generate(boost_payload))).join
+
+    assert_empty output.string
+    assert_match(/ignored boost-kind payload/, logs.string)
+    assert_empty runner.commands
+  end
+
   private
-    def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new)
+    def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new,
+      boost_poll_interval: nil)
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer,
         agent: agent_identity,
@@ -100,6 +147,7 @@ class BasecampBridgeTest < Minitest::Test
         types: types,
         basecamp_cli: build_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: output),
-        logger: logger
+        logger: logger,
+        boost_poll_interval: boost_poll_interval
     end
 end

@@ -66,6 +66,18 @@ class ConnectorTest < Minitest::Test
     end
   end
 
+  def test_parses_the_boost_poll_interval
+    assert_equal 60, parse("@clawdito", "--project", "A").boost_poll
+    assert_equal 120, parse("@clawdito", "--project", "A", "--boost-poll", "120").boost_poll
+    assert_nil parse("@clawdito", "--project", "A", "--no-boosts").boost_poll
+  end
+
+  def test_refuses_a_non_positive_boost_poll_interval
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--boost-poll", "0"
+    end
+  end
+
   def test_refuses_value_flags_that_imply_different_trust_modes
     assert_raises ArgumentError do
       parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"

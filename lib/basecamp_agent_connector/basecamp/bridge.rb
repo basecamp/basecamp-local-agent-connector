@@ -7,7 +7,9 @@ require "securerandom"
 #
 # Campfire chat is the one watched surface webhooks cannot carry (bc3 excludes
 # chat kinds from relay outright), so chat-typed entries in `types` are split
-# off into a ChatPoller instead of the webhook registration. Both sources feed
+# off into a ChatPoller instead of the webhook registration. Boosts are just as
+# webhook-infeasible (a Boost creates no Event in bc3), so the bridge also runs
+# a BoostPoller over the agent's own received-boosts feed. All sources feed
 # identical pipelines: authorizer pre-filter, corroborating re-fetch,
 # authoritative re-check, one STDOUT funnel.
 class BasecampAgentConnector::Basecamp::Bridge
@@ -16,7 +18,8 @@ class BasecampAgentConnector::Basecamp::Bridge
   CHAT_TYPE = /\A(chat(::.+)?|campfire)\z/i
 
   def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr,
-    chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL)
+    chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
+    boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL)
     @authorizer = authorizer
     @agent = agent
     @projects = projects
@@ -25,6 +28,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     @emitter = emitter
     @logger = logger
     @chat_poll_interval = chat_poll_interval
+    @boost_poll_interval = boost_poll_interval
     @secret = SecureRandom.hex(16)
     @webhooks = BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: basecamp_cli)
   end
@@ -53,6 +57,14 @@ class BasecampAgentConnector::Basecamp::Bridge
       log "Listening for mentions of @#{agent_name} on #{@projects.length} project(s) at #{url}"
     end
 
+    # The boost poller fetches nothing until its thread's first interval pass,
+    # well after the funnel consumer has seen these readiness lines — so no
+    # event can beat the watcher to the stream.
+    if @boost_poll_interval
+      boost_poller.start
+      log "Polling @#{agent_name}'s received-boosts feed every #{@boost_poll_interval}s (boosts have no webhooks)"
+    end
+
     log "Trust: #{@authorizer.description}"
   end
 
@@ -61,11 +73,15 @@ class BasecampAgentConnector::Basecamp::Bridge
       Thread.new do
         payload = JSON.parse(request.body)
 
-        # Basecamp never delivers chat events by webhook, so a chat-kind payload
-        # on this route is by definition not from Basecamp. The poller is the
-        # sole chat source; refuse the impostor rather than corroborate it.
-        if BasecampAgentConnector::Basecamp::Event.from_payload(payload).chat_kind?
+        # Basecamp never delivers chat or boost events by webhook, so either
+        # kind on this route is by definition not from Basecamp. The pollers
+        # are the sole sources; refuse the impostor rather than corroborate it
+        # (or let it replay a real boost through this pipeline's separate dedupe).
+        event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
+        if event.chat_kind?
           log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
+        elsif event.boost?
+          log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
         else
           pipeline.process(payload)
         end
@@ -79,6 +95,7 @@ class BasecampAgentConnector::Basecamp::Bridge
 
   def teardown
     @chat_poller&.stop
+    @boost_poller&.stop
     @webhooks.delete_all
   end
 
@@ -99,6 +116,17 @@ class BasecampAgentConnector::Basecamp::Bridge
         pipeline: build_pipeline,
         projects: @projects,
         interval: @chat_poll_interval,
+        logger: @logger
+    end
+
+    # Like the chat poller: its own pipeline so boost ids and webhook event
+    # ids never share a dedupe space; trust components are the same instances.
+    def boost_poller
+      @boost_poller ||= BasecampAgentConnector::Basecamp::BoostPoller.new \
+        basecamp_cli: @basecamp_cli,
+        pipeline: build_pipeline,
+        agent: @agent,
+        interval: @boost_poll_interval,
         logger: @logger
     end
 

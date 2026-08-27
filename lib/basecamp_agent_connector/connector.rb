@@ -16,7 +16,7 @@ class BasecampAgentConnector::Connector
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll)
+    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll)
 
   def self.start(argv)
     new(parse_options(argv)).start
@@ -38,11 +38,12 @@ class BasecampAgentConnector::Connector
     allow_project = false
     allow_assignments = false
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
+    boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
-        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--events EVENTS] [--port PORT]"
+        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
@@ -67,6 +68,13 @@ class BasecampAgentConnector::Connector
 
         chat_poll = value
       end
+      parser.on("--boost-poll SECONDS", Integer, "Received-boosts poll interval " \
+        "(default: #{BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL}s; boosts have no webhooks)") do |value|
+        raise ArgumentError, "--boost-poll must be a positive number of seconds" unless value.positive?
+
+        boost_poll = value
+      end
+      parser.on("--no-boosts", "Don't poll the agent's received-boosts feed") { boost_poll = nil }
       parser.on("--events EVENTS", "Comma-separated GitHub webhook events") { |value| events = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
     end.parse!(arguments)
@@ -81,7 +89,7 @@ class BasecampAgentConnector::Connector
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events), port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
-      chat_poll: chat_poll)
+      chat_poll: chat_poll, boost_poll: boost_poll)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -155,7 +163,8 @@ class BasecampAgentConnector::Connector
 
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer(operator, agent), agent: agent,
-        projects: @options.projects, types: @options.types, chat_poll_interval: @options.chat_poll,
+        projects: @options.projects, types: @options.types,
+        chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 

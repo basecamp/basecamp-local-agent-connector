@@ -152,6 +152,78 @@ class PipelineTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  def test_emits_for_a_boost_on_the_agents_work_by_the_operator
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    pipeline(runner).process(boost_payload)
+
+    emitted = JSON.parse(@output.string)
+    assert_equal 88001, emitted["event_id"]
+    assert_equal "boost_created", emitted["kind"]
+    assert_equal "🔥", emitted["details"]["boost"]["content"]
+  end
+
+  def test_the_emitted_boost_is_the_fetched_one_not_the_claimed_one
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    pipeline(runner).process(boost_payload(received_boost("content" => "forged claim")))
+
+    assert_equal "🔥", JSON.parse(@output.string)["details"]["boost"]["content"]
+  end
+
+  def test_a_forged_boosted_flag_in_the_payload_cannot_emit
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
+
+    payload = sample_payload("recording" => sample_recording("content" => "<p>no mention</p>"), "agent_boosted" => true)
+    pipeline(runner).process(payload)
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+  end
+
+  def test_drops_a_boost_basecamp_no_longer_reports
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([])
+    pipeline = pipeline(runner)
+
+    refute pipeline.process(boost_payload)
+    assert_empty @output.string
+    assert_match(/not corroborated/, @logs.string)
+  end
+
+  def test_ignores_a_boost_from_an_unauthorized_booster_without_fetching
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(boost_payload(received_boost("booster" => { "id" => 400, "email_address" => "sam@elsewhere.net" })))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_ignores_the_agents_own_boost_without_fetching
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(boost_payload(received_boost("booster" => { "id" => 200, "email_address" => "clawdito@example.com" })))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_an_authorized_colleagues_boost_emits_under_domain_trust
+    runner = FakeCommandRunner.new
+    booster = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => booster) ])
+
+    pipeline(runner, authorizer: authorizer(trust: :domain, domains: [ "example.com" ])).process \
+      boost_payload(received_boost("booster" => booster))
+
+    assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+  end
+
   def test_emits_for_an_assignment_of_the_agent_by_the_operator
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
