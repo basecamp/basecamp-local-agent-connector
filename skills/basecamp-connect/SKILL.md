@@ -399,14 +399,21 @@ card, and the read the connector already made is the authoritative one.
 per person, so every effort's pings interleave in a single thread — there is no
 per-effort ping and no way to make one. Two things follow, and both are contract:
 
-- **Every ping the agent sends names its effort and ends with the routing line.**
-  Three paragraphs — to a **tighter per-paragraph word budget than a card**, because
-  a ping is read in a notification with every other effort's pings around it, not on
-  the card it is about. `psp-ping-preview.py` reports the number; never draft against
-  a copy of it. Then `Reply to card <bot card id>` on a line of its own — and
-  that last line **only on a ping that asks him something.** A close-out or a
-  "the PR is green" ends after the third paragraph, or the token becomes noise
-  and he stops copying it back.
+- **Every ping ends with two lines, and the guard refuses one that does not.**
+  Three paragraphs first — to a **tighter per-paragraph word budget than a card**,
+  because a ping is read in a notification with every other effort's pings around
+  it, not on the card it is about. `psp-ping-preview.py` reports the number; never
+  draft against a copy of it. Then, each on its own line:
+  1. **the link back to the effort** — the human card, or the document the effort
+     runs off when it has no card, with its title as the anchor text;
+  2. **`Reply to card <bot card id>`** — the bot card, because a human card can
+     hold two bugs and the token has to name one effort.
+
+  **Both go on every ping, including one that only reports something.** Whether a
+  ping "asks him something" was the writer's judgment until 2026-08-27, when one
+  reporting a scope change arrived without the routing line and he could not answer
+  it. He decides what to answer at read time, not the writer at write time, and he
+  cannot add the token himself.
 - **Every ping he sends is routed by the card id he quotes back.** Scan his line
   for any run of 8+ digits and match it against the bot cards the agent has
   pinged about and is still awaiting an answer on. That is a closed set, so a
