@@ -1,0 +1,51 @@
+lib/basecamp_agent_connector/emitter.rb
+  s_964922bad4d340::t_c2536dfc3dedd4 6,9-11,13-18
+test/chat_poller_test.rb
+  s_964922bad4d340::t_c98328e4ef697d 1-115,118-119,121-163,165,168-171,205-216,218-224,227-237
+  s_964922bad4d340::t_74904d7853a340 116-117,120,164,166-167,172-204,217,225-226
+lib/basecamp_agent_connector/basecamp/chat_poller.rb
+  s_964922bad4d340::t_594ad0a7e4f7b1 1-6,13-20,23-26,28-33,35-41,43,45-50,52-54,65-67,82,86-104,106,110-120,131-133
+  s_964922bad4d340::t_f9c6aa1c83bdea 42
+  s_964922bad4d340::t_9a8b5a5a73b325 44,55-57,61
+  s_964922bad4d340::t_ac5f2ce8ea25ee 107-109
+  s_964922bad4d340::t_7726e7c1f04d44 58-60,63,68,76-81,84-85
+  s_964922bad4d340::t_f32141dca00637 134
+  s_964922bad4d340::t_92ecb51e33dba6 7-12,21-22,27,34,51,62,64,69-75,83,105,121-129
+  s_964922bad4d340::t_a33ba2cb16eeb9 130
+lib/basecamp_agent_connector/basecamp/bridge.rb
+  s_964922bad4d340::t_aa949ed8c9cc6b 7-12,14-19,23,27,42-47,60-69,79,84-87,89-104,107-117
+  s_964922bad4d340::t_dc289df2b8b434 32-34,36,40-41,48-53,80
+README.md
+  s_964922bad4d340::t_773247c755f0af 297-298,370-373
+docs/built-in-support.md
+  s_964922bad4d340::t_12bbc12feeb3c0 29
+docs/spec.md
+  s_964922bad4d340::t_b129623d7c6bf5 149-153,346
+lib/basecamp_agent_connector/connector.rb
+  s_964922bad4d340::t_2bdddde441763b 12-14,19,40,45,63-69,83-84,152
+  s_964922bad4d340::t_f3f3e89c3a7c10 78,126,169-170,172
+skills/basecamp-connect/SKILL.md
+  s_964922bad4d340::t_f8770d4087d8c7 326-350
+test/basecamp_bridge_test.rb
+  s_964922bad4d340::t_3b018d6a912386 42-70,72-91,93,98,100
+  s_964922bad4d340::t_2bca1d5c52b3ac 71
+test/connector_test.rb
+  s_964922bad4d340::t_c3c582be5118af 10,52-62
+  s_964922bad4d340::t_3d2cd6b04f95ab 63-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "2aa980303a40f9153db3ac02e945dbe0e700ae67",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
