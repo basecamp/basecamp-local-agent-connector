@@ -1,0 +1,24 @@
+lib/basecamp_agent_connector/basecamp/verifier.rb
+  s_964922bad4d340::t_be27460554b624 70-74,77
+  s_964922bad4d340::t_f6c6c5f41fd090 2-3
+test/pipeline_test.rb
+  s_964922bad4d340::t_e9b49ca8f1dc1a 90-105
+test/verifier_test.rb
+  s_964922bad4d340::t_f2a8d0b8c072ea 92-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "f2dc86824f6ed9f8a59bc6097d10db8fb7d728e6",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
