@@ -41,7 +41,11 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     @rooms_by_project = {}
     @refreshed_at = {}
     @seen_line_ids = {}
-    @started_at = @clock.call
+    # Floored to the whole second because line timestamps may carry only
+    # second precision: comparing a sub-second start against a truncated
+    # created_at would misfile a line posted just after start as history and
+    # drop it for good. See posted_since_start?.
+    @started_at = @clock.call.floor
     @stopping = false
   end
 
@@ -156,15 +160,21 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     end
 
     # Fail toward history: a line whose timestamp is missing or unreadable is
-    # baselined rather than risking a replay. Comparing server timestamps
-    # against the local clock assumes NTP-grade sync; skew shifts the history
-    # boundary by its own magnitude (ahead: that many seconds of post-start
-    # lines counted as history; behind: that many seconds of pre-start lines
-    # dispatched, still corroborated and authorized). An unsynced clock, e.g.
-    # right after a snapshot restore or laptop resume, widens that sliver.
+    # baselined rather than risking a replay. The boundary itself leans the
+    # other way: @started_at is floored to the second and the comparison is
+    # inclusive, so a line stamped in the poller's start second counts as
+    # post-start even when its created_at carries only second precision —
+    # dispatching a same-second, essentially-concurrent mention beats
+    # permanently dropping one posted just after start. Comparing server
+    # timestamps against the local clock assumes NTP-grade sync; skew shifts
+    # the history boundary by its own magnitude (ahead: that many seconds of
+    # post-start lines counted as history; behind: that many seconds of
+    # pre-start lines dispatched, still corroborated and authorized). An
+    # unsynced clock, e.g. right after a snapshot restore or laptop resume,
+    # widens that sliver.
     def posted_since_start?(line)
       created_at = line["created_at"].to_s
-      !created_at.empty? && Time.iso8601(created_at) > @started_at
+      !created_at.empty? && Time.iso8601(created_at) >= @started_at
     rescue ArgumentError
       false
     end

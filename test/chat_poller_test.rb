@@ -381,6 +381,23 @@ class ChatPollerTest < Minitest::Test
     assert_empty runner.commands_matching(/chat line /)
   end
 
+  def test_a_line_stamped_in_the_pollers_start_second_is_not_dropped_as_history
+    # The poller starts mid-second; the line, posted just after, serializes
+    # with only second precision and so compares equal to the start second.
+    started = Time.utc(2026, 6, 28, 13, 0, 0.5)
+    boundary = chat_line("created_at" => "2026-06-28T13:00:00Z")
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([ boundary ])
+    runner.stub "chat line ", stdout: envelope(boundary)
+    poller = poller(runner, clock: -> { started })
+
+    poller.poll
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal 91001, JSON.parse(@output.string)["event_id"]
+  end
+
   private
     # Baseline poll sees an empty room; the next poll finds the mention line,
     # corroborated by a matching `chat line` fetch.
