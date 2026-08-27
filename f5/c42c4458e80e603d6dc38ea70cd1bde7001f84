@@ -1,0 +1,22 @@
+lib/basecamp_agent_connector/basecamp/chat_poller.rb
+  s_964922bad4d340::t_92ecb51e33dba6 7-12,21-22,27,34,51,62,64,69-75,83,105,121-129
+  s_964922bad4d340::t_a33ba2cb16eeb9 130
+test/chat_poller_test.rb
+  s_964922bad4d340::t_74904d7853a340 116-117,120,164,166-167,172-204,217,225-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "f5c42c4458e80e603d6dc38ea70cd1bde7001f84",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
