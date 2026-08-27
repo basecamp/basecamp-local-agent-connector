@@ -88,6 +88,42 @@ class ChatPollerTest < Minitest::Test
     assert_match(/not corroborated/, @logs.string)
   end
 
+  def test_a_transient_corroboration_failure_is_retried_on_the_next_poll
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    runner.stub "chat line ", exit_status: 1, stderr: "502 Bad Gateway", once: true
+    runner.stub "chat line ", stdout: envelope(chat_line)
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+    assert_empty @output.string
+    assert_match(/not corroborated/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+    assert_equal 2, runner.commands_matching(/chat line /).length
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_line_that_reached_a_verdict_is_not_retried
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    runner.stub "chat line ", stdout: envelope(chat_line("content" => "<div>edited away</div>"))
+    poller = poller(runner)
+
+    3.times { poller.poll }
+
+    assert_empty @output.string
+    assert_equal 1, runner.commands_matching(/chat line /).length
+  end
+
   def test_malformed_discovery_output_is_logged_and_retried
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: '{"data": [{"id": 333', once: true

@@ -210,7 +210,10 @@ For each delivered event:
      the agent. (A real Basecamp mention is an attachment carrying the person's
      SGID, not literal `@name` text, so a plain text match would miss it.)
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
-   set; at-least-once delivery means duplicates are expected).
+   set; at-least-once delivery means duplicates are expected). An id counts as
+   seen once it reaches a verdict; an event Basecamp could not corroborate is
+   forgotten again so a redelivery (or, for chat, the next poll) retries it —
+   the fetch may have failed transiently, and re-verifying is idempotent.
 3. **Authoritative verification** (the real trust gate): re-fetch the recording
    from Basecamp via the CLI (`basecamp show <recording.url|app_url>` /
    `basecamp ... -j`) and confirm it **actually exists** with the claimed creator

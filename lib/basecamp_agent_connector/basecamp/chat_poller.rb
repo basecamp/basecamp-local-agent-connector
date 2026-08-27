@@ -169,9 +169,15 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       false
     end
 
+    # Seen means settled. A line the pipeline could not corroborate — the
+    # corroborating fetch failed, which a transient API or CLI blip can cause
+    # as easily as a deletion — is forgotten again so the next poll retries it
+    # while it remains in the window; a deleted line simply stops appearing.
+    # A pipeline exception leaves the line seen: retrying a bug every tick
+    # would only repeat it.
     def process(line, seen)
       seen << line["id"]
-      @pipeline.process(BasecampAgentConnector::Basecamp::Event.chat_line_payload(line))
+      seen.delete(line["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.chat_line_payload(line))
     end
 
     # The fetch window is a bound: if a chat produced more than FETCH_LIMIT

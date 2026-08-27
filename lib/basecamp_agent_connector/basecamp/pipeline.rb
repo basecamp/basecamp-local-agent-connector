@@ -8,11 +8,17 @@ class BasecampAgentConnector::Basecamp::Pipeline
     @seen_event_ids = Set.new
   end
 
+  # Returns whether the event reached a verdict (emitted, dropped, ignored,
+  # or a duplicate). False means Basecamp could not corroborate it, in which
+  # case the id is forgotten so a redelivery gets a fresh attempt: the fetch
+  # may have failed transiently, and re-verifying is idempotent either way.
   def process(payload)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
     if actionable?(event) && fresh?(event)
       emit_if_verified(event)
+    else
+      true
     end
   end
 
@@ -49,7 +55,8 @@ class BasecampAgentConnector::Basecamp::Pipeline
       verified = @verifier.verify(event)
 
       if verified.nil?
-        log "dropped event #{event.id}: not corroborated by Basecamp"
+        @seen_event_ids.delete(event.id)
+        log "dropped event #{event.id}: not corroborated by Basecamp (retried if delivered again)"
       elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)
@@ -57,6 +64,8 @@ class BasecampAgentConnector::Basecamp::Pipeline
       else
         @emitter.emit(verified)
       end
+
+      !verified.nil?
     end
 
     def log(message)
