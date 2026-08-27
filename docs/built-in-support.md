@@ -26,7 +26,7 @@ Every mechanism in the connector maps to a gap in Basecamp:
 | # | Limitation | Root cause in bc3 |
 |---|-----------|-------------------|
 | 1 | **Per-project watch lists** — one webhook registered per project | Webhooks are strictly per-bucket; no account-level subscription exists |
-| 2 | **No chat** — Campfire can't drive the agent | Chat events are hard-excluded from webhooks ("will have its own API" — it never came) |
+| 2 | **Chat is polled** — Campfire mentions only reach the agent because the connector polls each watched project's chat lines | Chat events are hard-excluded from webhooks ("will have its own API" — it never came) |
 | 3 | **Agent is a full human user account** — login, Launchpad identity, seat | The existing bot type (`Integration`) can't be mentioned, can't receive notifications, can't read anything, can't use OAuth |
 | 4 | **Public inbound endpoint** — Tailscale Funnel publishes the laptop | Webhooks push to a URL; nothing lets a consumer connect *out* and receive events |
 | 5 | **Forgeable deliveries** — every event re-fetched and corroborated | Webhook deliveries carry no signature |

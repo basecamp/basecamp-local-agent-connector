@@ -9,12 +9,14 @@ require "socket"
 class BasecampAgentConnector::Connector
   # Todo + Kanban::Step are included so todo/step assignment events are delivered
   # (Kanban::Card already covers card assignments).
-  DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo"
+  # Chat::Line selects Campfire coverage: chat has no webhooks, so the Basecamp
+  # bridge covers it with an integrated poller rather than a registration.
+  DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line"
   DEFAULT_EVENTS = "pull_request_review"
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments)
+    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll)
 
   def self.start(argv)
     new(parse_options(argv)).start
@@ -35,11 +37,12 @@ class BasecampAgentConnector::Connector
     allowed_domains = []
     allow_project = false
     allow_assignments = false
+    chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
-        "[--allow-assignments-from-authorized] [--types TYPES] [--events EVENTS] [--port PORT]"
+        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
@@ -57,7 +60,13 @@ class BasecampAgentConnector::Connector
       parser.on("--allow-project", "Trust any corroborated non-client author of a recording the operator can read (implies --trust project)") { allow_project = true }
       parser.on("--allow-assignments-from-authorized", "Let any authorized author trigger via assignment too " \
         "(default: assignments are operator-only in every mode)") { allow_assignments = true }
-      parser.on("--types TYPES", "Comma-separated Basecamp event types") { |value| types = value }
+      parser.on("--types TYPES", "Comma-separated Basecamp event types (Chat::Line = Campfire coverage, via polling)") { |value| types = value }
+      parser.on("--chat-poll SECONDS", Integer, "Campfire poll interval " \
+        "(default: #{BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL}s; chat has no webhooks)") do |value|
+        raise ArgumentError, "--chat-poll must be a positive number of seconds" unless value.positive?
+
+        chat_poll = value
+      end
       parser.on("--events EVENTS", "Comma-separated GitHub webhook events") { |value| events = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
     end.parse!(arguments)
@@ -66,11 +75,13 @@ class BasecampAgentConnector::Connector
 
     raise ArgumentError, "watch something: pass at least one --project or --repo" if projects.empty? && repos.empty?
     raise ArgumentError, "an agent is required to watch Basecamp projects, e.g. `connect @clawdito --project \"My Project\"`" if projects.any? && (agent.nil? || agent.empty?)
+    raise ArgumentError, "--types has no event types to watch" if projects.any? && comma_list(types).empty?
 
     trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events), port: port,
-      trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments)
+      trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
+      chat_poll: chat_poll)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -112,8 +123,14 @@ class BasecampAgentConnector::Connector
     @bridges = build_bridges
     port = @options.port || free_port
 
-    @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: @bridges.map(&:path), command_runner: command_runner)
-    base_url = @tunnel.start
+    # Chat-only watching has no inbound paths, so it needs no funnel at all —
+    # Tailscale isn't required unless something actually receives webhooks.
+    paths = @bridges.filter_map(&:path)
+    base_url = \
+      if paths.any?
+        @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
+        @tunnel.start
+      end
     @bridges.each { |bridge| bridge.register(base_url: base_url) }
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
@@ -138,7 +155,7 @@ class BasecampAgentConnector::Connector
 
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer(operator, agent), agent: agent,
-        projects: @options.projects, types: @options.types,
+        projects: @options.projects, types: @options.types, chat_poll_interval: @options.chat_poll,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 
@@ -155,8 +172,10 @@ class BasecampAgentConnector::Connector
         github_cli: github_cli, emitter: emitter
     end
 
+    # A bridge without inbound webhooks (chat-only Basecamp coverage) has no
+    # path and mounts nothing.
     def routes
-      @bridges.to_h { |bridge| [ bridge.path, bridge.handler ] }
+      @bridges.filter_map { |bridge| [ bridge.path, bridge.handler ] unless bridge.path.nil? }.to_h
     end
 
     def resolve_agent

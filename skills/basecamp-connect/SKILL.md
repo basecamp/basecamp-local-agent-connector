@@ -103,6 +103,8 @@ The skill remembers the last successful connection in
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
   "trust": { "mode": "domain", "allow": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false },
+  "types": "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line",
+  "chat_poll": 15,
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
@@ -115,12 +117,16 @@ The skill remembers the last successful connection in
   exist, ask for the agent and projects as usual.
 - **Invoked with arguments:** arguments win; the store is not consulted.
 - **After every successful registration** (the `Listening for mentions of …`
-  line), write the params that were actually used back to the file — agent
+  line — or, for a chat-only `--types`, the `Polling … Campfire(s) …` line),
+  write the params that were actually used back to the file — agent
   profile, operator override (or null), the projects with their resolved ids and
-  names, **and the trust configuration** (the mode and its value flags, so a
+  names, **the trust configuration** (the mode and its value flags, so a
   later no-argument launch reconstructs the same trust boundary rather than
-  silently falling back to operator-only) — so the store always reflects the
-  last working connection. Create the directory if needed. Launch failures must
+  silently falling back to operator-only), **and the coverage** — the `--types`
+  value and `--chat-poll` interval actually used, so a chat-only or custom-typed
+  run relaunches as itself instead of silently restoring the default mixed
+  webhook/chat coverage (and its Funnel + webhooks) — so the store always
+  reflects the last working connection. Create the directory if needed. Launch failures must
   not overwrite it.
 - **Reconstructing the command from the store:** always emit **exactly one
   `--trust <mode>`** for the stored mode, followed by its value flags (`allow` →
@@ -133,7 +139,9 @@ The skill remembers the last successful connection in
   rather than silently broadening trust. A missing `trust` block means
   operator-only (older stores). If the stored block is internally inconsistent
   and the parser rejects it, **stop and confirm with the user** — never infer a
-  mode to make it launch.
+  mode to make it launch. Also re-emit the stored `types` (as `--types`) and
+  `chat_poll` (as `--chat-poll`) when present; missing fields (older stores)
+  mean the defaults.
 
 Project ids are stored (not just names) because name lookup is exact-match;
 launching from the store passes ids.
@@ -180,18 +188,23 @@ cd ~/Work/basecamp/basecamp-local-agent-connector && \
 ```
 
 Read that output file once and confirm it printed `Listening for mentions of ...`
-(registration succeeded). If it errored instead (unknown agent profile, auth,
+(webhook registration succeeded) or, for a chat-only `--types`, `Polling ...
+Campfire(s) ...` (the poller is running — chat-only runs register no webhooks
+and open no Funnel). If it errored instead (unknown agent profile, auth,
 project not found), surface that and stop. On success, **save the connection
 params** to `~/.config/basecamp-connect/last.json` (see "Stored connection
 params" above) so the next no-args invocation can offer them back.
 
 **b. Arm a persistent monitor on that output file** with the Monitor tool
-(`persistent: true`). Use `-n 0` so it reports only events that arrive *after*
-this point, and filter to the NDJSON event lines so diagnostics stay out of the
-stream:
+(`persistent: true`). Replay the file **from its beginning** (`-n +1`) — the
+file is per-run, so this catches an event the connector emitted between
+becoming ready and this monitor attaching (a chat mention landing right at
+startup, a webhook delivery beating the arm) without ever replaying another
+run's events — and filter to the NDJSON event lines so diagnostics stay out
+of the stream:
 
 ```bash
-tail -f -n 0 <connector-output-file> | grep --line-buffered -E '^\{'
+tail -f -n +1 <connector-output-file> | grep --line-buffered -E '^\{'
 ```
 
 Each notification the monitor delivers is one event — process it via step 2. An
@@ -324,6 +337,35 @@ itself is the task**. The dispatched background agent should, in order:
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
+
+### When the mention arrives in Campfire (a chat line)
+
+If the event `kind` starts with `chat_` (e.g. `chat_lines_rich_text_created`),
+the mention was posted in a project **Campfire**. Chat has no webhooks — the
+connector's integrated poller delivered this line through the same trust gate as
+every other event. Chat is conversational and realtime, so dispatch the same way
+with these differences:
+
+- **Context** — the generic `basecamp show` does **not** resolve chat lines; use
+  the chat commands:
+  ```bash
+  basecamp chat line <recording.url> -j                                  # the line itself
+  basecamp chat messages --project <bucket.id> --room <recording.parent.id> -n 25 -j   # the conversation
+  ```
+- **Ack** — boost the line (`basecamp boost create <recording.url> "On it!"
+  --profile <agent>`), same as any recording.
+- **No card moves** — there is no board; skip the Triage step.
+- **Reply in the chat as the agent** — post to the same Campfire, not a comment:
+  ```bash
+  basecamp chat post "<body>" --project <bucket.id> --room <recording.parent.id> --profile <agent>
+  ```
+  The CLI resolves @mentions (`@Name`, or `[@Name](person:<creator.id>)` to
+  pin by Person id); a reply containing one posts as rich text with its
+  Markdown converted. A mention-free reply posts as plain text — Markdown
+  renders literally, so keep those replies plain prose. Keep replies
+  chat-sized; spill long results into a Basecamp doc or comment and link
+  them. On failure, @mention the requester so it notifies:
+  `[@Name](person:<creator.id>)`.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 

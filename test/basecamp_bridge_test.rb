@@ -39,15 +39,67 @@ class BasecampBridgeTest < Minitest::Test
     assert_match(/Trust: operator only \(operator@example\.com\); assignments: operator only/, logs.string)
   end
 
+  def test_register_splits_chat_types_off_to_the_poller
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    logs = StringIO.new
+    bridge = bridge(runner, types: "Comment,Chat::Line", logger: logs)
+
+    bridge.register(base_url: "https://host.ts.net")
+
+    created = runner.commands_matching(/webhooks create/).first.join(" ")
+    assert_includes created, "--types Comment"
+    refute_includes created, "Chat"
+    # Discovery is synchronous (the log needs the room count); fetching waits
+    # for the poll thread so nothing emits before the readiness line prints.
+    assert_equal 1, runner.commands_matching(/chat list/).length
+    assert_empty runner.commands_matching(/chat messages/)
+    assert_match(/Polling 1 Campfire\(s\)/, logs.string)
+  ensure
+    bridge.teardown
+  end
+
+  def test_chat_only_types_register_no_webhooks
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: envelope([])
+    bridge = bridge(runner, types: "Chat::Line")
+
+    bridge.register(base_url: "https://host.ts.net")
+
+    assert_nil bridge.path
+    assert_empty runner.commands_matching(/webhooks create/)
+    assert_equal 1, runner.commands_matching(/chat list/).length
+  ensure
+    bridge.teardown
+  end
+
+  def test_handler_refuses_chat_kind_webhook_payloads
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line)
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, types: "Comment", logger: logs, output: output)
+
+    bridge.handler.call(Struct.new(:body).new(JSON.generate(chat_line_payload))).join
+
+    assert_empty output.string
+    assert_match(/ignored chat-kind payload/, logs.string)
+    assert_empty runner.commands_matching(/chat line /)
+  end
+
   private
-    def bridge(runner, projects: [ "A" ], logger: StringIO.new)
+    def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new)
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer,
         agent: agent_identity,
         projects: projects,
-        types: "Comment",
+        types: types,
         basecamp_cli: build_cli(runner),
-        emitter: BasecampAgentConnector::Emitter.new(output: StringIO.new),
+        emitter: BasecampAgentConnector::Emitter.new(output: output),
         logger: logger
     end
 end

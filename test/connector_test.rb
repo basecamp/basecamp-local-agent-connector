@@ -7,7 +7,7 @@ class ConnectorTest < Minitest::Test
     assert_equal "clawdito", options.agent
     assert_equal [ "Queenbee" ], options.projects
     assert_empty options.repos
-    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo", options.types
+    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line", options.types
     assert_equal [ "pull_request_review" ], options.events
     assert_nil options.port
     assert_equal :operator, options.trust
@@ -47,6 +47,23 @@ class ConnectorTest < Minitest::Test
     options = parse "@clawdito", "--project", "A", "--allow-project", "--allow-assignments-from-authorized"
 
     assert options.allow_assignments
+  end
+
+  def test_parses_the_chat_poll_interval
+    assert_equal 15, parse("@clawdito", "--project", "A").chat_poll
+    assert_equal 60, parse("@clawdito", "--project", "A", "--chat-poll", "60").chat_poll
+  end
+
+  def test_refuses_a_non_positive_chat_poll_interval
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--chat-poll", "0"
+    end
+  end
+
+  def test_refuses_types_that_reduce_to_nothing
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--types", " , "
+    end
   end
 
   def test_refuses_value_flags_that_imply_different_trust_modes
