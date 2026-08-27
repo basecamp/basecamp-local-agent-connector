@@ -60,7 +60,9 @@ There are thus **four triggers**:
 4. a **boost** (`boost_created`) on the agent's own work — boosts have no
    webhooks, so the connector polls the agent's received-boosts feed (every
    `--boost-poll` seconds, default 60; `--no-boosts` disables). The booster is
-   gated exactly like a mention author. See
+   gated exactly like a mention author, matched by Person id (the agent's view
+   of the feed redacts other users' emails, so under email-keyed `allowlist`/
+   `domain` trust, boosts effectively stay operator-only). See
    [When someone boosts the agent's work](#when-someone-boosts-the-agents-work).
 
 ## Runs from any project — the runtime lives in the connector clone

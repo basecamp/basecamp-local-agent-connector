@@ -213,6 +213,9 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  # Email-keyed trust modes reach boosts only when the agent can see the
+  # booster's address (bc3 redacts emails from non-admin viewers), so this
+  # models an agent allowed to see it.
   def test_an_authorized_colleagues_boost_emits_under_domain_trust
     runner = FakeCommandRunner.new
     booster = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
@@ -222,6 +225,17 @@ class PipelineTest < Minitest::Test
       boost_payload(received_boost("booster" => booster))
 
     assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+  end
+
+  def test_a_redacted_colleagues_boost_cannot_authorize_email_keyed_trust
+    redacted = { "id" => 300, "name" => "Marie", "email_address" => "m••••@•••••••.•••" }
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => redacted) ])
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ])).process \
+      boost_payload(received_boost("booster" => redacted))
+
+    assert_empty @output.string
   end
 
   def test_emits_for_an_assignment_of_the_agent_by_the_operator
@@ -250,10 +264,12 @@ class PipelineTest < Minitest::Test
   end
 
   def test_drops_event_whose_claimed_author_is_not_the_authoritative_one
+    # The POST claims the operator's email on the real author's Person id; the
+    # corroborated creator (Sam) is who must be authorized, and isn't.
     runner = FakeCommandRunner.new
-    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 100, "name" => "Sam", "email_address" => "sam@elsewhere.net" }))
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }))
 
-    pipeline(runner).process(sample_payload)
+    pipeline(runner).process(sample_payload("creator" => { "id" => 400, "name" => "Sam", "email_address" => "operator@example.com" }))
 
     assert_empty @output.string
     assert_match(/authoritative author is not authorized/, @logs.string)

@@ -50,12 +50,17 @@ author, agent replies are never re-ingested — this is the structural fix for t
 reply feedback loop. The connector warns at startup if the two resolve to the
 same user.
 
-The author match is keyed on **email address**, not id. Basecamp has two id
-spaces — a webhook's `creator.id` is an account-scoped **Person** id, while
-`basecamp me` returns a global **identity** id; they differ for the same human.
-The email address is consistent across both, so it is the reliable trust key.
-The mention match looks for a mention attachment
-(`application/vnd.basecamp.mention`) naming the agent.
+The author match is keyed on **email address or account Person id** — either
+identifies the author. Basecamp has two id spaces — a webhook's `creator.id`
+is an account-scoped **Person** id, while `basecamp me` returns a global
+**identity** id; they differ for the same human — so the connector resolves
+both the email and the account Person id for each identity at startup. Email
+alone is not enough: bc3 **redacts other users' email addresses from
+non-admin viewers** (`Person#can_see_email_address_of?` is self-or-admin), so
+a feed fetched as the (non-admin) agent shows every other author as
+`j••••@••••.•••` — there the Person id is the only usable key. The mention
+match looks for a mention attachment (`application/vnd.basecamp.mention`)
+naming the agent.
 
 ---
 
@@ -496,7 +501,12 @@ Coverage the suite must include:
   mode's authors; the agent's own boosts never authorize), corroboration is a
   fresh fetch of the same feed (claimed id present with the claimed booster;
   emitted booster/content/recording all from the fetch), and feed membership is
-  the targeting fact. History is baselined by time, never dispatched; the feed
+  the targeting fact. The agent's view of the feed **redacts other users'
+  emails** (bc3 shows real addresses only to yourself or an admin), so the
+  booster matches by account Person id; email-keyed trust modes (`allowlist`,
+  `domain`) therefore cannot broaden the boost trigger beyond the operator
+  unless the agent can see emails — `project` mode, keyed on the corroborated
+  Person id and client flag, broadens it fine. History is baselined by time, never dispatched; the feed
   is account-wide, so the bound is the agent's identity rather than the
   watched-project list. `--no-boosts` disables the trigger.
 - Assignment trigger: the documented-but-previously-undocumented

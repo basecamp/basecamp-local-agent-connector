@@ -151,8 +151,10 @@ What `bin/connect` has in place, at a glance:
 
 - **Operator-only triggering by default** — with no trust flags, an event acts
   only when its creator is the operator (the CLI default profile, or
-  `--operator <profile>`), matched by email. Trust can be **deliberately
-  broadened** per run — see [Trust modes](#trust-modes) below.
+  `--operator <profile>`), matched by email or account Person id (bc3 redacts
+  other users' emails from non-admin viewers, so the id is the key that always
+  works). Trust can be **deliberately broadened** per run — see
+  [Trust modes](#trust-modes) below.
 - **Agent-self exclusion** — the agent's own identity never authorizes, in any
   mode, matched by email *and* Person id. Even when trust is broadened to a
   domain or project the agent belongs to, its own posts cannot re-trigger it.
@@ -174,8 +176,11 @@ What `bin/connect` has in place, at a glance:
   arrive by webhook (polling that feed is the delivery mechanism), and the feed
   files a boost under the person it was aimed at, so membership is both the
   existence proof and the targeting proof. The booster is gated exactly like a
-  mention author, and the emitted booster/content come from the fetch, never
-  from a payload.
+  mention author — matched by Person id, since the agent's view of the feed
+  redacts other users' emails — and the emitted booster/content come from the
+  fetch, never from a payload. Email-keyed trust modes (`allowlist`, `domain`)
+  can't see through that redaction, so under them boosts effectively stay
+  operator-only; `project` mode broadens boosts fine.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -205,8 +210,9 @@ A webhook payload is attacker-influenceable text that flows into an agent which
 can run commands. `bin/connect` emits an event only when **all** of these hold:
 
 1. **Authored by an authorized user.** By default that means *you* alone (the
-   CLI default profile, or `--operator <profile>`), matched by email: a third
-   party who can comment in the project cannot make your agent do anything.
+   CLI default profile, or `--operator <profile>`), matched by email or account
+   Person id: a third party who can comment in the project cannot make your
+   agent do anything.
    Trust modes (below) can deliberately extend this to named colleagues, a
    domain, or the whole project membership — and for a **mention** the check is
    applied **twice**: once on the claimed webhook payload as a cheap pre-filter,

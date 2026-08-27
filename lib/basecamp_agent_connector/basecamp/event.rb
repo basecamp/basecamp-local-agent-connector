@@ -165,10 +165,14 @@ class BasecampAgentConnector::Basecamp::Event
     kind == BOOST_KIND
   end
 
+  # Email or account Person id — either key identifies the author. Email alone
+  # is not enough: bc3 redacts other users' addresses from non-admin viewers
+  # (`Person#can_see_email_address_of?` is self-or-admin), so a feed the agent
+  # fetches shows every other booster as `j••••@••••.•••`. The Person id is
+  # visible to every viewer and is the same account-scoped id space the
+  # webhook's `creator.id` uses, so it matches where a redacted email cannot.
   def authored_by?(identity)
-    return false if creator_email.nil? || identity.email.nil?
-
-    creator_email.casecmp?(identity.email)
+    authored_by_email?(identity) || authored_by_person_id?(identity)
   end
 
   def mentions?(agent)
@@ -210,6 +214,14 @@ class BasecampAgentConnector::Basecamp::Event
   end
 
   private
+    def authored_by_email?(identity)
+      !creator_email.nil? && !identity.email.nil? && creator_email.casecmp?(identity.email)
+    end
+
+    def authored_by_person_id?(identity)
+      !identity.person_id.nil? && creator_id == identity.person_id
+    end
+
     def mentioned_person_ids
       mention_attachment_sgids.flat_map { |sgid| person_ids_in(sgid) }
     end

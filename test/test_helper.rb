@@ -138,12 +138,15 @@ module PayloadHelpers
   # boost itself plus the booster and the boosted recording (which has no
   # `content` field in this representation). There is no webhook envelope —
   # the BoostPoller synthesizes one via Event.boost_payload.
+  # The booster's email arrives redacted: bc3 shows real addresses only to the
+  # person themselves or an admin, and the agent fetching its feed is neither.
+  # The account Person id is what identifies the booster.
   def received_boost(overrides = {})
     {
       "id" => 88001,
       "content" => "🔥",
       "created_at" => "2026-06-28T12:00:00Z",
-      "booster" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com", "client" => false },
+      "booster" => { "id" => 100, "name" => "Operator", "email_address" => "o•••••••@•••••••.•••", "client" => false },
       "recording" => boosted_recording
     }.merge(overrides)
   end
@@ -172,7 +175,7 @@ module PayloadHelpers
   end
 
   def operator_identity
-    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
+    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: 100)
   end
 
   def authorizer(trust: :operator, emails: [], domains: [], allow_assignments: false, operator: operator_identity, agent: agent_identity)

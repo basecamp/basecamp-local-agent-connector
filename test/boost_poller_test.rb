@@ -33,7 +33,9 @@ class BoostPollerTest < Minitest::Test
     assert_equal 88001, emitted["event_id"]
     assert_equal "boost_created", emitted["kind"]
     assert_equal "🔥", emitted["details"]["boost"]["content"]
-    assert_equal "operator@example.com", emitted["creator"]["email_address"]
+    # The operator authorized by Person id — the agent's view of the feed
+    # redacts other users' emails.
+    assert_equal 100, emitted["creator"]["id"]
     assert_equal 456, emitted["recording"]["id"]
     assert_includes runner.commands_matching(%r{api get /my/boosts\.json}).first.join(" "), "--profile clawdito"
   end
@@ -103,18 +105,21 @@ class BoostPollerTest < Minitest::Test
   end
 
   def test_a_boost_that_reached_a_verdict_is_not_retried
-    unauthorized_alias = { "id" => 100, "name" => "Operator", "email_address" => "impostor@elsewhere.net" }
+    # A boost from an author the trust mode cannot match — here an allowlisted
+    # colleague whose email the feed redacts, leaving only a Person id the
+    # allowlist can't key on — is a settled drop, not a retry: later polls
+    # skip it without ever re-fetching.
+    colleague = { "id" => 300, "name" => "Marie", "email_address" => "m••••@•••••••.•••", "client" => false }
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
-    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => unauthorized_alias) ])
-    poller = poller(runner)
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => colleague) ])
+    poller = poller(runner, trust_authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
 
     3.times { poller.poll }
 
     assert_empty @output.string
-    assert_match(/authoritative author is not authorized/, @logs.string)
-    # poll + one corroborating re-fetch; later polls skip the settled boost.
-    assert_equal 4, runner.commands_matching(%r{api get /my/boosts\.json}).length
+    # One fetch per poll and no corroborating re-fetches: the drop settled at
+    # the pre-filter and stayed settled.
+    assert_equal 3, runner.commands_matching(%r{api get /my/boosts\.json}).length
   end
 
   def test_a_prestart_boost_entering_the_window_late_is_not_dispatched
@@ -252,10 +257,10 @@ class BoostPollerTest < Minitest::Test
   end
 
   private
-    def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { })
+    def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer)
       BasecampAgentConnector::Basecamp::BoostPoller.new \
         basecamp_cli: build_cli(runner),
-        pipeline: pipeline(runner),
+        pipeline: pipeline(runner, trust_authorizer),
         agent: @agent,
         interval: 15,
         logger: @logs,
@@ -263,9 +268,9 @@ class BoostPollerTest < Minitest::Test
         clock: clock
     end
 
-    def pipeline(runner)
+    def pipeline(runner, trust_authorizer)
       BasecampAgentConnector::Basecamp::Pipeline.new \
-        authorizer: authorizer,
+        authorizer: trust_authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),

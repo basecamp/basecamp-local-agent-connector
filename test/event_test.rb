@@ -59,7 +59,9 @@ class EventTest < Minitest::Test
     assert_equal "boost_created", event.kind
     assert_equal 88001, event.id
     assert_equal 100, event.creator_id
-    assert_equal "operator@example.com", event.creator_email
+    # The agent's view of the feed redacts the booster's email; the Person id
+    # still identifies the operator.
+    assert event.authored_by?(operator_identity)
     assert_equal 456, event.recording["id"]
     refute event.assignment_changed?
     refute event.subscribable_comment?
@@ -84,6 +86,18 @@ class EventTest < Minitest::Test
     assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "email_address" => "OPERATOR@example.com" })).authored_by?(operator_identity)
     refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "email_address" => "someone@example.com" })).authored_by?(operator_identity)
     refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => {})).authored_by?(operator_identity)
+  end
+
+  def test_authored_by_matches_on_person_id_when_the_email_is_redacted
+    # bc3 redacts other users' emails from non-admin viewers, so a feed the
+    # agent fetches identifies the operator only by account Person id.
+    redacted = { "id" => 100, "name" => "Operator", "email_address" => "o•••••••@•••••••.•••" }
+
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => redacted)).authored_by?(operator_identity)
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => redacted.merge("id" => 999))).authored_by?(operator_identity)
+    # No resolved person id means email is the only key.
+    emailless_operator = BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => redacted)).authored_by?(emailless_operator)
   end
 
   def test_mentions_the_agent
