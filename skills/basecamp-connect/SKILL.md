@@ -320,11 +320,9 @@ depth.
 
 ### When the agent is assigned a card/todo
 
-If the event `kind` ends in `_assignment_changed`, the requester (the event
-`creator` — the operator by default, or an authorized coworker when `bin/connect`
-runs with `--allow-assignments-from-authorized`) assigned the agent to the
-recording (a card/todo/step) — there's no mention to strip; **the recording
-itself is the task**. The dispatched background agent should, in order:
+If the event `kind` ends in `_assignment_changed`, the operator assigned the
+agent to the recording (a card/todo/step) — there's no mention to strip; **the
+recording itself is the task**. The dispatched background agent should, in order:
 
 1. **Acknowledge first with a boost** — same as for a mention: boost the
    recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
@@ -337,7 +335,7 @@ itself is the task**. The dispatched background agent should, in order:
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).
 4. **Reply with the result** on the same recording as the agent — and on failure,
-   a short error summary that @mentions the requester (the event `creator`).
+   a short error summary that @mentions the operator.
 
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns
