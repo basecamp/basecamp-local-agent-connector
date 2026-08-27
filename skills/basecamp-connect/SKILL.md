@@ -110,11 +110,16 @@ The skill remembers the last successful connection in
 ```
 
 - **Invoked without arguments:** read that file and **confirm the stored params
-  with the user before starting** — show the agent, the project list, **and the
-  trust configuration (mode + the concrete allowed set)** and ask whether to go
-  with them, adjust them (add/drop projects, different agent, change trust), or
-  start fresh. Never launch on stored params silently. If the file doesn't
-  exist, ask for the agent and projects as usual.
+  with the user before starting** — show the agent, the project list, **the
+  trust configuration (mode + the concrete allowed set)**, **and the effective
+  coverage: the `types` and `chat_poll` values that will actually be used** —
+  the stored ones, or the defaults when the store predates those fields. Showing
+  the *effective* values matters because the defaults include `Chat::Line`: a
+  store saved before these fields existed would otherwise relaunch with Campfire
+  polling silently added to an apparently unchanged connection. Ask whether to
+  go with them, adjust them (add/drop projects, different agent, change trust or
+  coverage), or start fresh. Never launch on stored params silently. If the file
+  doesn't exist, ask for the agent and projects as usual.
 - **Invoked with arguments:** arguments win; the store is not consulted.
 - **After every successful registration** (the `Listening for mentions of …`
   line — or, for a chat-only `--types`, the `Polling … Campfire(s) …` line),
