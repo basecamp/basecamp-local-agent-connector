@@ -87,6 +87,22 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  def test_a_forged_comment_kind_pointing_at_a_subscribed_message_cannot_emit
+    # The POST claims comment_created but names an existing subscribed Message
+    # the operator authored. Creator corroborates and the agent even subscribes,
+    # but the authoritative recording is not a Comment, so nothing is emitted.
+    message = sample_recording("type" => "Message", "content" => "<p>an old message, no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(message)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("recording" => message))
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+    assert_empty runner.commands_matching(/subscriptions show/)
+  end
+
   def test_a_forged_subscribed_flag_in_the_payload_cannot_emit
     # The POST claims agent_subscribed=true, but the agent is not really a
     # subscriber. The verifier discards the claimed flag and stamps its own from

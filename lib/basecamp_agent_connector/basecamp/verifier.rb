@@ -1,4 +1,6 @@
 class BasecampAgentConnector::Basecamp::Verifier
+  COMMENT_RECORDING_TYPE = "Comment"
+
   def initialize(basecamp_cli:, agent:)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -75,8 +77,14 @@ class BasecampAgentConnector::Basecamp::Verifier
     # stamp binds to what Basecamp reports now, not to anything in the POST. A
     # failed or missing lookup stamps false: never emit on an unconfirmed
     # subscription.
+    #
+    # The recording's authoritative `type` must be a Comment, not just the
+    # claimed `comment_created` kind: otherwise a forged POST naming that kind
+    # but pointing at an existing subscribed Message/Card would corroborate on
+    # creator and pass the subscriber check, emitting though no comment exists.
     def agent_subscribed?(event, recording)
       event.subscribable_comment? && \
+        recording["type"] == COMMENT_RECORDING_TYPE && \
         !mentions_agent?(recording) && \
         agent_subscribes_to_parent?(recording)
     end

@@ -107,6 +107,20 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands_matching(/subscriptions show/)
   end
 
+  def test_does_not_stamp_subscribed_when_the_recording_is_not_a_comment
+    # A forged comment_created pointing at a subscribed Message/Card: creator
+    # corroborates, but the authoritative recording is not a Comment, so it is
+    # not treated as a subscribed comment and no subscribers lookup is made.
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("type" => "Message", "content" => "<p>an old message</p>"))
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.subscribed?
+    assert_empty runner.commands_matching(/subscriptions show/)
+  end
+
   def test_a_failed_subscribers_lookup_stamps_not_subscribed
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
