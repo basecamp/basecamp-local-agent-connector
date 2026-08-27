@@ -464,6 +464,9 @@ Coverage the suite must include:
   matching the agent's Person id; the author is gated exactly as a mention is
   (operator by default, else the active trust mode's authors), and the agent's
   own comments never re-trigger because its identity never authorizes.
+- Boosts on the agent's own recordings can't arrive this way — a boost never
+  fires a webhook — so boost coverage arrives separately, via a poll of the
+  agent's notifications feed (follow-up PR).
 - Assignment trigger: the documented-but-previously-undocumented
   `todo_assignment_changed` / `kanban_card_assignment_changed` /
   `kanban_step_assignment_changed` events (bc3 PR #12156). Actionable when
