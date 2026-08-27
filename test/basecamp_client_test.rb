@@ -17,6 +17,14 @@ class BasecampClientTest < Minitest::Test
     assert_includes runner.commands.last.join(" "), "--profile clawdito"
   end
 
+  def test_malformed_json_from_a_successful_command_is_a_client_error
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit'
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).chats(project: 222) }
+    assert_match(/malformed JSON/, error.message)
+  end
+
   def test_create_webhook_passes_project_and_types
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)

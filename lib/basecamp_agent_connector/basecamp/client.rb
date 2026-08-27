@@ -55,6 +55,10 @@ class BasecampAgentConnector::Basecamp::Client
       end
 
       unwrap JSON.parse(result.stdout)
+    rescue JSON::ParserError => error
+      # A truncated or garbled success is a failed command, not a crash:
+      # every caller already rescues Error, so it stays on the same path.
+      raise Error, "`basecamp #{arguments.join(' ')}` returned malformed JSON: #{error.message}"
     end
 
     def unwrap(parsed)
