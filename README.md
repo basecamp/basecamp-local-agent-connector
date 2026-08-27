@@ -163,6 +163,12 @@ What `bin/connect` has in place, at a glance:
 - **Mention gating** — the recording must contain a real Basecamp mention
   *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
   the agent's Person id encoded in the mention SGID.
+- **Subscription gating** — a new comment with *no* mention still triggers when
+  the agent subscribes to the commented-on recording (a card/thread it
+  participates in). Subscription is a live API fact, so it is confirmed by
+  re-fetching the parent's subscribers and matching the agent's Person id — never
+  taken from the payload. The comment author is gated exactly like a mention
+  (operator by default, or the active trust mode's authors).
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -201,12 +207,15 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    Basecamp actually recorded, never to forgeable POST text. (An **assignment**
    corroborates the agent's assignee state but not the assigner — see the
    assignment caveat under [Trust modes](#trust-modes).)
-2. **@mentions the agent.** `recording.content` must contain a real Basecamp
-   mention of the agent user — a mention *attachment*
-   (`application/vnd.basecamp.mention`) naming the agent, not just loose text
-   that happens to contain the name. This too is re-checked on the corroborated
-   recording, so a forged mention paired with a real un-mentioning recording is
-   dropped.
+2. **Targets the agent.** The recording must reach the agent one of three ways:
+   a real Basecamp mention *attachment* (`application/vnd.basecamp.mention`)
+   naming it (not loose text that happens to contain the name); an assignment
+   adding it to a card/todo; or a **new comment on a recording the agent
+   subscribes to**. Mentions are re-checked on the corroborated recording, so a
+   forged mention paired with a real un-mentioning recording is dropped;
+   subscription is re-fetched from the live subscribers API and stamped by the
+   verifier, so a comment the agent doesn't actually subscribe to is dropped the
+   same way.
 3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
    API and confirmed. For a mention that means it exists **with the claimed
    creator and the claimed mention** — so a forged POST cannot survive. For an

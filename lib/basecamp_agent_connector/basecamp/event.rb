@@ -16,6 +16,14 @@ class BasecampAgentConnector::Basecamp::Event
   # payload arriving on the webhook route is by definition not from Basecamp.
   CHAT_KIND_PREFIX = "chat_"
 
+  # A third way to trigger the agent: a new comment on a recording it subscribes
+  # to, with no @mention. A new comment always hangs off a subscribable parent
+  # (the commented-on todo/card/message), so `comment_created` is the one kind
+  # that can trigger by subscription. Whether the agent actually subscribes is a
+  # live API fact the Verifier corroborates and stamps onto the authoritative
+  # event under `agent_subscribed`; a raw webhook payload never carries it.
+  COMMENT_CREATED_KIND = "comment_created"
+
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
   # The webhook delivers a mention as an unexpanded attachment carrying only an
@@ -126,6 +134,10 @@ class BasecampAgentConnector::Basecamp::Event
     kind.start_with?(CHAT_KIND_PREFIX)
   end
 
+  def subscribable_comment?
+    kind == COMMENT_CREATED_KIND
+  end
+
   def authored_by?(identity)
     return false if creator_email.nil? || identity.email.nil?
 
@@ -142,6 +154,13 @@ class BasecampAgentConnector::Basecamp::Event
     return false if agent.person_id.nil?
 
     assignment_changed? && added_person_ids.include?(agent.person_id)
+  end
+
+  # True only on an authoritative event the Verifier stamped after confirming,
+  # against the live subscribers API, that the agent subscribes to the comment's
+  # parent. Reads nothing from the forgeable webhook payload.
+  def subscribed?
+    @payload["agent_subscribed"] == true
   end
 
   def to_emitted_hash

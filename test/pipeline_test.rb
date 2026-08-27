@@ -41,13 +41,65 @@ class PipelineTest < Minitest::Test
     assert_empty @output.string
   end
 
-  def test_ignores_event_that_does_not_mention_the_agent
-    payload = sample_payload
-    payload["recording"]["content"] = "<p>just a normal comment, no mention</p>"
+  def test_ignores_a_comment_that_neither_mentions_nor_subscribes_the_agent
+    recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
-    pipeline(FakeCommandRunner.new).process(payload)
+    pipeline(runner).process(sample_payload("recording" => recording))
 
     assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+  end
+
+  def test_emits_for_a_comment_on_a_recording_the_agent_subscribes_to
+    recording = sample_recording("content" => "<p>no mention, just an update</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("recording" => recording))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "comment_created", JSON.parse(@output.string)["kind"]
+  end
+
+  def test_ignores_the_agents_own_comment_on_a_subscribed_recording
+    author = { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }
+    recording = sample_recording("content" => "<p>my own reply</p>", "creator" => author)
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(sample_payload("creator" => author, "recording" => recording))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_ignores_a_third_partys_comment_on_a_subscribed_recording
+    author = { "id" => 400, "email_address" => "sam@elsewhere.net" }
+    recording = sample_recording("content" => "<p>hi</p>", "creator" => author)
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(sample_payload("creator" => author, "recording" => recording))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_a_forged_subscribed_flag_in_the_payload_cannot_emit
+    # The POST claims agent_subscribed=true, but the agent is not really a
+    # subscriber. The verifier discards the claimed flag and stamps its own from
+    # the live subscribers API, so the event is dropped, not emitted.
+    recording = sample_recording("content" => "<p>no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
+
+    pipeline(runner).process(sample_payload("agent_subscribed" => true, "recording" => recording))
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
   end
 
   def test_drops_uncorroborated_event
@@ -125,6 +177,7 @@ class PipelineTest < Minitest::Test
     # recording is authoritative and carries no mention, so it must not emit.
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>a plain operator note, no mention</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     pipeline(runner).process(sample_payload)
 

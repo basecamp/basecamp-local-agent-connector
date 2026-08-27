@@ -134,6 +134,12 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Event.chat_line_payload(line)
   end
 
+  # The `basecamp subscriptions show` envelope: the subscribers of a recording,
+  # each a person with an id. The connector matches the agent's Person id here.
+  def subscribers_envelope(*person_ids)
+    envelope("subscribers" => person_ids.map { |id| { "id" => id, "name" => "Someone" } })
+  end
+
   def operator_identity
     BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
   end

@@ -64,6 +64,47 @@ class BasecampAgentConnector::Basecamp::Verifier
         "created_at" => event.created_at,
         "details" => event.details,
         "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
-        "recording" => recording
+        "recording" => recording,
+        "agent_subscribed" => agent_subscribed?(event, recording)
+    end
+
+    # A comment can trigger by subscription instead of by a mention: confirm,
+    # against the live subscribers API, that the agent subscribes to the
+    # comment's parent (the commented-on recording — subscriptions live on the
+    # container, not the comment). This is the connector's own re-fetch, so the
+    # stamp binds to what Basecamp reports now, not to anything in the POST. A
+    # failed or missing lookup stamps false: never emit on an unconfirmed
+    # subscription.
+    def agent_subscribed?(event, recording)
+      event.subscribable_comment? && \
+        !mentions_agent?(recording) && \
+        agent_subscribes_to_parent?(recording)
+    end
+
+    # A mention triggers on its own, so a mentioning comment needs no subscribers
+    # lookup. Reuse the canonical mention matcher on the authoritative recording.
+    def mentions_agent?(recording)
+      BasecampAgentConnector::Basecamp::Event.from_payload("recording" => recording).mentions?(@agent)
+    end
+
+    def agent_subscribes_to_parent?(recording)
+      locator = subscription_locator(recording)
+
+      if @agent.person_id.nil? || locator.nil?
+        false
+      else
+        subscriber_ids(locator).include?(@agent.person_id)
+      end
+    end
+
+    def subscription_locator(recording)
+      parent = recording["parent"] || {}
+      parent["url"] || parent["app_url"] || recording["url"] || recording["app_url"]
+    end
+
+    def subscriber_ids(locator)
+      Array(@basecamp_cli.subscription(locator)["subscribers"]).map { |subscriber| subscriber["id"] }
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      []
     end
 end
