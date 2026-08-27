@@ -54,6 +54,24 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(assignment_payload))
   end
 
+  def test_corroborates_a_chat_line_through_the_chat_line_command
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line)
+
+    verified = verifier(runner).verify(event(chat_line_payload))
+
+    refute_nil verified
+    assert_equal 91001, verified.recording["id"]
+    assert_empty runner.commands_matching(/basecamp show/)
+  end
+
+  def test_rejects_a_chat_line_whose_authoritative_author_does_not_match
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line("creator" => { "id" => 999 }))
+
+    assert_nil verifier(runner).verify(event(chat_line_payload))
+  end
+
   private
     def verifier(runner)
       BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)

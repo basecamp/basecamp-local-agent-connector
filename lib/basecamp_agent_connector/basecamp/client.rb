@@ -24,6 +24,18 @@ class BasecampAgentConnector::Basecamp::Client
     json "show", url_or_id
   end
 
+  def chats(project:)
+    json "chat", "list", "--project", project.to_s
+  end
+
+  def chat_lines(project:, chat:, limit:)
+    json "chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s
+  end
+
+  def chat_line(url_or_id)
+    json "chat", "line", url_or_id
+  end
+
   def create_webhook(url:, project:, types:)
     json "webhooks", "create", url, "--project", project.to_s, "--types", types
   end

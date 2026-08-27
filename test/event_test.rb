@@ -64,6 +64,28 @@ class EventTest < Minitest::Test
     assert_equal 99001, emitted["event_id"]
   end
 
+  def test_chat_line_payload_synthesizes_a_chat_kind_event
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(chat_line_payload)
+
+    assert event.chat_kind?
+    assert event.actionable_kind?
+    assert_equal "chat_lines_rich_text_created", event.kind
+    assert_equal 91001, event.id
+    assert_equal 100, event.creator_id
+    assert event.mentions?(agent_identity(person_id: 200))
+    refute event.assignment_changed?
+  end
+
+  def test_chat_line_kind_mirrors_bc3_kind_derivation
+    assert_equal "chat_lines_text_created", BasecampAgentConnector::Basecamp::Event.chat_line_kind("Chat::Lines::Text")
+    assert_equal "chat_lines_rich_text_created", BasecampAgentConnector::Basecamp::Event.chat_line_kind("Chat::Lines::RichText")
+  end
+
+  def test_non_chat_kinds_are_not_chat_kind
+    refute from_kind("comment_created").chat_kind?
+    refute from_kind("kanban_card_assignment_changed").chat_kind?
+  end
+
   private
     def from_kind(kind)
       BasecampAgentConnector::Basecamp::Event.from_payload("kind" => kind)

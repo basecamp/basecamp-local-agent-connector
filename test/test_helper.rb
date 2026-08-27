@@ -108,6 +108,32 @@ module PayloadHelpers
     %(<bc-attachment sgid="#{sgid}" content="#{embedded}" content-type="application/vnd.basecamp.mention"></bc-attachment>)
   end
 
+  # A chat line as `basecamp chat messages` / `basecamp chat line` return it:
+  # the recording itself, with its Campfire as `parent`. There is no webhook
+  # envelope — the ChatPoller synthesizes one via Event.chat_line_payload.
+  def chat_line(overrides = {})
+    {
+      "id" => 91001,
+      "type" => "Chat::Lines::RichText",
+      "title" => "Hey Clawdito",
+      "created_at" => "2026-06-28T12:00:00Z",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/chats/333@91001",
+      "url" => "https://3.basecamp.com/000/buckets/222/chats/333/lines/91001.json",
+      "content" => "<div>Hey #{mention_html(person_id: 200)} please take a look</div>",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "parent" => { "id" => 333, "type" => "Chat::Transcript", "title" => "Chat", "app_url" => "https://3.basecamp.com/000/buckets/222/chats/333" },
+      "bucket" => { "id" => 222, "name" => "BC5 Calendar", "type" => "Project" }
+    }.merge(overrides)
+  end
+
+  def chat_hash(overrides = {})
+    { "id" => 333, "title" => "Chat", "type" => "Chat::Transcript" }.merge(overrides)
+  end
+
+  def chat_line_payload(line = chat_line)
+    BasecampAgentConnector::Basecamp::Event.chat_line_payload(line)
+  end
+
   def operator_identity
     BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
   end

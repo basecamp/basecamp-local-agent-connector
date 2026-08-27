@@ -9,6 +9,13 @@ class BasecampAgentConnector::Basecamp::Event
 
   ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed", ASSIGNMENT_KIND_SUFFIX ]
 
+  # Basecamp never delivers chat events by webhook: bc3 hard-excludes every
+  # /^chat/ event kind from webhook relay and rejects Chat::Line as a
+  # registrable type. Chat-kind events therefore exist only as events the
+  # ChatPoller synthesizes from lines it fetched itself — and a chat-kind
+  # payload arriving on the webhook route is by definition not from Basecamp.
+  CHAT_KIND_PREFIX = "chat_"
+
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
   # The webhook delivers a mention as an unexpanded attachment carrying only an
@@ -35,6 +42,24 @@ class BasecampAgentConnector::Basecamp::Event
 
   def self.from_payload(payload)
     new(payload)
+  end
+
+  # The ChatPoller has no webhook envelope to parse, so it synthesizes one per
+  # new line: the line is the recording, its author the creator, and the kind is
+  # what bc3 would have named the event had chat kinds been relayed
+  # (Chat::Lines::RichText => chat_lines_rich_text_created).
+  def self.chat_line_payload(line)
+    {
+      "id" => line["id"],
+      "kind" => chat_line_kind(line["type"]),
+      "created_at" => line["created_at"],
+      "creator" => line["creator"] || {},
+      "recording" => line
+    }
+  end
+
+  def self.chat_line_kind(type)
+    "#{type.to_s.gsub("::", "_").gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase}_created"
   end
 
   def initialize(payload)
@@ -95,6 +120,10 @@ class BasecampAgentConnector::Basecamp::Event
 
   def assignment_changed?
     kind.end_with?(ASSIGNMENT_KIND_SUFFIX)
+  end
+
+  def chat_kind?
+    kind.start_with?(CHAT_KIND_PREFIX)
   end
 
   def authored_by?(identity)
