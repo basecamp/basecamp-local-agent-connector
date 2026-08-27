@@ -1,0 +1,86 @@
+lib/basecamp_agent_connector/basecamp/event.rb
+  s_964922bad4d340::t_544099915a6008 12-18
+  s_964922bad4d340::t_92682c307840da 125-128
+  s_964922bad4d340::t_cf25c204a4f932 47-64
+lib/basecamp_agent_connector/basecamp/client.rb
+  s_964922bad4d340::t_496e0d5cb47b0c 27-38
+lib/basecamp_agent_connector/basecamp/verifier.rb
+  s_964922bad4d340::t_2e6f0485df06e3 16-21,26-30
+test/basecamp_client_test.rb
+  s_964922bad4d340::t_d189406b5a9c75 47-76
+test/event_test.rb
+  s_964922bad4d340::t_6c37e946bd50fc 67-88
+test/test_helper.rb
+  s_964922bad4d340::t_a9621a52089c97 111-136
+test/verifier_test.rb
+  s_964922bad4d340::t_691d53b3a35960 57-74
+lib/basecamp_agent_connector/basecamp/chat_poller.rb
+  s_964922bad4d340::t_b7037bdef781ec 1,3-14,25-41,43,45-47,54,56,58-61,71-76,81,82-85,94-95,105-109,111-122,128-129,167-169,186-192
+  s_964922bad4d340::t_307c232b0d6b9f 62-70,110
+  s_964922bad4d340::t_9084ab2b85e92c 90
+  s_964922bad4d340::t_4c7ce96e93c8b4 2,44,134,140-143,148-149,157-163
+  s_964922bad4d340::t_684d118bde9285 132,135
+  s_964922bad4d340::t_3c8bcdd6db20e3 155-156
+  s_964922bad4d340::t_fdda345e61a820 176
+  s_964922bad4d340::t_52a593e176909a 42,77-80,86-89,91-93,96-104
+  s_964922bad4d340::t_6f6a6aa51ce22a 123-127,130-131,133,136-139,144-147,150-154,164-166,170-175,177-185
+  s_964922bad4d340::t_0b4e204d7c6fb8 15-24
+  s_964922bad4d340::t_d8368aee54117c 48-53,55,57
+lib/basecamp_agent_connector/emitter.rb
+  s_964922bad4d340::t_e43aa425fd4fe8 6,9-11,13-18
+test/chat_poller_test.rb
+  s_964922bad4d340::t_d4f1338441d22b 1-15,17-110,112-127,129-150,152-157,161,163-207,306-317,322-326,328-341
+  s_964922bad4d340::t_6a2accf3bf9356 209-211,214-219,221-224,233-234
+  s_964922bad4d340::t_b0ee42d0fe3808 208,212-213,220,225-232
+  s_964922bad4d340::t_af7a9abde193d5 235-253
+  s_964922bad4d340::t_3921e9f4fee626 254-270
+  s_964922bad4d340::t_2ee2e76281a47f 271-287,327
+  s_964922bad4d340::t_48279f42fea7e8 16,111,288-305,318-321
+  s_964922bad4d340::t_f1a6f42b8d8089 128
+  s_964922bad4d340::t_6ce6f7f8210acd 151,158-160,162
+lib/basecamp_agent_connector/connector.rb
+  s_964922bad4d340::t_2bdddde441763b 12-14,19,40,45,63-69,83-84,158
+  s_964922bad4d340::t_f3f3e89c3a7c10 78,175-176,178
+  s_964922bad4d340::t_09a23b8c84a62c 126-133
+test/basecamp_bridge_test.rb
+  s_964922bad4d340::t_2bca1d5c52b3ac 73
+  s_964922bad4d340::t_3b018d6a912386 42-55,60-72,74-93,95,100,102
+  s_964922bad4d340::t_57b46e89fdf259 56-59
+skills/basecamp-connect/SKILL.md
+  s_964922bad4d340::t_f8770d4087d8c7 339-359,367
+  s_964922bad4d340::t_91878d45223e7b 360-366
+  s_964922bad4d340::t_bb37b11ca7ca17 120-121,191-193
+  s_964922bad4d340::t_db79c78f653835 106-107,123,125-129,142-144
+  s_964922bad4d340::t_4636f748b8782e 199-204,207
+lib/basecamp_agent_connector/basecamp/bridge.rb
+  s_964922bad4d340::t_aa949ed8c9cc6b 7-12,14-19,23,27,44-49,62-71,81,86-89,91-106,109-119
+  s_964922bad4d340::t_dc289df2b8b434 32-34,36,40,50-55
+  s_964922bad4d340::t_be5d4f47c8fcfb 41-43
+docs/spec.md
+  s_964922bad4d340::t_b129623d7c6bf5 149-153,358
+  s_964922bad4d340::t_f2ede7636b1728 172-174,178-180,187-190,193
+  s_964922bad4d340::t_7c13a178b7ffd3 181-186
+test/connector_test.rb
+  s_964922bad4d340::t_c3c582be5118af 10,52-62
+  s_964922bad4d340::t_3d2cd6b04f95ab 63-68
+docs/built-in-support.md
+  s_964922bad4d340::t_12bbc12feeb3c0 29
+README.md
+  s_964922bad4d340::t_773247c755f0af 297-298,370-373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "0a3231c4bcfcdeaed823184ae57573f3b4097ced",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
