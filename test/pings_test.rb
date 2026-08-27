@@ -24,13 +24,15 @@ class PingsTest < Minitest::Test
     runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
     stub_lines runner, [ ping_line ]
-    pings = build_pings(runner, @state)
-    pings.payloads
+    build_pings(runner, @state).payloads
 
+    # A fresh runner per round, because a stub is never consumed: two rounds
+    # asking for the same page on one runner both get the first round's answer.
+    runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
-    stub_lines runner, [ ping_line("id" => 10242740960), ping_line ], page: 1
+    stub_lines runner, [ ping_line("id" => 10242740960), ping_line ]
 
-    payloads = pings.payloads
+    payloads = build_pings(runner, @state).payloads
 
     assert_equal [ 10242740960 ], payloads.map { |payload| payload.dig("recording", "id") }
   end
@@ -92,7 +94,7 @@ class PingsTest < Minitest::Test
     stub_lines runner, [ ping_line ], page: 1
 
     assert_empty build_pings(runner, @state).payloads
-    assert_empty runner.commands_matching(/lines\.json -/), "no second adoption read"
+    assert_equal 1, runner.commands_matching(/lines\.json\?page=1 /).length, "one page-one read per round"
   end
 
   # Pages descend and never overlap, so the walk stops at the first message
@@ -101,14 +103,14 @@ class PingsTest < Minitest::Test
     runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
     stub_lines runner, [ ping_line("id" => 100) ]
-    pings = build_pings(runner, @state)
-    pings.payloads
+    build_pings(runner, @state).payloads
 
+    runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
-    stub_lines runner, (105.downto(101)).map { |id| ping_line("id" => id) }, page: 1
+    stub_lines runner, (105.downto(101)).map { |id| ping_line("id" => id) }
     stub_lines runner, [ ping_line("id" => 100), ping_line("id" => 99) ], page: 2
 
-    payloads = pings.payloads
+    payloads = build_pings(runner, @state).payloads
 
     assert_equal (101..105).to_a, payloads.map { |payload| payload.dig("recording", "id") }
   end
@@ -117,15 +119,15 @@ class PingsTest < Minitest::Test
     runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
     stub_lines runner, [ ping_line("id" => 1) ]
-    pings = build_pings(runner, @state)
-    pings.payloads
+    build_pings(runner, @state).payloads
 
+    runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
     (1..BasecampAgentConnector::Basecamp::Pings::MAX_PAGES).each do |page|
       stub_lines runner, [ ping_line("id" => 1000 + page) ], page: page
     end
 
-    payloads = pings.payloads
+    payloads = build_pings(runner, @state).payloads
 
     assert_equal BasecampAgentConnector::Basecamp::Pings::MAX_PAGES, payloads.length
   end
@@ -171,7 +173,7 @@ class PingsTest < Minitest::Test
   def test_a_failed_read_emits_nothing_and_stays_retryable
     runner = FakeCommandRunner.new
     stub_notifications runner, [ ping_notification ]
-    runner.stub "api get #{ping_circle.lines_path}", stderr: "timed out", exit_status: 1
+    runner.stub "api get #{ping_circle.lines_path(page: 1)} ", stderr: "timed out", exit_status: 1
 
     assert_empty build_pings(runner, @state).payloads
     refute @state.seen?(BasecampAgentConnector::Basecamp::Pings::LINES, 10242670010)
@@ -182,5 +184,95 @@ class PingsTest < Minitest::Test
     runner.stub "notifications list", stderr: "timed out", exit_status: 1
 
     assert_empty build_pings(runner, @state).payloads
+  end
+
+  # A ping he has boosted is one he has acted on, so it stops cluttering the
+  # conversation. His ruling 2026-08-27.
+  def test_a_ping_he_boosted_is_deleted
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ agent_line("id" => 7, "boosts_count" => 1) ]
+    stub_boosts runner, 7, [ 100 ]
+    runner.stub "api delete #{ping_circle.line_path(7)}", stdout: envelope("ok" => true)
+
+    build_pings(runner, @state).payloads
+
+    assert_equal 1, runner.commands_matching(/api delete .*lines\/7\.json/).length
+  end
+
+  # The narrowest part of the rule and the one worth a test of its own: anyone
+  # else in a conversation could otherwise delete the bot's side of it.
+  def test_a_boost_from_somebody_else_deletes_nothing
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ agent_line("id" => 7, "boosts_count" => 1) ]
+    stub_boosts runner, 7, [ 300 ]
+
+    build_pings(runner, @state).payloads
+
+    assert_empty runner.commands_matching(/api delete/)
+  end
+
+  # His own messages are his to delete, not the bot's.
+  def test_his_own_boosted_message_is_left_alone
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ ping_line("id" => 7, "boosts_count" => 1) ]
+
+    build_pings(runner, @state).payloads
+
+    assert_empty runner.commands_matching(/api delete/)
+    assert_empty runner.commands_matching(/boosts\.json/), "no boost read is owed on his own line"
+  end
+
+  def test_an_unboosted_ping_costs_no_boost_read
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ agent_line("id" => 7) ]
+
+    build_pings(runner, @state).payloads
+
+    assert_empty runner.commands_matching(/boosts\.json/)
+    assert_empty runner.commands_matching(/api delete/)
+  end
+
+  # The reaper shares the emitter's read rather than paying for its own.
+  def test_the_round_reads_page_one_once
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ ping_line("id" => 9) ]
+
+    build_pings(runner, @state).payloads
+
+    assert_equal 1, runner.commands_matching(/lines\.json\?page=1 /).length
+  end
+
+  def test_a_delete_that_fails_is_survived
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ agent_line("id" => 7, "boosts_count" => 1) ]
+    stub_boosts runner, 7, [ 100 ]
+    runner.stub "api delete", stderr: "timed out", exit_status: 1
+
+    build_pings(runner, @state).payloads
+  end
+
+  # The one path that could re-emit an already-dispatched message: adoption reads
+  # the head run rather than the line memory, so a circle key lost while its line
+  # ids survived would replay his latest question at a fresh agent.
+  def test_adoption_does_not_re_emit_a_message_already_handled
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ ping_line("id" => 8), ping_line("id" => 7) ]
+    build_pings(runner, @state).payloads
+
+    @state.forget BasecampAgentConnector::Basecamp::Pings::CIRCLES, ping_circle.key
+
+    runner = FakeCommandRunner.new
+    stub_notifications runner, [ ping_notification ]
+    stub_lines runner, [ ping_line("id" => 8), ping_line("id" => 7) ]
+
+    assert_empty build_pings(runner, @state).payloads,
+      "the circle is re-adopted, but both messages are already remembered"
   end
 end

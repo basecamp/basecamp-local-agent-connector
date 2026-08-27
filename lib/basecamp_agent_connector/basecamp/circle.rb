@@ -66,6 +66,14 @@ class BasecampAgentConnector::Basecamp::Circle
     "buckets/#{id}/recordings/#{transcript}/subscription.json"
   end
 
+  def boosts_path(line)
+    "buckets/#{id}/recordings/#{line}/boosts.json"
+  end
+
+  def line_path(line)
+    "buckets/#{id}/chats/#{transcript}/lines/#{line}.json"
+  end
+
   def to_s
     title.nil? ? key : "#{title} (#{key})"
   end

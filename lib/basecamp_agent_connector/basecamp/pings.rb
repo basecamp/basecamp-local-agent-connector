@@ -44,10 +44,13 @@ class BasecampAgentConnector::Basecamp::Pings
   # and reading it twice would emit them twice.
   def payloads
     @staged = {}
+    @pages = {}
     established = remembered_circles
 
     adopted = adopt_new_circles
-    established.flat_map { |circle| new_lines(circle) } + adopted
+    emitted = established.flat_map { |circle| new_lines(circle) } + adopted
+    (established + @adopted_this_round.to_a).each { |circle| reap circle }
+    emitted
   end
 
   # Undo what this round remembered for a payload that was never emitted, so the
@@ -66,7 +69,7 @@ class BasecampAgentConnector::Basecamp::Pings
   def seed
     ping_circles.each do |circle|
       state.record CIRCLES, circle.key
-      fetch_lines(circle).each { |line| remember_line line }
+      fetch_lines(circle, page: 1).each { |line| remember_line line }
     end
   end
 
@@ -77,21 +80,80 @@ class BasecampAgentConnector::Basecamp::Pings
       state.recorded(CIRCLES).filter_map { |key| BasecampAgentConnector::Basecamp::Circle.from_key(key) }
     end
 
+    # A ping he has boosted is one he has already acted on, so the conversation
+    # stops having to carry it. His words on 2026-08-27: "I've taken action and
+    # now they're gone so we can keep the ping clean."
+    #
+    # Narrow on purpose, in three ways. Only the agent's own lines -- his are his
+    # to delete. Only a boost from HIM, confirmed by reading the boost rather than
+    # trusting the count, because anyone else in a conversation could otherwise
+    # delete the bot's side of it. And only page one, because a boost arrives
+    # while the message is still recent and scanning the whole history every round
+    # would cost a call per line forever.
+    #
+    # `boosts_count` rides along in the listing already fetched, so a round with
+    # no boosts costs nothing extra.
+    def reap(circle)
+      fetch_lines(circle, page: 1).each do |line|
+        next unless agent_authored?(line)
+        next unless (line["boosts_count"] || 0).positive?
+        next unless boosted_by_operator?(circle, line)
+
+        delete circle, line
+      end
+    end
+
+    def boosted_by_operator?(circle, line)
+      return false if operator.person_id.nil?
+
+      boosts = basecamp_cli.get_listing(circle.boosts_path(line["id"]), profile: agent.profile)
+      boosts.any? { |boost| boost.dig("booster", "id") == operator.person_id }
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      log "could not read the boosts on ping #{line['id']}: #{error.message}"
+      false
+    end
+
+    # A failed delete is left alone rather than retried here: the line is still
+    # remembered, so nothing re-emits, and the next round sees the boost again.
+    def delete(circle, line)
+      basecamp_cli.delete circle.line_path(line["id"]), profile: agent.profile
+      log "deleted ping #{line['id']}, boosted by the operator"
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      log "could not delete ping #{line['id']}: #{error.message}"
+    end
+
+    def agent_authored?(line)
+      return false if agent.person_id.nil?
+
+      line.dig("creator", "id") == agent.person_id
+    end
+
     # Adoption emits the newest unbroken run of operator-authored lines and marks
     # everything older seen. A conversation opened just now holds exactly the
     # message he wrote, so it fires. One that has been running for months holds his
     # latest message and a history he is not asking about, and replaying that
     # history would dispatch an agent per message.
     def adopt_new_circles
+      @adopted_this_round = []
+
       new_circles.flat_map do |circle|
         state.record CIRCLES, circle.key
+        @adopted_this_round << circle
         log "adopted ping conversation #{circle}"
 
-        lines = fetch_lines(circle)
+        lines = fetch_lines(circle, page: 1)
         unread = lines.take_while { |line| operator_authored?(line) }
         lines.drop(unread.length).each { |line| remember_line line }
 
-        unread.reverse.filter_map { |line| emit circle, line }
+        # Skipping what is already remembered, even here. Adoption is written for a
+        # conversation nobody has read, so it consults the head run rather than the
+        # line memory -- and that made it the one path that could re-emit a message
+        # already dispatched, if a circle key were ever lost while its line ids
+        # survived. The two live in the same file and are capped separately, so
+        # that is reachable. Nothing is lost by checking: on a genuinely new
+        # conversation no line is remembered and the run emits whole.
+        unread.reject { |line| seen_line?(line) }
+          .reverse.filter_map { |line| emit circle, line }
       end
     end
 
@@ -184,7 +246,17 @@ class BasecampAgentConnector::Basecamp::Pings
     # permanent-absence case to separate out the way a recording read has one: a
     # conversation the agent is no longer part of answers `not_found` forever, and
     # re-asking costs one call a minute against a listing that is never large.
+    # Memoized for the round, because the reaper needs the same page the emitter
+    # just read and refetching it would double the cost of every round.
     def fetch_lines(circle, page: nil)
+      key = [ circle.key, page ]
+      cached = (@pages ||= {})
+      return cached[key] if cached.key?(key)
+
+      cached[key] = read_lines(circle, page: page)
+    end
+
+    def read_lines(circle, page: nil)
       basecamp_cli.get_listing(circle.lines_path(page: page), profile: agent.profile)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "could not read ping conversation #{circle}: #{error.message}"

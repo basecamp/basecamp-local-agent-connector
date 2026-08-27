@@ -197,8 +197,15 @@ module PayloadHelpers
 
   # Matched with the trailing space, or the page-less path is a prefix of every
   # paged one and answers for all of them.
-  def stub_lines(runner, lines, page: nil)
+  # Page 1 by default because every reader in a round asks for it by number: the
+  # emitter, the adopter and the boost reaper share one read.
+  def stub_lines(runner, lines, page: 1)
     runner.stub "api get #{ping_circle.lines_path(page: page)} ", stdout: envelope(lines)
+  end
+
+  def stub_boosts(runner, line, booster_ids)
+    runner.stub "api get #{ping_circle.boosts_path(line)} ",
+      stdout: envelope(booster_ids.map { |id| { "content" => "\u{1F44D}", "booster" => { "id" => id } } })
   end
 
   # What the Verifier re-fetches: the line's own URL, not the listing it came from.

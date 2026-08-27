@@ -79,6 +79,10 @@ class BasecampAgentConnector::Basecamp::Client
     listing get(url_or_path, profile: profile)
   end
 
+  def delete(url_or_path, profile: nil)
+    json "api", "delete", url_or_path.to_s, *profile_flag(profile)
+  end
+
   def create_webhook(url:, project:, types:)
     json "webhooks", "create", url, "--project", project.to_s, "--types", types
   end
