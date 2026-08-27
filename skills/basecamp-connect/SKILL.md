@@ -400,7 +400,10 @@ per person, so every effort's pings interleave in a single thread — there is n
 per-effort ping and no way to make one. Two things follow, and both are contract:
 
 - **Every ping the agent sends names its effort and ends with the routing line.**
-  Three paragraphs, then `Reply to card <bot card id>` on a line of its own — and
+  Three paragraphs — to a **tighter per-paragraph word budget than a card**, because
+  a ping is read in a notification with every other effort's pings around it, not on
+  the card it is about. `psp-ping-preview.py` reports the number; never draft against
+  a copy of it. Then `Reply to card <bot card id>` on a line of its own — and
   that last line **only on a ping that asks him something.** A close-out or a
   "the PR is green" ends after the third paragraph, or the token becomes noise
   and he stops copying it back.
