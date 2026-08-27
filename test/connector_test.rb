@@ -156,6 +156,20 @@ class ConnectorTest < Minitest::Test
     assert_empty runner.commands_matching(/reset/)
   end
 
+  def test_start_skips_the_funnel_entirely_for_a_chat_only_run
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+    runner.stub "basecamp me", stdout: JSON.generate("data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
+    runner.stub "people show me", stdout: JSON.generate("data" => { "id" => 52007412 })
+    runner.stub "chat list", stdout: "[]"
+
+    _out, err = start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner
+
+    assert_empty runner.commands_matching(/\Atailscale/)
+    assert_empty runner.commands_matching(/webhooks/)
+    assert_match(/Polling 0 Campfire\(s\)/, err)
+  end
+
   private
     def parse(*argv)
       BasecampAgentConnector::Connector.parse_options(argv)
