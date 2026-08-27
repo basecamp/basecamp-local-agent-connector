@@ -1,0 +1,33 @@
+lib/basecamp_agent_connector/basecamp/event.rb
+  s_964922bad4d340::t_544099915a6008 12-18
+  s_964922bad4d340::t_92682c307840da 125-128
+  s_964922bad4d340::t_cf25c204a4f932 47-64
+lib/basecamp_agent_connector/basecamp/client.rb
+  s_964922bad4d340::t_496e0d5cb47b0c 27-38
+lib/basecamp_agent_connector/basecamp/verifier.rb
+  s_964922bad4d340::t_2e6f0485df06e3 16-21,26-30
+test/basecamp_client_test.rb
+  s_964922bad4d340::t_d189406b5a9c75 47-76
+test/event_test.rb
+  s_964922bad4d340::t_6c37e946bd50fc 67-88
+test/test_helper.rb
+  s_964922bad4d340::t_a9621a52089c97 111-136
+test/verifier_test.rb
+  s_964922bad4d340::t_691d53b3a35960 57-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "6c80376eb120d54203ead4d3c9f5b8e3c952eed3",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
