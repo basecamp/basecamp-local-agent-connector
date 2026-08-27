@@ -277,8 +277,10 @@ Instruct that background agent to, in order:
 1. **Acknowledge immediately with a boost** — before any slow work, boost the
    originating recording (comment, message, card, **or** todo) with `On it!` **as
    the agent** so the trigger visibly registered (a boost is a lightweight
-   reaction, ≤16 chars). This is the ack for **every** trigger — mentions and
-   assignments alike:
+   reaction, ≤16 chars). This is the ack for both **directive** triggers —
+   mentions and assignments alike. Subscribed-thread comments are the one
+   exception: they get **no** boost (see *When a comment lands on a thread the
+   agent follows*):
    ```bash
    basecamp boost create <recording.url|id> "On it!" --profile <agent>
    ```
@@ -391,7 +393,8 @@ addressed. Treat this as *activity on a followed thread*, not a directive:
    problem it can act on, a change it should make. Reply on the same recording as
    the agent, exactly like a mention reply. **Default to staying silent**: a
    followed thread is not an instruction, and replying to every comment is noise.
-3. **No boost, no card moves** — a followed-thread comment is not an ack-worthy
+3. **No boost, no card moves** — this **overrides** the generic
+   acknowledge-first step above: a followed-thread comment is not an ack-worthy
    assignment; skip the `On it!` boost and the Triage move unless the agent
    actually takes the thread on.
 
