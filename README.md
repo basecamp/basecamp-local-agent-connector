@@ -245,7 +245,7 @@ bin/poll @Clawdito --project 43795599 \
 
 It emits the **same NDJSON** on stdout as `bin/connect`, through the same
 `Pipeline` and `Verifier` — so anything consuming the stream cannot tell the two
-apart, and the trust model is not re-implemented but reused. Three triggers are
+apart, and the trust model is not re-implemented but reused. Four triggers are
 covered, one per source:
 
 | Trigger | `bin/connect` | `bin/poll` |
@@ -253,9 +253,52 @@ covered, one per source:
 | The operator @mentions the agent | `comment_created` webhook | the agent's own notification feed |
 | The operator assigns the agent a card | `*_assignment_changed` webhook | the assigned-cards listing, with the assigner read from the card's history |
 | A watched column gets a card | `--watch-column` on the webhook | that column's card listing |
+| The operator pings the agent | polled on a thread beside the server | the ping source, polled |
 
 What it does **not** cover is the GitHub PR-review loop: `--repo` rides the same
 funnel, so reviews still need `bin/connect`.
+
+### Pings
+
+A ping — Basecamp's direct message — is the one trigger that **cannot** be
+delivered. Basecamp refuses every chat type at webhook registration (`Chat::Line`,
+`Chat::Transcript::Line`, `Campfire` and the rest all return `types: must be
+eligible`), so it is polled or it does not arrive. `bin/connect` therefore runs a
+ping thread beside its server; `bin/poll` reads it as one more source. Both do it
+by default, and `--no-pings` turns it off.
+
+Reaching one is unlike reaching any other recording, and the awkwardness is worth
+knowing before debugging it:
+
+- **Discovery and reading are different mechanisms.** Nothing indexes pings —
+  `circles.json` answers with an empty envelope and they appear in no recording
+  listing — so a conversation is *found* through the notification feed (`section:
+  "pings"`). It is then *read* directly through its own lines endpoint forever
+  after, and it has to be: the notification is one record per conversation that
+  Basecamp re-marks unread as messages arrive, so deduplicating on it fires on the
+  first ping in a thread and swallows every one after it.
+- **It takes two ids, and only one field carries both.** A ping is a
+  `Chat::Transcript` in a `Circle` bucket, addressed as
+  `buckets/<circle>/chats/<transcript>/lines.json` — the documented Campfire line
+  endpoint. The notification's `subscription_url` is the only place the pair
+  appears together, which is why discovery parses that and not the `app_url` a
+  human would click.
+- **`basecamp show` cannot fetch a line.** Handed a line's own API URL it rewrites
+  the path to `recordings/<id>.json` and gets a 404, because a chat line only
+  resolves under its transcript. The connector reads pings through `basecamp api
+  get`, which passes the path through untouched.
+- **The trust check is the participant list, not a mention.** Asking to be
+  @mentioned inside a two-person conversation with the agent would be asking for
+  something the conversation already is. What stands in its place is a
+  subscription read: the circle's participants must be exactly the operator and
+  the agent, re-read on every event so a conversation that gains a third person
+  stops triggering from that moment.
+- **The agent's own replies are read and passed over.** They land in the same
+  conversation, and the trust filter wants the *operator* as author.
+
+**Opening the conversation is the operator's job.** No API creates a circle, so
+the agent cannot ping first — it can only answer a thread that already exists.
+Ping the bot once and the connector finds it on the next round.
 
 | Argument / flag | Meaning | Default |
 |-----------------|---------|---------|
@@ -265,6 +308,7 @@ funnel, so reviews still need `bin/connect`.
 | `--operator` | Profile whose user is allowed to trigger. | CLI default profile |
 | `--interval` | Seconds between rounds. Floored at 15. | 60 |
 | `--backfill` | Emit what is already waiting instead of starting from now. | off |
+| `--no-pings` | Stop treating the operator's pings as a trigger. | pings on |
 | `--state` | Where handled events are remembered across restarts. | `~/.config/basecamp-connect/poll-state.json` |
 
 **A first run starts from now.** The surfaces being watched are not empty — the

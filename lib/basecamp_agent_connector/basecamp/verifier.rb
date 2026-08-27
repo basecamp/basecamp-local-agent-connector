@@ -20,9 +20,10 @@ class BasecampAgentConnector::Basecamp::Verifier
                  network\sis\s(down|unreachable)|temporarily\sunavailable|
                  \b(429|500|502|503|504)\b/xi
 
-  def initialize(basecamp_cli:, agent:)
+  def initialize(basecamp_cli:, agent:, operator: nil)
     @basecamp_cli = basecamp_cli
     @agent = agent
+    @operator = operator
   end
 
   def verify(event)
@@ -34,11 +35,19 @@ class BasecampAgentConnector::Basecamp::Verifier
   end
 
   private
+    # A ping line is read through the raw API and every other recording through
+    # `show`, because `show` cannot fetch one: it rewrites the line's own URL to
+    # `recordings/<id>.json`, which resolves to nothing, and a chat line only
+    # answers under its transcript.
     def fetch_recording(event)
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
 
-      @basecamp_cli.show(locator, profile: @agent.profile)
+      if event.ping?
+        @basecamp_cli.get(locator, profile: @agent.profile)
+      else
+        @basecamp_cli.show(locator, profile: @agent.profile)
+      end
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       raise Unreachable, "could not corroborate #{locator}: #{error.message}" if UNREACHABLE.match?(error.message)
 
@@ -55,9 +64,37 @@ class BasecampAgentConnector::Basecamp::Verifier
 
       if event.assignment_changed?
         assigns_agent?(recording)
+      elsif event.ping?
+        recording.dig("creator", "id") == event.creator_id && private_to_the_two_of_them?(event)
       else
         recording.dig("creator", "id") == event.creator_id
       end
+    end
+
+    # The check a mention makes on every other surface, made here instead. A ping
+    # is actionable because the conversation is the operator's and the agent's and
+    # nobody else's, so that has to be established from Basecamp rather than from
+    # the payload -- a third participant makes it someone else's conversation too,
+    # and the reply the agent would post lands in front of them.
+    #
+    # Re-read every time rather than remembered with the circle, because a circle
+    # that gains a participant must stop triggering from that moment, and a
+    # remembered verdict would go on answering for the old membership.
+    def private_to_the_two_of_them?(event)
+      return false if @operator.nil? || @operator.person_id.nil? || @agent.person_id.nil?
+
+      subscriber_ids(event).sort == [ @operator.person_id, @agent.person_id ].sort
+    end
+
+    def subscriber_ids(event)
+      circle = BasecampAgentConnector::Basecamp::Circle.new(id: event.bucket_id, transcript: event.transcript_id)
+      subscription = @basecamp_cli.get(circle.subscription_path, profile: @agent.profile)
+
+      Array(subscription.is_a?(Hash) ? subscription["subscribers"] : nil).map { |subscriber| subscriber["id"] }
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      raise Unreachable, "could not read the participants of #{circle}: #{error.message}" if UNREACHABLE.match?(error.message)
+
+      []
     end
 
     def assigns_agent?(recording)

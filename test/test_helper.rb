@@ -6,6 +6,7 @@ require "base64"
 require "json"
 require "openssl"
 require "stringio"
+require "tmpdir"
 
 class FakeCommandRunner
   attr_reader :commands
@@ -130,8 +131,93 @@ module PayloadHelpers
     %(<bc-attachment sgid="#{sgid}" content="#{embedded}" content-type="application/vnd.basecamp.mention"></bc-attachment>)
   end
 
-  def operator_identity
-    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
+  def operator_identity(person_id: nil)
+    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: person_id)
+  end
+
+  CIRCLE_ID = 41035616
+  TRANSCRIPT_ID = 8317112790
+
+  # A ping notification: one per conversation, pointing at the transcript rather
+  # than at any message in it, with the two ids that address it reachable only
+  # through `subscription_url`.
+  def ping_notification(overrides = {})
+    {
+      "id" => 3838517425,
+      "section" => "pings",
+      "type" => "Chat",
+      "title" => "Ping",
+      "bucket_name" => "Operator + Clawdito",
+      "created_at" => "2025-02-11T18:10:14.97Z",
+      "updated_at" => "2026-08-26T19:47:06.732Z",
+      "app_url" => "https://3.basecamp.com/000/circles/#{CIRCLE_ID}",
+      "subscription_url" =>
+        "https://3.basecampapi.com/000/buckets/#{CIRCLE_ID}/recordings/#{TRANSCRIPT_ID}/subscription.json"
+    }.merge(overrides)
+  end
+
+  def ping_line(overrides = {})
+    id = overrides["id"] || 10242670010
+
+    {
+      "id" => id,
+      "type" => "Chat::Lines::RichText",
+      "title" => "Ping",
+      "content" => "<p>Go ahead. Reply to card 10225414803</p>",
+      "created_at" => "2026-08-26T19:47:06.412Z",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "app_url" => "https://3.basecamp.com/000/circles/#{CIRCLE_ID}@#{id}",
+      "url" => "https://3.basecampapi.com/000/buckets/#{CIRCLE_ID}/chats/#{TRANSCRIPT_ID}/lines/#{id}.json",
+      "parent" => { "id" => TRANSCRIPT_ID, "type" => "Chat::Transcript", "title" => "Ping" },
+      "bucket" => { "id" => CIRCLE_ID, "name" => "Operator + Clawdito", "type" => "Circle" }
+    }.merge(overrides)
+  end
+
+  def agent_line(overrides = {})
+    ping_line({ "creator" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" } }.merge(overrides))
+  end
+
+  def ping_payload(overrides = {})
+    {
+      "id" => 10242670010,
+      "kind" => BasecampAgentConnector::Basecamp::Pings::KIND,
+      "created_at" => "2026-08-26T19:47:06.412Z",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "recording" => ping_line
+    }.merge(overrides)
+  end
+
+  def ping_circle
+    BasecampAgentConnector::Basecamp::Circle.new(id: CIRCLE_ID, transcript: TRANSCRIPT_ID)
+  end
+
+  def stub_notifications(runner, notifications)
+    runner.stub "notifications list", stdout: envelope("unreads" => notifications, "reads" => [])
+  end
+
+  # Matched with the trailing space, or the page-less path is a prefix of every
+  # paged one and answers for all of them.
+  def stub_lines(runner, lines, page: nil)
+    runner.stub "api get #{ping_circle.lines_path(page: page)} ", stdout: envelope(lines)
+  end
+
+  # What the Verifier re-fetches: the line's own URL, not the listing it came from.
+  def stub_line(runner, line)
+    runner.stub "api get #{line['url']} ", stdout: envelope(line)
+  end
+
+  def stub_subscribers(runner, ids)
+    runner.stub "api get #{ping_circle.subscription_path}",
+      stdout: envelope("subscribers" => ids.map { |id| { "id" => id } }, "count" => ids.length)
+  end
+
+  def build_pings(runner, state, operator: operator_identity(person_id: 100), agent: agent_identity)
+    BasecampAgentConnector::Basecamp::Pings.new \
+      basecamp_cli: build_cli(runner), agent: agent, operator: operator, state: state, logger: StringIO.new
+  end
+
+  def fresh_state
+    BasecampAgentConnector::PollState.new(path: File.join(Dir.mktmpdir, "poll-state.json"))
   end
 
   def agent_identity(name: "Clawdito", person_id: 200)

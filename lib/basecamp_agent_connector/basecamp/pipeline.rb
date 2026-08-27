@@ -18,11 +18,23 @@ class BasecampAgentConnector::Basecamp::Pipeline
   end
 
   private
-    # Two ways in. The operator triggers one by authoring the event and pointing it
-    # at the agent; a watched column triggers the other on card creation alone,
-    # with no operator involvement at all. Both still pass verification.
+    # Three ways in. The operator triggers one by authoring the event and pointing
+    # it at the agent; a watched column triggers the other on card creation alone,
+    # with no operator involvement at all; a ping triggers the third by being a
+    # conversation he opened with the agent and nobody else. All three still pass
+    # verification.
     def actionable?(event)
-      event.actionable_kind? && (operator_triggered?(event) || watched_creation?(event))
+      event.actionable_kind? &&
+        (operator_triggered?(event) || watched_creation?(event) || ping_from_operator?(event))
+    end
+
+    # A ping carries no mention and needs none. Asking for one would mean asking
+    # him to @mention the agent in a two-person conversation with it, which is
+    # what the conversation already is. What stands in its place is the Verifier's
+    # subscriber check: a circle whose participants are anyone besides the two of
+    # them is not this trigger.
+    def ping_from_operator?(event)
+      event.ping? && event.authored_by?(@operator)
     end
 
     def operator_triggered?(event)

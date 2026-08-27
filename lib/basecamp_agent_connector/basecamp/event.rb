@@ -11,6 +11,13 @@ class BasecampAgentConnector::Basecamp::Event
 
   CARD_CREATED_KIND = "kanban_card_created"
 
+  # A line in a ping conversation. It needs no mention to be actionable: a ping is
+  # addressed to its participants by construction, and the two-person subscriber
+  # check the Verifier makes is what a mention would otherwise stand in for.
+  PING_KIND = "chat_line_created"
+
+  CIRCLE_BUCKET_TYPE = "Circle"
+
 
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
@@ -114,6 +121,21 @@ class BasecampAgentConnector::Basecamp::Event
 
   def card_created?
     kind == CARD_CREATED_KIND
+  end
+
+  def ping?
+    kind == PING_KIND && bucket_type == CIRCLE_BUCKET_TYPE
+  end
+
+  def bucket_type
+    recording.dig("bucket", "type")
+  end
+
+  # A ping line's transcript, which addresses the conversation everywhere the
+  # circle alone does not -- the lines endpoint, and the subscription read that
+  # decides whether this conversation is private to the operator and the agent.
+  def transcript_id
+    recording.dig("parent", "id")
   end
 
   # The account-scoped person id decides this, and email is only the fallback for

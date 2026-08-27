@@ -65,6 +65,20 @@ class BasecampAgentConnector::Basecamp::Client
     listing json("events", id_or_url.to_s, *profile_flag(profile))
   end
 
+  # The raw API passthrough, and the only way to read a ping.
+  #
+  # `show` cannot fetch one: handed a line's own API URL it rewrites the path to
+  # `recordings/<id>.json` and gets a 404, because a chat line only resolves under
+  # its transcript. `api get` passes the path through untouched, and takes either a
+  # path or a full URL.
+  def get(url_or_path, profile: nil)
+    json "api", "get", url_or_path.to_s, *profile_flag(profile)
+  end
+
+  def get_listing(url_or_path, profile: nil)
+    listing get(url_or_path, profile: profile)
+  end
+
   def create_webhook(url:, project:, types:)
     json "webhooks", "create", url, "--project", project.to_s, "--types", types
   end

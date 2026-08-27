@@ -11,7 +11,8 @@ class BasecampAgentConnector::Connector
   DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo"
   DEFAULT_EVENTS = "pull_request_review"
 
-  Options = Data.define(:agent, :operator, :projects, :types, :watched_columns, :repos, :events, :port)
+  Options = Data.define(:agent, :operator, :projects, :types, :watched_columns, :repos, :events, :port,
+    :pings, :ping_interval, :state_path)
 
   def self.start(argv)
     new(parse_options(argv)).start
@@ -28,9 +29,12 @@ class BasecampAgentConnector::Connector
     types = DEFAULT_TYPES
     events = DEFAULT_EVENTS
     port = nil
+    pings = true
+    ping_interval = BasecampAgentConnector::Basecamp::PingWatcher::DEFAULT_INTERVAL
+    state_path = BasecampAgentConnector::PollState::DEFAULT_PATH
 
     OptionParser.new do |parser|
-      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--watch-column BUCKET:COLUMN[:CREATOR]]... [--repo OWNER/REPO]... [--operator PROFILE] [--types TYPES] [--events EVENTS] [--port PORT]"
+      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--watch-column BUCKET:COLUMN[:CREATOR]]... [--repo OWNER/REPO]... [--operator PROFILE] [--types TYPES] [--events EVENTS] [--port PORT] [--no-pings] [--ping-interval SECONDS] [--state PATH]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--watch-column SPEC", "Trigger on any card created in this column, with no mention or assignment (repeatable)") do |value|
         watched_columns << BasecampAgentConnector::Basecamp::WatchedColumn.parse(value)
@@ -40,6 +44,9 @@ class BasecampAgentConnector::Connector
       parser.on("--types TYPES", "Comma-separated Basecamp event types") { |value| types = value }
       parser.on("--events EVENTS", "Comma-separated GitHub webhook events") { |value| events = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
+      parser.on("--[no-]pings", "Trigger on the operator's Basecamp pings, polled (default: on)") { |value| pings = value }
+      parser.on("--ping-interval SECONDS", Integer, "Seconds between ping rounds (default: #{BasecampAgentConnector::Basecamp::PingWatcher::DEFAULT_INTERVAL})") { |value| ping_interval = value }
+      parser.on("--state PATH", "Where to remember handled pings (default: #{BasecampAgentConnector::PollState::DEFAULT_PATH})") { |value| state_path = value }
     end.parse!(arguments)
 
     agent = arguments.shift
@@ -50,7 +57,8 @@ class BasecampAgentConnector::Connector
     warn_about_unwatched_buckets(watched_columns, projects)
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types,
-      watched_columns: watched_columns, repos: repos, events: events_list(events), port: port)
+      watched_columns: watched_columns, repos: repos, events: events_list(events), port: port,
+      pings: pings, ping_interval: ping_interval, state_path: state_path)
   end
 
   # Webhooks are registered per project, so a watched column whose bucket is not
@@ -89,6 +97,7 @@ class BasecampAgentConnector::Connector
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
     install_signal_handlers
+    @ping_watcher = start_ping_watcher
     @server.start
   ensure
     teardown
@@ -156,8 +165,29 @@ class BasecampAgentConnector::Connector
 
     def teardown
       @server&.stop
+      @ping_watcher&.stop
       @bridges&.each(&:teardown)
       @tunnel&.stop
+    end
+
+    # Pings belong to no project, so they ride along with whatever else is being
+    # watched rather than being asked for -- but they need the agent identity, and
+    # a run watching only GitHub repos has none to resolve.
+    def start_ping_watcher
+      return nil unless @options.pings && @options.projects.any?
+
+      state = BasecampAgentConnector::PollState.new(path: @options.state_path)
+      agent = resolve_agent
+      operator = resolve_operator
+
+      BasecampAgentConnector::Basecamp::PingWatcher.new(
+        pings: BasecampAgentConnector::Basecamp::Pings.new(
+          basecamp_cli: basecamp_cli, agent: agent, operator: operator, state: state),
+        pipeline: BasecampAgentConnector::Basecamp::Pipeline.new(
+          operator: operator, agent: agent, emitter: emitter,
+          verifier: BasecampAgentConnector::Basecamp::Verifier.new(
+            basecamp_cli: basecamp_cli, agent: agent, operator: operator)),
+        state: state, interval: @options.ping_interval).start
     end
 
     def free_port

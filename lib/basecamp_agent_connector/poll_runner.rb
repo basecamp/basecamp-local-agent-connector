@@ -9,7 +9,7 @@ class BasecampAgentConnector::PollRunner
 
   MINIMUM_INTERVAL = 15
 
-  Options = Data.define(:agent, :operator, :projects, :watched_columns, :interval, :backfill, :state_path)
+  Options = Data.define(:agent, :operator, :projects, :watched_columns, :interval, :backfill, :state_path, :pings)
 
   def self.start(argv)
     new(parse_options(argv)).start
@@ -24,10 +24,11 @@ class BasecampAgentConnector::PollRunner
     operator = nil
     interval = DEFAULT_INTERVAL
     backfill = false
+    pings = true
     state_path = BasecampAgentConnector::PollState::DEFAULT_PATH
 
     OptionParser.new do |parser|
-      parser.banner = "Usage: poll [@AGENT] [--project PROJECT]... [--watch-column BUCKET:COLUMN[:CREATOR]]... [--operator PROFILE] [--interval SECONDS] [--backfill] [--state PATH]"
+      parser.banner = "Usage: poll [@AGENT] [--project PROJECT]... [--watch-column BUCKET:COLUMN[:CREATOR]]... [--operator PROFILE] [--interval SECONDS] [--backfill] [--no-pings] [--state PATH]"
       parser.on("--project PROJECT", "Basecamp project id or name to accept events from (repeatable)") { |value| projects << value }
       parser.on("--watch-column SPEC", "Trigger on any card created in this column, with no mention or assignment (repeatable)") do |value|
         watched_columns << BasecampAgentConnector::Basecamp::WatchedColumn.parse(value)
@@ -35,6 +36,7 @@ class BasecampAgentConnector::PollRunner
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--interval SECONDS", Integer, "Seconds between rounds (default: #{DEFAULT_INTERVAL})") { |value| interval = value }
       parser.on("--backfill", "Emit what is already waiting instead of starting from now") { backfill = true }
+      parser.on("--[no-]pings", "Trigger on the operator's Basecamp pings (default: on)") { |value| pings = value }
       parser.on("--state PATH", "Where to remember handled events (default: #{BasecampAgentConnector::PollState::DEFAULT_PATH})") { |value| state_path = value }
     end.parse!(arguments)
 
@@ -44,7 +46,8 @@ class BasecampAgentConnector::PollRunner
     raise ArgumentError, "--interval below #{MINIMUM_INTERVAL}s hammers the API for no gain" if interval < MINIMUM_INTERVAL
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects,
-      watched_columns: watched_columns, interval: interval, backfill: backfill, state_path: state_path)
+      watched_columns: watched_columns, interval: interval, backfill: backfill, state_path: state_path,
+      pings: pings)
   end
 
   def self.normalize_agent(agent)
@@ -75,15 +78,27 @@ class BasecampAgentConnector::PollRunner
     # and let the next round find it again, rather than recording a blip as work
     # done and losing one of Fernando's cards to it.
     def poll
-      poller.payloads.each do |payload|
-        pipeline.process(payload)
-      rescue BasecampAgentConnector::Basecamp::Verifier::Unreachable => error
-        poller.rollback payload
-        warn "#{error.message} - will retry next round"
-      end
+      sources.each { |source| drain source }
       state.save
     rescue StandardError => error
       warn "poll round failed: #{error.message}"
+    end
+
+    def drain(source)
+      source.payloads.each do |payload|
+        pipeline.process(payload)
+      rescue BasecampAgentConnector::Basecamp::Verifier::Unreachable => error
+        source.rollback payload
+        warn "#{error.message} - will retry next round"
+      end
+    end
+
+    # Two ways of noticing, sharing one state file and one pipeline. Poller reads
+    # the surfaces a project has; Pings reads the conversations the operator has
+    # opened with the agent, which belong to no project and are invisible to every
+    # listing a project offers.
+    def sources
+      @sources ||= @options.pings ? [ poller, pings ] : [ poller ]
     end
 
     # Slept in slices so a signal lands within a second rather than at the end of
@@ -104,7 +119,7 @@ class BasecampAgentConnector::PollRunner
       if @options.backfill
         warn "Backfilling: everything currently waiting will be emitted."
       else
-        poller.seed
+        sources.each(&:seed)
         state.save
         warn "Starting from now. Pass --backfill to pick up what is already waiting."
       end
@@ -112,7 +127,11 @@ class BasecampAgentConnector::PollRunner
 
     def announce
       warn "Polling as #{agent.name} (#{agent.profile}) every #{@options.interval}s, " \
-        "operator #{operator.email}#{watched_column_label}. No funnel, no webhooks."
+        "operator #{operator.email}#{watched_column_label}#{ping_label}. No funnel, no webhooks."
+    end
+
+    def ping_label
+      @options.pings ? ", and his pings" : ""
     end
 
     def watched_column_label
@@ -152,8 +171,13 @@ class BasecampAgentConnector::PollRunner
         emitter: BasecampAgentConnector::Emitter.new, watched_columns: @options.watched_columns
     end
 
+    def pings
+      @pings ||= BasecampAgentConnector::Basecamp::Pings.new \
+        basecamp_cli: basecamp_cli, agent: agent, operator: operator, state: state
+    end
+
     def verifier
-      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: basecamp_cli, agent: agent)
+      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: basecamp_cli, agent: agent, operator: operator)
     end
 
     def state

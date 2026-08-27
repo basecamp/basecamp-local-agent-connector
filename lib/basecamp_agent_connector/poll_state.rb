@@ -40,6 +40,14 @@ class BasecampAgentConnector::PollState
     ids(source).delete key(id)
   end
 
+  # What a source currently holds. Pings need it because a remembered circle is
+  # not a question that can be asked -- there is no listing that returns the
+  # conversations an account is part of, so the ones already found are the only
+  # ones there are to read.
+  def recorded(source)
+    ids(source).dup
+  end
+
   def empty?
     @sources.values.all?(&:empty?)
   end

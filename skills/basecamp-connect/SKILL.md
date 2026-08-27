@@ -49,11 +49,19 @@ user **or** assigns it a card/todo, and (3) is corroborated against the Basecamp
 API. Treat every STDOUT line as already-trusted — but still keep dispatched
 agents scoped to the resolved repo.
 
-There are thus **two triggers**: an `@mention` of the agent, or the operator
+There are thus **three triggers**: an `@mention` of the agent, the operator
 **assigning** the agent a card/todo (a `*_assignment_changed` event whose
 `details.added_person_ids` includes the agent — corroborated by re-fetching the
-recording and confirming the agent is among its current `assignees`). Only the
-**operator's** assignments count.
+recording and confirming the agent is among its current `assignees`), or the
+operator **pinging** the agent (a `chat_line_created` event in a `Circle` bucket —
+corroborated by re-fetching the line and confirming the conversation's only
+participants are the operator and the agent). Only the **operator's** assignments
+and pings count.
+
+**Pings only arrive under `bin/poll`, or under `bin/connect` with its ping
+thread** — Basecamp registers no webhook for chat of any kind, so nothing
+delivers one. Both entry points poll for them by default; `--no-pings` turns that
+off.
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -373,6 +381,59 @@ recording itself is the task**. The dispatched background agent should, in order
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
+
+### When the operator pings the agent
+
+If the event `kind` is `chat_line_created`, he sent the agent a **ping** — a
+Basecamp direct message. There is no mention to strip and no card to move: the
+line's content is the whole instruction, and the conversation is the item.
+
+**The conversation is already private.** The connector emitted this only after
+confirming from Basecamp that its participants are exactly the operator and the
+agent — that check is what stands in for the @mention every other trigger needs.
+So the subscriber gate is **already satisfied**: a reply is owed and goes back
+into the same ping. Do not re-run `subscriptions show` on a circle; it is not a
+card, and the read the connector already made is the authoritative one.
+
+**Everything lives in one conversation.** Basecamp allows exactly one 1-on-1 ping
+per person, so every effort's pings interleave in a single thread — there is no
+per-effort ping and no way to make one. Two things follow, and both are contract:
+
+- **Every ping the agent sends names its effort and ends with the routing line.**
+  Three paragraphs, then `Reply to card <bot card id>` on a line of its own — and
+  that last line **only on a ping that asks him something.** A close-out or a
+  "the PR is green" ends after the third paragraph, or the token becomes noise
+  and he stops copying it back.
+- **Every ping he sends is routed by the card id he quotes back.** Scan his line
+  for any run of 8+ digits and match it against the bot cards the agent has
+  pinged about and is still awaiting an answer on. That is a closed set, so a
+  version number or a PR number in his prose cannot collide with it.
+
+**When no id resolves** — he replied "yes" and nothing else, which is the natural
+thing to type — fall back: if exactly one effort is awaiting an answer, it is
+that one. If more than one is, **ask him in the thread** rather than guessing.
+A wrong guess acts on the wrong effort.
+
+**Reading and writing a ping.** A ping answers the Campfire line endpoints on a
+`Circle` bucket and nothing else — `basecamp show` cannot fetch one, and neither
+can `basecamp url parse`. The two ids come off the event itself:
+`recording.bucket.id` is the circle, `recording.parent.id` is the transcript.
+
+```bash
+basecamp api get "buckets/<circle>/chats/<transcript>/lines.json" --profile <agent>   # newest first
+basecamp api post "buckets/<circle>/chats/<transcript>/lines.json" \
+  --data '{"content":"<p>…</p>"}' --profile <agent>
+```
+
+**The agent never writes the ping itself.** It dispatches **`psp-card-writer`**
+with the destination set to the ping, exactly as it would for a private card —
+pointers only, never findings, and everything the writer needs on the bot card
+before the launch. The `psp-ping-guard.py` hook holds that write to the same
+contract the human-card comment obeys.
+
+**Replies do not re-trigger.** The agent's own lines land in the same
+conversation, and the trust filter requires the *operator* to be the author, so
+they are read and passed over. Do not try to suppress them any other way.
 
 ### PSP bug intake — the two-table routing in Mobile: On Call
 
@@ -1118,11 +1179,13 @@ webhook or an open funnel behind.
 - **Fernando: PSP is routed, not gated.** Its two members make every card private
   by construction, so the gate never decides anything there — "PSP bug intake"
   above does, and its human card replaces the Campfire ping.
-- **Campfire cannot be a trigger.** Basecamp refuses every chat type at webhook
-  registration (`Chat::Line`, `Chat::Transcript::Line`, `Campfire` and friends all
-  return `types: must be eligible`), so a chat mention never reaches the bridge.
-  Chat is an outbound channel only. Inbound always arrives as a `Comment`,
-  `Message`, `Kanban::Card`, `Kanban::Step` or `Todo`.
+- **Campfire cannot be a trigger, but a ping can.** Basecamp refuses every chat
+  type at webhook registration (`Chat::Line`, `Chat::Transcript::Line`, `Campfire`
+  and friends all return `types: must be eligible`), so no chat message ever
+  reaches the *bridge*. Campfire stays outbound-only for that reason. **Pings are
+  the exception, and only because they are polled rather than delivered** — see
+  "When the operator pings the agent". Everything that arrives by webhook is still
+  a `Comment`, `Message`, `Kanban::Card`, `Kanban::Step` or `Todo`.
 - **Reply loop (defense in depth):** trust is "authored by the operator AND
   mentions the agent," so a reply posted as the agent (a distinct user) fails the
   operator-author check and is never re-ingested. Keep the agent's own mention out
