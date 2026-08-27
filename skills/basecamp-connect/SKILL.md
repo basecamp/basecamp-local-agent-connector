@@ -38,12 +38,13 @@ the operator alone (you — the CLI default profile, or `--operator <profile>`);
 `bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-domain`,
 `--allow-project`) can deliberately broaden this to named colleagues, an email
 domain, or the whole project membership — (2) **@mentions the agent user**,
-**assigns** it a card/todo, **or** is a new comment on a recording the agent
-**subscribes** to, and (3) is corroborated against the Basecamp API. The agent's
-own identity never authorizes, in any mode. Treat every STDOUT line as
-already-trusted — but still keep dispatched agents scoped to the resolved repo.
+**assigns** it a card/todo, is a new comment on a recording the agent
+**subscribes** to, **or** is a **boost on the agent's work**, and (3) is
+corroborated against the Basecamp API. The agent's own identity never
+authorizes, in any mode. Treat every STDOUT line as already-trusted — but still
+keep dispatched agents scoped to the resolved repo.
 
-There are thus **three triggers**:
+There are thus **four triggers**:
 
 1. an `@mention` of the agent;
 2. the operator **assigning** the agent a card/todo (a `*_assignment_changed`
@@ -55,7 +56,12 @@ There are thus **three triggers**:
    **subscribes** to — corroborated by re-fetching the parent's subscribers and
    matching the agent's Person id. The comment author is gated exactly like a
    mention (operator by default, else the active trust mode's authors). See
-   [When a comment lands on a thread the agent follows](#when-a-comment-lands-on-a-thread-the-agent-follows).
+   [When a comment lands on a thread the agent follows](#when-a-comment-lands-on-a-thread-the-agent-follows);
+4. a **boost** (`boost_created`) on the agent's own work — boosts have no
+   webhooks, so the connector polls the agent's received-boosts feed (every
+   `--boost-poll` seconds, default 60; `--no-boosts` disables). The booster is
+   gated exactly like a mention author. See
+   [When someone boosts the agent's work](#when-someone-boosts-the-agents-work).
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -112,6 +118,7 @@ The skill remembers the last successful connection in
   "trust": { "mode": "domain", "allow": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false },
   "types": "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line",
   "chat_poll": 15,
+  "boost_poll": 60,
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
@@ -135,8 +142,9 @@ The skill remembers the last successful connection in
   names, **the trust configuration** (the mode and its value flags, so a
   later no-argument launch reconstructs the same trust boundary rather than
   silently falling back to operator-only), **and the coverage** — the `--types`
-  value and `--chat-poll` interval actually used, so a chat-only or custom-typed
-  run relaunches as itself instead of silently restoring the default mixed
+  value, `--chat-poll` interval, and boost polling (`--boost-poll` interval, or
+  `null` for `--no-boosts`) actually used, so a chat-only or custom-typed run
+  relaunches as itself instead of silently restoring the default mixed
   webhook/chat coverage (and its Funnel + webhooks) — so the store always
   reflects the last working connection. Create the directory if needed. Launch failures must
   not overwrite it.
@@ -151,9 +159,10 @@ The skill remembers the last successful connection in
   rather than silently broadening trust. A missing `trust` block means
   operator-only (older stores). If the stored block is internally inconsistent
   and the parser rejects it, **stop and confirm with the user** — never infer a
-  mode to make it launch. Also re-emit the stored `types` (as `--types`) and
-  `chat_poll` (as `--chat-poll`) when present; missing fields (older stores)
-  mean the defaults.
+  mode to make it launch. Also re-emit the stored `types` (as `--types`),
+  `chat_poll` (as `--chat-poll`), and `boost_poll` (`--boost-poll <n>`, or
+  `--no-boosts` for a stored `null`) when present; missing fields (older
+  stores) mean the defaults.
 
 Project ids are stored (not just names) because name lookup is exact-match;
 launching from the store passes ids.
@@ -402,6 +411,31 @@ addressed. Treat this as *activity on a followed thread*, not a directive:
 > subscribed-thread comments; how aggressively the agent should engage (answer
 > vs. stay silent, and on which threads) is an operator-tunable judgment worth
 > revisiting once there's real traffic.
+
+### When someone boosts the agent's work
+
+If the event `kind` is `boost_created`, an authorized user boosted a recording
+of the agent's — a comment it posted, a card it worked, an answer it wrote.
+`creator` is the **booster**, `recording` is the **boosted recording** (the
+agent's own work), and `details.boost.content` is the boost itself — at most 16
+characters, so it is a *signal*, not an instruction: `👍`, `🔥`, `redo`, `wrong`.
+
+1. **Read the signal in context** — the boost content plus the boosted
+   recording (`basecamp show <recording.url> -j`) and its thread. Same
+   non-blocking dispatch as every trigger: the front thread returns to the
+   monitor immediately.
+2. **Judge the valence.** An approving boost (`👍`, `🙏`, `nice`) needs **no
+   action and no reply** — it is applause, and answering applause is noise. A
+   corrective or directive boost (`redo`, `wrong`, `👎`, `🤔`) means the boosted
+   work needs another look: re-read the thread for what to fix; when the signal
+   is too terse to act on confidently, reply on the boosted recording as the
+   agent asking one concrete question.
+3. **No boost back, no card moves** — never boost a boost, and skip the Triage
+   move unless the agent actually resumes work on the recording.
+
+> This response policy is **provisional**, like the followed-thread one: 16
+> characters can't carry much intent, so lean strongly toward silence and let
+> real traffic tune the judgment.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 

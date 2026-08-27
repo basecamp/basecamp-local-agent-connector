@@ -169,6 +169,13 @@ What `bin/connect` has in place, at a glance:
   re-fetching the parent's subscribers and matching the agent's Person id — never
   taken from the payload. The comment author is gated exactly like a mention
   (operator by default, or the active trust mode's authors).
+- **Boost gating** — a boost on the agent's work triggers only when a fresh
+  fetch of the **agent's own received-boosts feed** contains it: boosts never
+  arrive by webhook (polling that feed is the delivery mechanism), and the feed
+  files a boost under the person it was aimed at, so membership is both the
+  existence proof and the targeting proof. The booster is gated exactly like a
+  mention author, and the emitted booster/content come from the fetch, never
+  from a payload.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -207,15 +214,18 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    Basecamp actually recorded, never to forgeable POST text. (An **assignment**
    corroborates the agent's assignee state but not the assigner — see the
    assignment caveat under [Trust modes](#trust-modes).)
-2. **Targets the agent.** The recording must reach the agent one of three ways:
+2. **Targets the agent.** The event must reach the agent one of four ways:
    a real Basecamp mention *attachment* (`application/vnd.basecamp.mention`)
    naming it (not loose text that happens to contain the name); an assignment
-   adding it to a card/todo; or a **new comment on a recording the agent
-   subscribes to**. Mentions are re-checked on the corroborated recording, so a
-   forged mention paired with a real un-mentioning recording is dropped;
-   subscription is re-fetched from the live subscribers API and stamped by the
-   verifier, so a comment the agent doesn't actually subscribe to is dropped the
-   same way.
+   adding it to a card/todo; a **new comment on a recording the agent
+   subscribes to**; or a **boost on the agent's work**. Mentions are re-checked
+   on the corroborated recording, so a forged mention paired with a real
+   un-mentioning recording is dropped; subscription is re-fetched from the live
+   subscribers API and stamped by the verifier, so a comment the agent doesn't
+   actually subscribe to is dropped the same way; a boost is stamped only when
+   the verifier finds it in a fresh fetch of the agent's own received-boosts
+   feed — the feed files a boost under the person it was aimed at, so
+   membership is the targeting fact.
 3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
    API and confirmed. For a mention that means it exists **with the claimed
    creator and the claimed mention** — so a forged POST cannot survive. For an
@@ -305,6 +315,8 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
 | `--types` | Comma-separated Basecamp event types to subscribe to. `Chat::Line` selects Campfire coverage — chat has no webhooks, so the connector polls each watched project's chats for it. | `Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line` |
 | `--chat-poll` | Campfire poll interval, in seconds. | `15` |
+| `--boost-poll` | Received-boosts poll interval, in seconds. Boosts have no webhooks, so the connector polls the agent's own received-boosts feed for them. | `60` |
+| `--no-boosts` | Don't poll the agent's received-boosts feed (no boost trigger). | polling on |
 | `--port` | Local port for the webhook server. | an unused high port |
 
 **What it does, in order:**
@@ -322,7 +334,11 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    Only those paths are touched, so funnel paths other tools mounted keep
    working.
 4. **Register webhooks.** Creates one webhook per project (with retry on transient
-   failures), recording their IDs for cleanup.
+   failures), recording their IDs for cleanup. Also starts the **boost poller**
+   (unless `--no-boosts`): boosts have no webhooks, so the agent's own
+   received-boosts feed is fetched every `--boost-poll` seconds and each new
+   boost runs the same pipeline as a webhook delivery. The first fetch is a
+   baseline — history is never dispatched.
 5. **Listen.** For each delivery: respond `200` immediately, then off the hot
    path — pre-filter (authorized author + mentions agent + actionable kind),
    de-duplicate by event id, verify against the Basecamp API, re-check that the
@@ -380,6 +396,11 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   `Chat::Line` is Campfire coverage: Basecamp delivers no chat webhooks, so the
   connector polls each watched project's chats and runs new lines through the
   same trust gate as webhook events.
+- **Boost polling** — `--boost-poll` interval in seconds (default 60), or
+  `--no-boosts` to disable the boost trigger. Boosts have no webhooks, so the
+  connector polls the agent's own received-boosts feed — an account-wide,
+  agent-scoped surface (a boost triggers wherever the agent's boosted work
+  lives, not only in watched projects).
 - **Port** — `--port` (default: an unused high port).
 
 ---
