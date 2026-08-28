@@ -296,8 +296,10 @@ watching for new mentions, acknowledge each one, and dispatch it.
   background agent in that repo to handle it per *Review / approval loop*
   below, and return to the monitor.
 - A line carrying `recording` is a **Basecamp event** — the checklist below.
-  Drop it outright if the recording is a comment the agent itself authored
-  (`bin/connect` already refuses agent-authored events in every trust mode, and
+  Drop it outright if its `creator` is the agent — the only checkable key: the
+  emitted `recording` carries no author, and a `boost_created` line's
+  `recording` is the agent's own work by definition, which is not what this
+  test reads (`bin/connect` already refuses agent-authored events in every trust mode, and
   posting as the agent — a distinct user from the operator — keeps replies
   from authorizing anyway; this is cheap defense in depth, and it comes
   *before* the boost so a slipped-through self-comment is never acked).
@@ -416,8 +418,13 @@ acked task nobody holds.
 tool with `run_in_background: true`, running in the resolved repo. Give it
 everything it needs to finish **without the front thread**:
 
-- the **instruction** — `recording.content` with the agent mention removed, the
-  rest of the raw HTML (links, other mentions) intact;
+- the event **`kind`** and the **instruction** as that kind defines it: for a
+  mention, `recording.content` with the agent mention removed, the rest of the
+  raw HTML (links, other mentions) intact; for an assignment, the recording
+  itself (its `title`/`content` is the task); for a `boost_created`,
+  `details.boost.content` plus the boosted recording, which carries no
+  `content`; for a subscribed-thread comment, the comment as context, not a
+  directive;
 - the **recording** URL/id and its parent URL;
 - the **agent profile name** (its reply identity);
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
@@ -506,7 +513,7 @@ should, in order:
    instruction; gather context and resolve the repo as usual; if it's a PR task,
    follow the green-first lifecycle below).
 4. **Reply with the result** on the same recording as the agent — and on failure,
-   a short error summary that @mentions the operator.
+   a short error summary that @mentions the requester (the event `creator`).
 
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns

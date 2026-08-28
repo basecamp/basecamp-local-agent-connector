@@ -15,8 +15,9 @@ The bridge has two halves:
    webhook, filters + verifies incoming events, and prints trusted events to
    STDOUT.
 2. **`/basecamp-connect` skill** — a Claude Code skill that runs the script, watches its
-   STDOUT, acknowledges each trusted event with an `On it!` boost as the agent
-   within seconds of receipt, and hands it to an in-session background agent
+   STDOUT, acknowledges each **directive** event — a mention, an assignment, a
+   Campfire line — with an `On it!` boost as the agent within seconds of
+   receipt, and hands every trusted event to an in-session background agent
    that gathers the Basecamp context and does the work.
 
 ## Why this shape
@@ -351,8 +352,11 @@ indistinguishable from a missed one (connector PR #17).
    login; any other reviewer's approval is handled as `commented`. The skill
    carries that gate because `GitHub::ReviewPipeline#actionable?` checks only
    the action and the state today. A line carrying `recording` is a Basecamp
-   event; one the agent itself authored is dropped before anything else. For
-   every other Basecamp event the front thread runs exactly this checklist:
+   event; one whose `creator` is the agent is dropped before anything else.
+   `creator` is the only checkable key — the emitted `recording` carries no
+   author, and a `boost_created` line's `recording` is the agent's own work by
+   definition, which is not what this test reads. For every other Basecamp
+   event the front thread runs exactly this checklist:
    a. **Acknowledge** — `basecamp boost create <recording.url> "On it!"
       --profile <agent>` on receipt, before repo resolution and before
       dispatch, so the ack lands within seconds regardless of what dispatch
@@ -378,11 +382,20 @@ indistinguishable from a missed one (connector PR #17).
       event is received but held and why. It is the only reply the front
       thread ever posts, and only on directive triggers.
    c. **Dispatch an in-session background agent** that owns the event
-      end-to-end, running in the resolved repo. The handoff carries the
-      instruction — the recording's **raw HTML content with the agent mention
-      removed** (the rest of the markup — links, other mentions — kept intact)
-      — the recording and parent URLs, the agent profile, the requester
-      (the event `creator`), and whether the front thread's boost landed.
+      end-to-end, running in the resolved repo. The handoff carries the event
+      `kind`, the instruction as that kind defines it, the recording and
+      parent URLs, the agent profile, the requester (the event `creator`), and
+      whether the front thread's boost landed. The instruction per trigger:
+      - **mention** (comment, message, Campfire line) — the recording's **raw
+        HTML content with the agent mention removed** (the rest of the markup
+        — links, other mentions — kept intact);
+      - **assignment** (`*_assignment_changed`) — the recording itself; the
+        card/todo's `title`/`content` is the task, and there is no mention to
+        strip;
+      - **`boost_created`** — `details.boost.content` (the signal) plus the
+        boosted `recording`, which has no `content` in this representation;
+      - **subscribed-thread comment** — the comment as context on a followed
+        thread, not a directive.
       Agents appear in the current Claude session. **No concurrency cap** —
       every trusted event is dispatched immediately.
    d. **Return to the monitor.** The front thread never reads the recording,
@@ -402,18 +415,27 @@ indistinguishable from a missed one (connector PR #17).
       `basecamp` CLI: the recording itself, its `parent` (card/message), the
       thread/comments, and the project. Basecamp is the context store; the event
       is the trigger + pointer.
-   c. **Do the work**, posting one short interim reply as the agent when it
-      runs past roughly ten minutes (what it is doing, where to follow — the PR
-      link once it exists, marked in progress, never done).
-   d. **Reply as the agent** — post results to the originating recording with
-      `basecamp comment <recording> "<body>" --profile <agent>` so the reply is
-      authored by the agent user:
+   c. **Do the work** a directive trigger asks for, posting one short interim
+      reply as the agent when it runs past roughly ten minutes (what it is
+      doing, where to follow — the PR link once it exists, marked in progress,
+      never done).
+   d. **Reply as the agent** on a directive trigger — post results to the
+      originating recording with `basecamp comment <recording> "<body>"
+      --profile <agent>` so the reply is authored by the agent user:
       - **Success** — a results comment where the mention was written.
       - **Failure** (agent errors / can't complete) — a short error summary
         comment that **@mentions the requester (event creator)** so it surfaces
         as a notification. You always learn when a dispatch failed.
       Replying as the agent (a distinct user from the operator) is what stops the
       reply from re-triggering the connector.
+   e. **Non-directive events are read, not worked.** A subscribed-thread
+      comment and a `boost_created` signal are dispatched the same way but
+      default to silence: no interim reply, no results comment, no card moves.
+      The agent replies only when a response adds value — a question it can
+      answer on the followed thread, or a corrective boost (`redo`, `wrong`,
+      `👎`) that sends it back to the boosted work; an approving boost (`👍`,
+      `🔥`) is applause and gets nothing. Both policies are provisional until
+      real traffic tunes them.
 
 ---
 
