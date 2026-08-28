@@ -3,7 +3,30 @@ require "json"
 class BasecampAgentConnector::Basecamp::Client
   # Basecamp answered, and the answer was no: not found, forbidden, invalid.
   # Asking again cannot change it.
-  class Error < StandardError; end
+  class Error < StandardError
+    def initialize(message = nil, envelope: nil)
+      super(message)
+      @envelope = envelope.to_h
+    end
+
+    # The failure envelope's machine-readable code — "not_found",
+    # "rate_limit", "api_error", ... — or nil when the command produced no
+    # envelope at all.
+    def code
+      @envelope["code"]
+    end
+
+    # bc3 refuses an over-budget account with 429, and the budget is shared
+    # across every CLI process on the account. The CLI's taxonomy reserves
+    # the code "rate_limit" for that refusal, but today's binary relays the
+    # API's own "rate limit exceeded" body as a generic api_error — so
+    # recognize either spelling. A caller that can defer should ease off
+    # rather than keep asking on its regular cadence; see the pollers'
+    # backoff.
+    def rate_limited?
+      code == "rate_limit" || @envelope["error"].to_s.match?(/rate limit/i)
+    end
+  end
 
   # The CLI never got an answer out of Basecamp — on any of ATTEMPTS tries.
   # Asking again later may well succeed, so a caller that can defer (a webhook
@@ -117,19 +140,28 @@ class BasecampAgentConnector::Basecamp::Client
         if result.success? && !parsed.nil?
           return unwrap(parsed)
         elsif !transient?(parsed)
-          raise Error, "`basecamp #{arguments.join(' ')}` #{outcome(result)}: #{detail(result)}"
+          raise failure(Error, arguments, result, parsed)
         elsif attempt < attempts - 1
           @wait.call(RETRY_DELAYS.fetch(attempt))
         end
       end
 
-      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{" on all #{attempts} attempts" if attempts > 1}: #{detail(result)}"
+      raise failure(TransientError, arguments, result, parsed, tried: attempts)
     end
 
     def parse(stdout)
       JSON.parse(stdout)
     rescue JSON::ParserError
       nil
+    end
+
+    # The refusal keeps its envelope (when the CLI produced one) so callers
+    # can key behavior off the machine-readable code rather than the prose —
+    # see Error#code and Error#rate_limited?.
+    def failure(kind, arguments, result, parsed, tried: 1)
+      attempts_note = " on all #{tried} attempts" if tried > 1
+      kind.new "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{attempts_note}: #{detail(result)}",
+        envelope: (parsed if envelope?(parsed))
     end
 
     # No envelope at all — the process died before it could answer, or its

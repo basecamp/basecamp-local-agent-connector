@@ -288,6 +288,94 @@ class ChatPollerTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  # Live evidence for the backoff: repeated {"ok": false, "error": "rate
+  # limit exceeded", "code": "api_error"} failures on the 15s chat poll —
+  # the account's API budget is shared across many concurrent CLI processes,
+  # and every hammered tick cost a failed call and a noisy log line.
+  def test_rate_limited_polls_back_off_doubling_until_a_clean_poll_resets_the_cadence
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    runner.stub "chat messages", stdout: empty_envelope
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    4.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 30, 60, 120, 15 ], waited
+    assert_equal 3, @logs.string.scan(/backing off chat polls/).length
+    assert_match(/rate limited; backing off chat polls to 120s/, @logs.string)
+    assert_match(/no longer rate limited; resuming 15s chat polls/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
+  def test_backoff_stops_doubling_at_the_cap
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    6.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 30, 60, 120, 240, 300, 300 ], waited
+    # One log line per change of delay; the tick already at the cap adds none.
+    assert_equal 5, @logs.string.scan(/backing off chat polls/).length
+  ensure
+    poller&.stop
+  end
+
+  def test_a_rate_limited_chat_listing_backs_off_too
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    ticks << true
+    waited << delays.pop
+
+    assert_equal [ 15, 30 ], waited
+  ensure
+    poller&.stop
+  end
+
+  def test_a_non_rate_limit_failure_keeps_the_regular_cadence
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "API error: 410 Gone")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    2.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 15, 15 ], waited
+    refute_match(/backing off/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
   def test_warns_when_the_fetch_window_may_have_overflowed
     stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
     window = Array.new(BasecampAgentConnector::Basecamp::ChatPoller::FETCH_LIMIT) do |index|

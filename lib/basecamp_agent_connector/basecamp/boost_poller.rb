@@ -31,6 +31,8 @@ class BasecampAgentConnector::Basecamp::BoostPoller
   # overflow warning, not a request parameter.
   FEED_WINDOW = 15
 
+  MAX_BACKOFF = 300
+
   def initialize(basecamp_cli:, pipeline:, agent:, interval: DEFAULT_INTERVAL, logger: $stderr,
     wait: ->(seconds) { sleep seconds }, clock: -> { Time.now })
     @basecamp_cli = basecamp_cli
@@ -47,6 +49,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # and drop it for good. See received_since_start?.
     @started_at = @clock.call.floor
     @stopping = false
+    @backoff = nil
   end
 
   # Nothing is fetched or emitted until the poll thread's first pass, one
@@ -92,8 +95,11 @@ class BasecampAgentConnector::Basecamp::BoostPoller
         @seen_boost_ids << boost["id"]
       end
     end
+
+    reset_backoff
   rescue BasecampAgentConnector::Basecamp::Client::Error => error
     log "boost poll failed: #{error.message}"
+    error.rate_limited? ? extend_backoff : reset_backoff
   end
 
   private
@@ -102,7 +108,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # must cost one tick, not all coverage for the rest of the session.
     def poll_loop
       until @stopping
-        @wait.call(@interval)
+        @wait.call(@backoff || @interval)
 
         begin
           poll
@@ -159,6 +165,24 @@ class BasecampAgentConnector::Basecamp::BoostPoller
       else
         ordered.none? { |boost| @seen_boost_ids.include?(boost["id"]) }
       end
+    end
+
+    # The API budget is shared account-wide across every concurrent CLI
+    # process, so a rate-limited poll means the account is over budget, not
+    # that anything here is wrong — see ChatPoller's backoff for the full
+    # rationale. Each rate-limited tick doubles the effective sleep, up to
+    # MAX_BACKOFF; the first tick that draws no rate-limit refusal — a
+    # success, or any other failure — restores the configured cadence.
+    # Logged when the delay changes, not on every backed-off tick.
+    def extend_backoff
+      extended = [ (@backoff || @interval) * 2, MAX_BACKOFF ].min
+      log "rate limited; backing off boost polls to #{extended}s" unless extended == @backoff
+      @backoff = extended
+    end
+
+    def reset_backoff
+      log "no longer rate limited; resuming #{@interval}s boost polls" if @backoff
+      @backoff = nil
     end
 
     def log(message)

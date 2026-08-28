@@ -277,6 +277,92 @@ class BoostPollerTest < Minitest::Test
     refute poller.instance_variable_get(:@thread)
   end
 
+  # Same account-wide budget pressure as the chat poll: a rate-limited tick
+  # doubles the effective sleep, a clean one restores the cadence.
+  def test_rate_limited_polls_back_off_doubling_until_a_clean_poll_resets_the_cadence
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    runner.stub "api get /my/boosts.json", stdout: envelope([])
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    4.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 30, 60, 120, 15 ], waited
+    assert_equal 3, @logs.string.scan(/backing off boost polls/).length
+    assert_match(/no longer rate limited; resuming 15s boost polls/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
+  def test_backoff_stops_doubling_at_the_cap
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    6.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 30, 60, 120, 240, 300, 300 ], waited
+    assert_equal 5, @logs.string.scan(/backing off boost polls/).length
+  ensure
+    poller&.stop
+  end
+
+  # The taxonomy's dedicated rate_limit code takes the client's transient
+  # path — retried through before surfacing — and still eases the poller off.
+  def test_the_dedicated_rate_limit_code_backs_off_too
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 5, stdout: error_envelope("rate_limit", "Rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    ticks << true
+    waited << delays.pop
+
+    assert_equal [ 15, 30 ], waited
+  ensure
+    poller&.stop
+  end
+
+  # While backed off, any tick that draws no rate-limit refusal restores the
+  # cadence: whatever else went wrong, the budget stopped refusing.
+  def test_a_non_rate_limit_failure_resets_an_active_backoff
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), once: true
+    stub_transient_failure runner, "api get /my/boosts.json", stdout: "", exit_status: 6
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    2.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 30, 15 ], waited
+    assert_match(/no longer rate limited; resuming 15s boost polls/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
   private
     def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer)
       BasecampAgentConnector::Basecamp::BoostPoller.new \

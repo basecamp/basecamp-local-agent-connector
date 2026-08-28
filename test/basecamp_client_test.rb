@@ -230,6 +230,48 @@ class BasecampClientTest < Minitest::Test
 
     assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
     assert_match(/failed on all 3 attempts: .*rate_limit/, error.message)
+    assert_predicate error, :rate_limited?
+  end
+
+  # Production evidence (project 48672814's 15s chat poll): today's binary
+  # relays bc3's 429 body as a generic api_error — {"ok": false, "error":
+  # "rate limit exceeded", "code": "api_error"} on stdout, nonzero exit —
+  # rather than the taxonomy's dedicated rate_limit code. That is Basecamp's
+  # refusal, not a lost answer: it surfaces at once (one attempt — re-asking
+  # within the same limiting window only burns more budget) and is
+  # recognizable, so a poller can ease off.
+  def test_a_rate_limited_api_error_surfaces_at_once_and_is_recognizable
+    runner = FakeCommandRunner.new
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) do
+      build_cli(runner).chat_lines(project: 222, chat: 333, limit: 50)
+    end
+
+    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    assert_equal 1, runner.commands.length
+    assert_predicate error, :rate_limited?
+    assert_equal "api_error", error.code
+  end
+
+  def test_a_non_rate_limit_failure_is_not_mistaken_for_one
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found: 456")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("456") }
+
+    refute_predicate error, :rate_limited?
+    assert_equal "not_found", error.code
+  end
+
+  def test_a_failure_without_an_envelope_carries_no_code
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show", stdout: "", exit_status: 1
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { build_cli(runner).show("456") }
+
+    assert_nil error.code
+    refute_predicate error, :rate_limited?
   end
 
   def test_chats_lists_a_projects_chats
