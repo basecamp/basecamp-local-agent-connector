@@ -203,9 +203,20 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    `--no-boosts`): it fetches nothing until its first interval pass, well after
    the readiness lines print, so no event can beat the funnel's consumer to the
    stream.
-7. **Listen** — for each incoming POST, run the pipeline below. Always respond
-   **200 OK quickly** (so Basecamp does not retry); filtering/verification/
-   dispatch happen out of band.
+7. **Listen** — for each incoming POST, run the pipeline below on the request
+   thread and answer with its verdict: **200 OK** once the event is settled
+   (emitted, dropped, or a duplicate — Basecamp must not redeliver those),
+   **503** when Basecamp could not be asked, so its delivery job redelivers the
+   event with backoff (bc3 retries any non-2xx delivery). Only a transient CLI
+   failure that outlasts the client's own retries — the keyring-probe race
+   under concurrent CLI invocations, a token refresh that lost that race, a
+   network blip, bc3 answering 5xx, the CLI's open circuit breaker, garbled
+   output — earns a 503; Basecamp's own refusal (not found, forbidden) is a
+   verdict. A delivery that stays unanswerable for all 10 of bc3's attempts
+   (~4.3h; a revoked credential is indistinguishable from the race) gets the
+   webhook deactivated, silently on bc3's side — the 503 log line names the
+   remedy: fix the CLI's credentials and restart `bin/connect`, which
+   re-registers.
 
 ### Event pipeline
 
@@ -225,9 +236,12 @@ For each delivered event:
      are admitted here and decided at verification).
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
    set; at-least-once delivery means duplicates are expected). An id counts as
-   seen once it reaches a verdict; an event Basecamp could not corroborate is
-   forgotten again so a redelivery (or, for chat, the next poll) retries it —
-   the fetch may have failed transiently, and re-verifying is idempotent.
+   seen once it reaches a verdict; an event Basecamp did not corroborate is
+   forgotten again so a redelivery (or, for chat and boosts, the next poll)
+   retries it — re-verifying is idempotent. An event Basecamp could not be
+   asked about (the corroborating fetch failed transiently, even after the
+   CLI client's retries) is forgotten the same way and, for a webhook,
+   answered 503 so the redelivery actually comes.
 3. **Authoritative verification** (the real trust gate): re-fetch the recording
    from Basecamp via the CLI (`basecamp show <recording.url|app_url>` /
    `basecamp ... -j`) and confirm it **actually exists** with the claimed creator
@@ -375,8 +389,8 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   — there is no shared-secret signature to verify, which is *why* authoritative
   API verification (not the payload) is the trust gate.
 - **Delivery semantics**: at-least-once, up to 10 retries on non-2xx before the
-  webhook is deactivated; redirects not followed. → respond 200 fast + dedup by
-  `event.id`.
+  webhook is deactivated; redirects not followed. → answer 200 only once the
+  event is settled (dedup by `event.id`), 503 to request redelivery.
 - **Scope**: per-bucket (= per-project). Type filtering possible but cannot be
   scoped narrower than a project. Limit: 50 active webhooks per project.
 
@@ -523,7 +537,8 @@ Coverage the suite must include:
   card/todo as the instruction.
 - Reply: post results back **as the agent** (`basecamp comment --profile
   <agent>`). On failure, post an error summary that @mentions the operator.
-- Dedup: in-memory, keyed on `event.id`; always 200-OK fast.
+- Dedup: in-memory, keyed on `event.id`; 200 once settled, 503 to ask for
+  redelivery.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
 - Triggers: both `*_created` and `*_content_changed`.

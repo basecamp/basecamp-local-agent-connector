@@ -126,15 +126,19 @@ class BasecampAgentConnector::Basecamp::BoostPoller
       false
     end
 
-    # Seen means settled. A boost the pipeline could not corroborate — the
-    # feed re-fetch failed, which a transient API or CLI blip can cause as
-    # easily as a deletion — is forgotten again so the next poll retries it
-    # while it remains in the feed; a deleted boost simply stops appearing.
-    # A pipeline exception leaves the boost seen: retrying a bug every tick
-    # would only repeat it.
+    # Seen means settled. A boost Basecamp did not corroborate — the feed
+    # re-fetch no longer lists it — is forgotten again so the next poll
+    # retries it while it remains in the feed; a deleted boost simply stops
+    # appearing. A re-fetch the CLI could not complete (even after its own
+    # retries) is forgotten the same way: the next tick is this poller's
+    # redelivery. A pipeline exception leaves the boost seen: retrying a bug
+    # every tick would only repeat it.
     def process(boost)
       @seen_boost_ids << boost["id"]
       @seen_boost_ids.delete(boost["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.boost_payload(boost))
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
+      @seen_boost_ids.delete(boost["id"])
+      log "could not corroborate boost #{boost["id"]}: #{error.message}; retried on the next poll"
     end
 
     # The feed's first page is a bound: if the agent received more boosts than

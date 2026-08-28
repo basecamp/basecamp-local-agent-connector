@@ -27,7 +27,7 @@ class IdentityTest < Minitest::Test
 
   def test_refreshes_once_when_token_expired_then_succeeds
     runner = FakeCommandRunner.new
-    runner.stub "basecamp me", exit_status: 1, stderr: "token expired", once: true
+    stub_transient_failure runner, "basecamp me", stdout: error_envelope("auth_required", "token expired")
     runner.stub "auth refresh", exit_status: 0
     runner.stub "basecamp me", stdout: identity_envelope("id" => 123)
     runner.stub "people show me", stdout: person_envelope(52007412)

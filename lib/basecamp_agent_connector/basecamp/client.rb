@@ -1,11 +1,52 @@
 require "json"
 
 class BasecampAgentConnector::Basecamp::Client
+  # Basecamp answered, and the answer was no: not found, forbidden, invalid.
+  # Asking again cannot change it.
   class Error < StandardError; end
 
-  def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp")
+  # The CLI never got an answer out of Basecamp — on any of ATTEMPTS tries.
+  # Asking again later may well succeed, so a caller that can defer (a webhook
+  # redelivery, the next poll) should, rather than read this as a verdict.
+  class TransientError < Error; end
+
+  # The CLI probes the OS keyring on every invocation by writing and deleting
+  # one shared item (service "credstore.probe.basecamp"). Concurrent
+  # invocations — this connector's pollers plus the agents it dispatches —
+  # race on that item; a loser's probe fails, the CLI silently falls back to a
+  # stale credentials file, and the command fails with auth_required or a
+  # token-refresh api_error although nothing is wrong with the credentials
+  # (19/20 parallel probes lost in a 20-way run; 20/20 serial ones passed).
+  # The race clears as soon as the neighbours finish, so a failed invocation
+  # is tried again after a short, growing pause: ~2s of waiting per command,
+  # plus the calls themselves. A verification that runs two commands (a
+  # comment on a subscribed recording: `show`, then `subscriptions show`)
+  # can still overrun the 10s Basecamp allows a webhook delivery, which the
+  # bridge tolerates (see Bridge#handler).
+  ATTEMPTS = 3
+  RETRY_DELAYS = [ 0.5, 1.5 ] # seconds before the second and third attempt
+
+  # Error-envelope codes that describe the CLI's plight, not Basecamp's
+  # answer. `api_error` is ambiguous: Basecamp's own 4xx verdicts arrive as
+  # one, but so do three failures to get an answer at all — a token refresh
+  # that lost the keyring race ("token refresh failed: …"), bc3 answering 5xx
+  # ("Server error (500)" surfaces at once; "Gateway error (502|503|504)" and
+  # the generic "API error: 5xx …" are retried inside the SDK for ~3s first
+  # and then surface as "request failed after 3 attempts: …", a prefix the
+  # SDK puts only on retryable failures), and the CLI's own circuit breaker
+  # refusing to ask ("Service temporarily unavailable": file-backed across
+  # processes, open for 30s after five consecutive network/5xx failures).
+  # The envelope drops the SDK's Retryable flag, so these fixed messages are
+  # all there is to key on until the CLI emits that flag — the intended end
+  # state, after which this pattern goes.
+  TRANSIENT_CODES = %w[auth_required network rate_limit]
+  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable/i
+
+  def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp",
+    wait: ->(seconds) { sleep seconds })
     @command_runner = command_runner
     @executable = executable
+    @wait = wait
   end
 
   def me(profile: nil)
@@ -48,8 +89,11 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
+  # One attempt: a create whose answer was lost may still have created, and
+  # asking again would register a second webhook whose id nobody keeps for
+  # teardown. Webhooks#create_with_retries retries the registration.
   def create_webhook(url:, project:, types:)
-    json "webhooks", "create", url, "--project", project.to_s, "--types", types
+    json "webhooks", "create", url, "--project", project.to_s, "--types", types, attempts: 1
   end
 
   def delete_webhook(id:, project:)
@@ -57,20 +101,59 @@ class BasecampAgentConnector::Basecamp::Client
   end
 
   private
-    def json(*arguments)
-      result = run(*arguments, "-j")
+    # A command either answers (its envelope is handed back), is refused
+    # (Error, at once — Basecamp's verdict doesn't improve with repetition),
+    # or fails without an answer, in which case it is tried again up to
+    # `attempts` times before the failure surfaces as a TransientError.
+    # Reads take the default, since re-asking is idempotent; a mutation
+    # passes `attempts: 1`, because a lost answer is not a lost request.
+    def json(*arguments, attempts: ATTEMPTS)
+      result = parsed = nil
 
-      unless result.success?
-        detail = result.stderr.strip
-        detail = result.stdout.strip if detail.empty?
-        raise Error, "`basecamp #{arguments.join(' ')}` failed: #{detail}"
+      attempts.times do |attempt|
+        result = run(*arguments, "-j")
+        parsed = parse(result.stdout)
+
+        if result.success? && !parsed.nil?
+          return unwrap(parsed)
+        elsif !transient?(parsed)
+          raise Error, "`basecamp #{arguments.join(' ')}` #{outcome(result)}: #{detail(result)}"
+        elsif attempt < attempts - 1
+          @wait.call(RETRY_DELAYS.fetch(attempt))
+        end
       end
 
-      unwrap JSON.parse(result.stdout)
-    rescue JSON::ParserError => error
-      # A truncated or garbled success is a failed command, not a crash:
-      # every caller already rescues Error, so it stays on the same path.
-      raise Error, "`basecamp #{arguments.join(' ')}` returned malformed JSON: #{error.message}"
+      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{" on all #{attempts} attempts" if attempts > 1}: #{detail(result)}"
+    end
+
+    def parse(stdout)
+      JSON.parse(stdout)
+    rescue JSON::ParserError
+      nil
+    end
+
+    # No envelope at all — the process died before it could answer, or its
+    # output was cut off — is the CLI's failure, not Basecamp's answer.
+    def transient?(parsed)
+      if envelope?(parsed)
+        code = parsed["code"].to_s
+        TRANSIENT_CODES.include?(code) || (code == "api_error" && parsed["error"].to_s.match?(TRANSIENT_API_ERROR))
+      else
+        true
+      end
+    end
+
+    # A successful exit only gets this far when its output didn't parse.
+    def outcome(result)
+      result.success? ? "returned malformed JSON" : "failed"
+    end
+
+    def detail(result)
+      if result.success?
+        result.stdout.strip[0, 200]
+      else
+        [ result.stderr.strip, result.stdout.strip, "exit status #{result.exit_status}" ].find { |candidate| !candidate.empty? }
+      end
     end
 
     # `-j` wraps every result in an envelope — {"ok": ..., "data": ...,
@@ -82,11 +165,15 @@ class BasecampAgentConnector::Basecamp::Client
     # Array() on that hash downstream explodes it into ["ok", true]-style
     # pairs whose ["id"] lookups raise TypeError.
     def unwrap(parsed)
-      if parsed.is_a?(Hash) && parsed.key?("ok")
+      if envelope?(parsed)
         parsed["data"]
       else
         parsed
       end
+    end
+
+    def envelope?(parsed)
+      parsed.is_a?(Hash) && parsed.key?("ok")
     end
 
     def profile_flag(profile)

@@ -86,7 +86,10 @@ class BoostPollerTest < Minitest::Test
     assert_match(/not corroborated/, @logs.string)
   end
 
-  def test_a_transient_corroboration_failure_is_retried_on_the_next_poll
+  # One lost keyring probe on the corroborating re-fetch is absorbed by the
+  # client's retry: the boost settles on this poll, nothing is logged as
+  # uncorroborated, and later polls see it as seen.
+  def test_a_transient_corroboration_failure_is_retried_within_the_poll
     runner = FakeCommandRunner.new
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
     runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "502 Bad Gateway", once: true
@@ -94,8 +97,26 @@ class BoostPollerTest < Minitest::Test
     poller = poller(runner)
 
     poller.poll
+    assert_equal 1, @output.string.lines.length
+    refute_match(/not corroborated/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+  end
+
+  # A failure that outlasts the client's retries is forgotten, not settled:
+  # the next poll — this poller's redelivery — verifies it afresh.
+  def test_a_corroboration_failure_that_outlasts_the_retries_is_retried_on_the_next_poll
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
+    stub_transient_failure runner, "api get /my/boosts.json"
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner)
+
+    poller.poll
     assert_empty @output.string
-    assert_match(/not corroborated/, @logs.string)
+    assert_match(/could not corroborate boost 88001: .*retried on the next poll/, @logs.string)
+    refute_match(/not corroborated/, @logs.string)
 
     poller.poll
     assert_equal 1, @output.string.lines.length
@@ -186,7 +207,7 @@ class BoostPollerTest < Minitest::Test
 
   def test_a_failed_fetch_leaves_the_baseline_for_the_next_successful_poll
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "boom", once: true
+    stub_transient_failure runner, "api get /my/boosts.json", stdout: "", exit_status: 1
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
     poller = poller(runner, clock: -> { AFTER_THE_BOOST })
 
@@ -200,7 +221,7 @@ class BoostPollerTest < Minitest::Test
 
   def test_malformed_feed_output_is_logged_and_retried
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", stdout: '{"data": [{"id": 88', once: true
+    stub_transient_failure runner, "api get /my/boosts.json", stdout: '{"data": [{"id": 88', exit_status: 0
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
     poller = poller(runner)
 

@@ -25,6 +25,12 @@ class BasecampAgentConnector::Basecamp::Verifier
     # fetched is not redundant: it keeps chat on the identical trust path as
     # webhook kinds, and re-reads the line at dispatch time so one deleted (or
     # edited away from the mention) between poll and processing is dropped.
+    #
+    # Only Basecamp's own refusal (not found, forbidden) means "no such
+    # recording". A fetch the CLI could not complete even after its retries
+    # says nothing about the recording, so it propagates for the caller to
+    # defer — a webhook answers 503 for redelivery, a poller retries next
+    # tick — instead of masquerading as a forged or deleted event.
     def fetch_recording(event)
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
@@ -34,6 +40,8 @@ class BasecampAgentConnector::Basecamp::Verifier
       else
         @basecamp_cli.show(locator)
       end
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
     rescue BasecampAgentConnector::Basecamp::Client::Error
       nil
     end
@@ -79,8 +87,10 @@ class BasecampAgentConnector::Basecamp::Verifier
     # comment's parent (the commented-on recording — subscriptions live on the
     # container, not the comment). This is the connector's own re-fetch, so the
     # stamp binds to what Basecamp reports now, not to anything in the POST. A
-    # failed or missing lookup stamps false: never emit on an unconfirmed
-    # subscription.
+    # refused or missing lookup stamps false: never emit on an unconfirmed
+    # subscription. A lookup the CLI could not complete propagates instead
+    # (see fetch_recording): stamping false would turn a transient failure
+    # into a settled "does not target the agent" drop.
     #
     # The recording's authoritative `type` must be a Comment, not just the
     # claimed `comment_created` kind: otherwise a forged POST naming that kind
@@ -116,6 +126,8 @@ class BasecampAgentConnector::Basecamp::Verifier
 
     def subscriber_ids(locator)
       Array(@basecamp_cli.subscription(locator)["subscribers"]).map { |subscriber| subscriber["id"] }
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
     rescue BasecampAgentConnector::Basecamp::Client::Error
       []
     end
@@ -131,6 +143,8 @@ class BasecampAgentConnector::Basecamp::Verifier
     # the pipeline's authoritative target re-check. A boost deleted — or
     # scrolled off the feed's newest-page window — between poll and dispatch
     # stops being corroborable and is dropped, exactly like a deleted comment.
+    # A feed fetch the CLI could not complete propagates, exactly like a
+    # recording fetch (see fetch_recording), so the poller retries it.
     def verify_boost(event)
       boost = fetch_boost(event)
 
@@ -143,6 +157,8 @@ class BasecampAgentConnector::Basecamp::Verifier
       return nil if @agent.profile.nil?
 
       @basecamp_cli.received_boosts(profile: @agent.profile).find { |boost| boost["id"] == event.id }
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
     rescue BasecampAgentConnector::Basecamp::Client::Error
       nil
     end
