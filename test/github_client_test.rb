@@ -22,6 +22,23 @@ class GithubClientTest < Minitest::Test
     assert build_github_cli(runner).delete_webhook(repo: "acme/widgets", id: 888)
   end
 
+  def test_authenticated_login_reads_the_login_gh_is_signed_in_as
+    runner = FakeCommandRunner.new
+    runner.stub "api user", stdout: JSON.generate("login" => "octocat", "id" => 1)
+
+    assert_equal "octocat", build_github_cli(runner).authenticated_login
+    assert_equal [ [ "gh", "api", "user" ] ], runner.commands
+  end
+
+  def test_authenticated_login_raises_when_gh_is_signed_out
+    runner = FakeCommandRunner.new
+    runner.stub "api user", exit_status: 4, stderr: "gh: To use GitHub CLI in automation, set GH_TOKEN"
+
+    assert_raises BasecampAgentConnector::GitHub::Client::Error do
+      build_github_cli(runner).authenticated_login
+    end
+  end
+
   def test_review_fetches_the_review
     runner = FakeCommandRunner.new
     runner.stub "pulls/12/reviews/7001", stdout: JSON.generate(review_hash)

@@ -98,7 +98,9 @@ onto one funnel path, so the same `@agent` watches every listed project simultan
 - `--project` takes a **name, URL, or ID** — the CLI resolves it.
 - Watch GitHub PR reviews too, over the **same** server: add `--repo <owner>/<repo>`
   (repeatable). You need at least one `--project` or `--repo`; `--project` also
-  needs an `@agent`.
+  needs an `@agent`. Only **your** approvals (the login `gh` is signed in as, or
+  `--gh-operator <login>`) reach the agent as `approved`; anyone else's approval
+  is dropped, while their requested changes and comments still come through.
 
 ### Stopping (and why it matters)
 
@@ -315,6 +317,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `@AGENT` | Agent user / local `basecamp` profile to watch for and reply as. Leading `@` optional; lowercased to the profile name. **Required**, validated at startup. | — |
 | `--project` | Basecamp project name, URL, or ID. **Required**, repeatable. | — |
 | `--operator` | Profile whose user is allowed to trigger. | CLI default profile |
+| `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
@@ -331,7 +334,10 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 1. **Resolve agent & operator.** Validates the agent name maps to a usable local
    profile (`basecamp me --profile <agent>`); if not, it aborts with
    `Run basecamp auth login --profile <agent>…`. Resolves the operator identity
-   (refreshing an expired token once). Warns if agent == operator.
+   (refreshing an expired token once). Warns if agent == operator. With
+   `--repo`, also resolves the operator's GitHub login (`gh api user`, or
+   `--gh-operator`) — the only reviewer whose PR approvals are emitted — and
+   aborts with `Run gh auth login, or pass --gh-operator LOGIN` if it can't.
 2. **Open the endpoint.** Starts a WEBrick server on `127.0.0.1:<port>` that only
    accepts `POST /bc5/<random-secret>`; everything else is 404. One server + one
    secret path serves every watched project.

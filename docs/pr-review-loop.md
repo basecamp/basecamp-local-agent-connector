@@ -15,6 +15,7 @@ alongside (or instead of) Basecamp `--project`:
 ```bash
 bin/connect @Clawdito --project "BC5 Calendar" --repo basecamp/bc3   # both at once
 bin/connect --repo basecamp/bc3 --repo acme/widgets                  # GitHub only
+bin/connect --repo acme/widgets --gh-operator marie                  # approvals by @marie, not this machine's gh login
 ```
 
 It registers a `pull_request_review` webhook on each repo (against the shared
@@ -72,6 +73,24 @@ on API re-fetch). So this side gets **both**: verify the signature on receipt,
 then corroborate by re-fetching the review via the API. Only the operator's
 repos and only the operator's approvals are actionable.
 
+The signature proves GitHub sent the delivery, not that the reviewer may merge.
+An emitted `approved` review is what lets the dispatched agent land the PR, so
+`ReviewPipeline` admits an approval only when its reviewer is the **operator's
+GitHub login** — every other reviewer's approval is dropped (logged to STDERR,
+never emitted), exactly as the Basecamp side drops an unauthorized author
+rather than emitting a flagged event. `changes_requested` and `commented`
+reviews are feedback to address, not authority to merge, so they pass from any
+reviewer. The gate runs twice: on the delivery body as a cheap pre-filter, and
+again on the review re-fetched from the API, so the decision binds to the
+`user.login` GitHub recorded, not to the POST body. Logins compare
+case-insensitively, as GitHub does.
+
+The operator's login is the one this machine's `gh` is authenticated as
+(`gh api user`), resolved once at startup; `--gh-operator <login>` names
+another login instead, without consulting `gh`. The bridge logs the active set
+with the other startup lines: `Trust: approvals from @<login> only; …`. A
+signed-out `gh` with no `--gh-operator` aborts startup.
+
 ## Connector plumbing (parallels the Basecamp side)
 
 The top-level `Connector` owns the one funnel + one server and mounts each
@@ -102,7 +121,8 @@ The flow, per delivery:
    reject otherwise — `GitHub::WebhookSignature`.
 4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
    state, repo, PR number, reviewer, body, inline comments) — `GitHub::ReviewVerifier` +
-   `Emitter`.
+   `Emitter`. An `approved` review is emitted only when the re-fetched
+   reviewer is the operator's GitHub login — `GitHub::ReviewPipeline`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.
 
@@ -123,7 +143,8 @@ orchestrator/worker split as the Basecamp flow):
 - **`changes_requested` / `commented`** → re-fetch the full review, address it in
   the task's worktree, re-green (`bin/ci` local + `gh pr checks --watch` remote),
   push, and reply.
-- **`approved`** → land per the repo's policy, reply done.
+- **`approved`** → land per the repo's policy, reply done. Only the operator's
+  approvals reach the agent; the connector drops everyone else's.
 
 ## Open questions
 

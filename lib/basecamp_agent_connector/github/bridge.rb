@@ -6,10 +6,15 @@ require "securerandom"
 # review event. Its endpoint + secret are logged so additional repos can be
 # registered against the running connector on the fly (one webhook per PR's repo,
 # all multiplexed onto this single funnel).
+#
+# `operator` is the GitHub login whose approvals are actionable; every other
+# reviewer's approval is dropped, since an emitted approval lets the dispatched
+# agent land the PR.
 class BasecampAgentConnector::GitHub::Bridge
-  def initialize(repos:, events:, github_cli:, emitter:, logger: $stderr)
+  def initialize(repos:, events:, operator:, github_cli:, emitter:, logger: $stderr)
     @repos = repos
     @events = events
+    @operator = operator
     @github_cli = github_cli
     @emitter = emitter
     @logger = logger
@@ -27,6 +32,7 @@ class BasecampAgentConnector::GitHub::Bridge
     @webhooks.register_all(repos: @repos, url: endpoint, secret: @hmac_secret, events: @events)
     log "Listening for #{@events.join(', ')} on #{@repos.length} repo(s) at #{endpoint}"
     log "To watch another repo on the fly, register a webhook to #{endpoint} (secret #{@hmac_secret})."
+    log "Trust: approvals from @#{@operator} only; changes_requested and commented reviews from any reviewer"
   end
 
   # Answers 200 at once (nil, to the server) and verifies off the request
@@ -52,6 +58,7 @@ class BasecampAgentConnector::GitHub::Bridge
     def pipeline
       @pipeline ||= BasecampAgentConnector::GitHub::ReviewPipeline.new \
         secret: @hmac_secret,
+        operator: @operator,
         verifier: BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: @github_cli),
         emitter: @emitter
     end

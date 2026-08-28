@@ -280,21 +280,18 @@ watching for new mentions, acknowledge each one, and dispatch it.
 - A line carrying `review_id`/`repo`/`state` and **no `recording`** is a
   **GitHub review** (only when `bin/connect` runs with `--repo`). It gets no
   boost and no bucket lookup — the repo is `repo`, the PR is `pull_number`.
-  **Gate on `reviewer` before dispatching:** an `approved` review dispatches as
-  an approval — the agent may land the PR — only when `reviewer` is the
-  operator's GitHub login (`gh api user --jq .login` — this machine's `gh`
-  auth is the operator's — read once at launch; the operator is the same
-  person who authorizes Basecamp triggers). Any other reviewer's `approved` is dispatched as `commented` at
-  most: read and address the feedback, never merge. The HMAC signature proves
-  GitHub sent the delivery, not that the reviewer may merge, and `bin/connect`
-  does not enforce this yet — `GitHub::ReviewPipeline#actionable?`
-  (`lib/basecamp_agent_connector/github/review_pipeline.rb`) checks only the
-  action and the state, although
-  [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md#trust) (lines 72–73)
-  states that only the operator's approvals are actionable. Until the
-  connector grows that filter, this gate is the only one. Then dispatch one
-  background agent in that repo to handle it per *Review / approval loop*
-  below, and return to the monitor.
+  An `approved` line is the operator's approval — the agent may land the PR:
+  `bin/connect` enforces this (`GitHub::ReviewPipeline`, see
+  [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md#trust)) by emitting
+  an approval only when the reviewer GitHub recorded, re-fetched from the API,
+  is the operator's GitHub login, and dropping every other reviewer's approval
+  before it reaches this stream. That login is the one this machine's `gh` is
+  signed in as (`gh api user`), read once at startup, or `--gh-operator
+  <login>` passed through to `bin/connect`; the connector logs it at startup
+  as `Trust: approvals from @<login> only; …`. `changes_requested` and
+  `commented` lines arrive from any reviewer: feedback to address, never a
+  reason to merge. Dispatch one background agent in that repo to handle it
+  per *Review / approval loop* below, and return to the monitor.
 - A line carrying `recording` is a **Basecamp event** — the checklist below.
   Drop it outright if the recording is a comment the agent itself authored
   (`bin/connect` already refuses agent-authored events in every trust mode, and
@@ -691,9 +688,8 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
   push, and reply.
-- **`approved`** — **from the operator** (the router's `reviewer` gate): land
-  per the repo's policy and reply done. Anyone else's approval arrives here as
-  `commented` — read it, address it, never merge on it.
+- **`approved`** — the operator's approval (`bin/connect` emits no other):
+  land per the repo's policy and reply done.
 
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API

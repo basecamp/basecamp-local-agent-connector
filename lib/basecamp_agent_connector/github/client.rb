@@ -26,6 +26,11 @@ class BasecampAgentConnector::GitHub::Client
     run("api", "-X", "DELETE", "repos/#{repo}/hooks/#{id}").success?
   end
 
+  # The login `gh` is authenticated as.
+  def authenticated_login
+    json("api", "user").fetch("login")
+  end
+
   def review(repo:, pull_number:, id:)
     json "api", "repos/#{repo}/pulls/#{pull_number}/reviews/#{id}"
   end

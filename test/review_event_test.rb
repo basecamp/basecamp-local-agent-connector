@@ -34,6 +34,20 @@ class ReviewEventTest < Minitest::Test
     refute event.actionable_state?
   end
 
+  def test_reviewed_by_matches_the_login_case_insensitively
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("user" => { "login" => "OctoCat" })))
+
+    assert event.reviewed_by?("octocat")
+    refute event.reviewed_by?("someone-else")
+    refute event.reviewed_by?(nil)
+  end
+
+  def test_reviewed_by_is_false_without_a_reviewer
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("user" => nil)))
+
+    refute event.reviewed_by?("octocat")
+  end
+
   def test_emitted_hash_carries_review_and_comments
     payload = review_payload("comments" => [ { "path" => "lib/x.rb", "line" => 3, "body" => "rename this" } ])
 
