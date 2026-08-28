@@ -131,9 +131,28 @@ class BasecampBridgeTest < Minitest::Test
     assert_equal 503, bridge.handler.call(request(sample_payload))
 
     assert_empty output.string
-    assert_match(/could not fetch recording for event 99001: .*failed on all 3 attempts.*; answered 503 so Basecamp redelivers/, logs.string)
+    assert_match(/could not corroborate event 99001: `basecamp show .*` failed on all 3 attempts.*; answered 503 so Basecamp redelivers/, logs.string)
     assert_match(/deactivates the webhook after 10 failed deliveries.*basecamp auth status --profile clawdito.*restart/, logs.string)
     refute_match(/not corroborated/, logs.string)
+  end
+
+  # The subscriber lookup is the second call a comment's verification makes,
+  # after the recording fetch succeeded; a 503 from there names that call,
+  # not the fetch that worked.
+  def test_handler_answers_503_naming_the_subscriber_lookup_that_could_not_be_answered
+    recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    stub_transient_failure runner, "subscriptions show"
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, output: output)
+
+    assert_equal 503, bridge.handler.call(request(sample_payload("recording" => recording)))
+
+    assert_empty output.string
+    assert_match(/could not corroborate event 99001: `basecamp subscriptions show .*` failed on all 3 attempts/, logs.string)
+    refute_match(/fetch recording/, logs.string)
   end
 
   # bc3 answering 5xx (a deploy, an incident) is the other way Basecamp could

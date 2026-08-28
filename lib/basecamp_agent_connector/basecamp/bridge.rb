@@ -84,7 +84,9 @@ class BasecampAgentConnector::Basecamp::Bridge
   # revoked credential reports auth_required on every call, exactly like the
   # keyring race) ends with bc3 deactivating the webhook, silently; the 503
   # log line names that and the remedy — fix the CLI's credentials and
-  # restart bin/connect, which re-registers.
+  # restart bin/connect, which re-registers. Which call could not be
+  # answered — the recording fetch, or the subscriber lookup after it — is
+  # in the error's message, which names the failed command.
   #
   # Because the work is on the request thread, shutdown (WEBrick joins its
   # request threads before `start` returns) waits for in-flight deliveries
@@ -110,7 +112,7 @@ class BasecampAgentConnector::Basecamp::Bridge
 
       nil
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
-      log "could not fetch recording for event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers " \
+      log "could not corroborate event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers " \
         "(bc3 deactivates the webhook after 10 failed deliveries: if this repeats, check `basecamp auth status " \
         "--profile #{@agent.profile}` and restart bin/connect to re-register)"
       503
