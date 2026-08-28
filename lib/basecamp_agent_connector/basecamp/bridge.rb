@@ -76,10 +76,21 @@ class BasecampAgentConnector::Basecamp::Bridge
   # for redelivery — of an event whose id the pipeline has forgotten, so the
   # redelivery gets a fresh attempt. Everything else answers 200: an
   # impostor payload, a malformed body, and a pipeline bug are settled here,
-  # and redelivering them would only repeat the same outcome. The client's
-  # retry budget keeps the synchronous verification inside bc3's 10s
-  # delivery timeout; overrunning it is harmless (a timed-out delivery is
+  # and redelivering them would only repeat the same outcome. Overrunning
+  # bc3's 10s delivery timeout is harmless (a timed-out delivery is
   # redelivered and then deduped or re-verified), just wasteful.
+  #
+  # A failure that stays transient through all 10 attempts (~4.3h: a
+  # revoked credential reports auth_required on every call, exactly like the
+  # keyring race) ends with bc3 deactivating the webhook, silently; the 503
+  # log line names that and the remedy — fix the CLI's credentials and
+  # restart bin/connect, which re-registers.
+  #
+  # Because the work is on the request thread, shutdown (WEBrick joins its
+  # request threads before `start` returns) waits for in-flight deliveries
+  # to be answered before teardown deletes the webhooks, so none is lost to
+  # a Ctrl-C. The wait is bounded only by the CLI's own timeouts, which on
+  # a stalled network can run to minutes.
   def handler
     lambda do |request|
       payload = JSON.parse(request.body)
@@ -99,7 +110,9 @@ class BasecampAgentConnector::Basecamp::Bridge
 
       nil
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
-      log "could not fetch recording for event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers"
+      log "could not fetch recording for event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers " \
+        "(bc3 deactivates the webhook after 10 failed deliveries: if this repeats, check `basecamp auth status " \
+        "--profile #{@agent.profile}` and restart bin/connect to re-register)"
       503
     rescue JSON::ParserError => error
       log "ignored malformed payload: #{error.message}"

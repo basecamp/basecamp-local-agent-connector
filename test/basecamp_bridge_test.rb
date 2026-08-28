@@ -132,6 +132,7 @@ class BasecampBridgeTest < Minitest::Test
 
     assert_empty output.string
     assert_match(/could not fetch recording for event 99001: .*failed on all 3 attempts.*; answered 503 so Basecamp redelivers/, logs.string)
+    assert_match(/deactivates the webhook after 10 failed deliveries.*basecamp auth status --profile clawdito.*restart/, logs.string)
     refute_match(/not corroborated/, logs.string)
   end
 

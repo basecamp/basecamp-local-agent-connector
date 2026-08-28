@@ -352,10 +352,15 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    line of NDJSON** to STDOUT. Dropped/diagnostic lines go to STDERR. The
    delivery is answered with the verdict: `200` once the event is settled
    (emitted, dropped, or a duplicate), `503` when Basecamp could not be asked —
-   the CLI retries a transient failure (its keyring probe loses a race under
-   concurrent invocations and reports stale credentials) a few times first,
-   and a `503` makes bc3's delivery job redeliver the event with backoff
-   rather than settling it as uncorroborated.
+   the connector re-runs the CLI a few times first (its keyring probe loses a
+   race under concurrent invocations and reports stale credentials; bc3 may
+   answer 5xx mid-deploy), and a `503` makes bc3's delivery job redeliver the
+   event with backoff rather than settling it as uncorroborated. A delivery
+   that stays unanswerable for all of bc3's 10 attempts (~4.3h — a revoked
+   credential looks just like the race) makes bc3 deactivate the webhook: fix
+   the CLI's credentials (`basecamp auth status --profile <agent>`) and
+   restart `bin/connect`, which re-registers it. The connector logs that
+   remedy with every `503`.
 
 **Emitted event (STDOUT, one JSON object per line):**
 
