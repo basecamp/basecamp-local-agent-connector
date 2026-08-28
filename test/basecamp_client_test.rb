@@ -94,6 +94,22 @@ class BasecampClientTest < Minitest::Test
     assert_includes runner.commands.first.join(" "), "chat messages --project 222 --room 333 --limit 25"
   end
 
+  # `chat messages` on a room with no lines omits "data" from the envelope
+  # entirely; the list commands must come back empty, not as the bare
+  # envelope hash.
+  def test_a_dataless_envelope_is_an_empty_list_for_list_commands
+    runner = FakeCommandRunner.new
+    runner.stub "chat messages", stdout: empty_envelope
+    runner.stub "chat list", stdout: empty_envelope("0 chats")
+    runner.stub "api get /my/boosts.json", stdout: empty_envelope("0 boosts")
+
+    cli = build_cli(runner)
+
+    assert_equal [], cli.chat_lines(project: 222, chat: 333, limit: 25)
+    assert_equal [], cli.chats(project: 222)
+    assert_equal [], cli.received_boosts(profile: "clawdito")
+  end
+
   def test_chat_line_fetches_one_line_by_url
     runner = FakeCommandRunner.new
     runner.stub "chat line ", stdout: envelope(chat_line)

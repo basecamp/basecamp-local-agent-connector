@@ -109,7 +109,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     end
 
     def discover(project)
-      Array(@basecamp_cli.chats(project: project)).map do |chat|
+      @basecamp_cli.chats(project: project).map do |chat|
         Room.new(project: project, chat_id: chat["id"], title: chat["title"])
       end
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
@@ -138,7 +138,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # baseline and a pre-start line that a deletion slides back into the
     # newest-N window later — either way, history is never dispatched.
     def poll_room(room)
-      lines = Array(@basecamp_cli.chat_lines(project: room.project, chat: room.chat_id, limit: FETCH_LIMIT))
+      lines = @basecamp_cli.chat_lines(project: room.project, chat: room.chat_id, limit: FETCH_LIMIT)
       first_fetch = !@seen_line_ids.key?(room.chat_id)
       seen = @seen_line_ids[room.chat_id] ||= Set.new
       ordered = lines.sort_by { |line| line["id"].to_i }
