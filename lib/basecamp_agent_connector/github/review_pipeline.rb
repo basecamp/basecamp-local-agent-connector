@@ -28,8 +28,12 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
 
     event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(JSON.parse(body))
 
-    if actionable?(event) && fresh?(event)
-      emit_if_verified(event)
+    if actionable?(event)
+      if !authorized?(event)
+        log_unauthorized(event)
+      elsif fresh?(event)
+        emit_if_verified(event)
+      end
     end
   rescue JSON::ParserError => error
     log "ignored malformed payload: #{error.message}"
@@ -41,7 +45,7 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
     end
 
     def actionable?(event)
-      event.actionable_action? && event.actionable_state? && authorized?(event)
+      event.actionable_action? && event.actionable_state?
     end
 
     def authorized?(event)
@@ -63,10 +67,14 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
       if verified.nil?
         log "dropped review #{event.id}: not corroborated by GitHub"
       elsif !authorized?(verified)
-        log "dropped review #{event.id}: approved by #{verified.reviewer.inspect}, not by the operator (#{@operator})"
+        log_unauthorized(verified)
       else
         @emitter.emit(verified)
       end
+    end
+
+    def log_unauthorized(event)
+      log "dropped review #{event.id}: approved by #{event.reviewer.inspect}, not by the operator (#{@operator})"
     end
 
     def log(message)

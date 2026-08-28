@@ -130,11 +130,15 @@ class ConnectorTest < Minitest::Test
   def test_parses_the_github_operator_login
     assert_nil parse("--repo", "acme/a").gh_operator
     assert_equal "octocat", parse("--repo", "acme/a", "--gh-operator", " octocat ").gh_operator
+    assert_equal "octocat", parse("--repo", "acme/a", "--gh-operator", "@octocat").gh_operator
   end
 
   def test_refuses_an_empty_github_operator_login
     assert_raises ArgumentError do
       parse "--repo", "acme/a", "--gh-operator", " "
+    end
+    assert_raises ArgumentError do
+      parse "--repo", "acme/a", "--gh-operator", "@"
     end
   end
 

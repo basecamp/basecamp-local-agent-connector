@@ -135,6 +135,11 @@ The flow, per delivery:
  "comments":[{"path":"lib/x.rb","line":3,"body":"rename this"}]}
 ```
 
+`state` is always the lowercase form above. GitHub's webhook delivers it
+lowercase but the REST re-fetch returns `APPROVED` / `CHANGES_REQUESTED` /
+`COMMENTED`; `ReviewEvent` normalizes both, so the reviewer gate and the
+emitted line read the same value.
+
 ## What the dispatched agent does
 
 Per emitted review event, the front thread dispatches a fresh agent (same

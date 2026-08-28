@@ -49,9 +49,10 @@ class BasecampAgentConnector::Connector
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--gh-operator LOGIN", "GitHub login whose PR approvals are actionable (default: the login `gh` is authenticated as)") do |value|
-        raise ArgumentError, "--gh-operator needs a GitHub login" if value.strip.empty?
+        login = value.strip.delete_prefix("@")
+        raise ArgumentError, "--gh-operator needs a GitHub login" if login.empty?
 
-        gh_operator = value.strip
+        gh_operator = login
       end
       parser.on("--trust MODE", TRUST_MODES, "Who may trigger the agent: #{TRUST_MODES.join(", ")} (default: operator only; " \
         "value flags below imply their mode)") do |value|

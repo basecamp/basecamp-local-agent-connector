@@ -84,6 +84,7 @@ class ReviewPipelineTest < Minitest::Test
 
     assert_empty @output.string
     assert_empty runner.commands
+    assert_match(/dropped review 7001: approved by "someone-else", not by the operator \(octocat\)/, @logs.string)
   end
 
   # The delivery body claims the operator approved; the review GitHub actually
@@ -131,9 +132,11 @@ class ReviewPipelineTest < Minitest::Test
   end
 
   private
+    # GitHub's REST API answers with the state upcased (`APPROVED`), unlike the
+    # lowercase webhook delivery, so the corroboration stub takes the API's shape.
     def corroborating_runner(review = review_hash)
       runner = FakeCommandRunner.new
-      runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review))
+      runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review.merge("state" => review["state"].upcase)))
       runner.stub "reviews/7001/comments", stdout: "[]"
       runner
     end
