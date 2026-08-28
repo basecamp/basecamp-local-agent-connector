@@ -89,8 +89,11 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
+  # One attempt: a create whose answer was lost may still have created, and
+  # asking again would register a second webhook whose id nobody keeps for
+  # teardown. Webhooks#create_with_retries retries the registration.
   def create_webhook(url:, project:, types:)
-    json "webhooks", "create", url, "--project", project.to_s, "--types", types
+    json "webhooks", "create", url, "--project", project.to_s, "--types", types, attempts: 1
   end
 
   def delete_webhook(id:, project:)
@@ -101,11 +104,13 @@ class BasecampAgentConnector::Basecamp::Client
     # A command either answers (its envelope is handed back), is refused
     # (Error, at once — Basecamp's verdict doesn't improve with repetition),
     # or fails without an answer, in which case it is tried again up to
-    # ATTEMPTS times before the failure surfaces as a TransientError.
-    def json(*arguments)
+    # `attempts` times before the failure surfaces as a TransientError.
+    # Reads take the default, since re-asking is idempotent; a mutation
+    # passes `attempts: 1`, because a lost answer is not a lost request.
+    def json(*arguments, attempts: ATTEMPTS)
       result = parsed = nil
 
-      ATTEMPTS.times do |attempt|
+      attempts.times do |attempt|
         result = run(*arguments, "-j")
         parsed = parse(result.stdout)
 
@@ -113,12 +118,12 @@ class BasecampAgentConnector::Basecamp::Client
           return unwrap(parsed)
         elsif !transient?(parsed)
           raise Error, "`basecamp #{arguments.join(' ')}` #{outcome(result)}: #{detail(result)}"
-        elsif attempt < ATTEMPTS - 1
+        elsif attempt < attempts - 1
           @wait.call(RETRY_DELAYS.fetch(attempt))
         end
       end
 
-      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)} on all #{ATTEMPTS} attempts: #{detail(result)}"
+      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{" on all #{attempts} attempts" if attempts > 1}: #{detail(result)}"
     end
 
     def parse(stdout)

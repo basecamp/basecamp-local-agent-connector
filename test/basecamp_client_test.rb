@@ -37,6 +37,24 @@ class BasecampClientTest < Minitest::Test
     assert_includes command, "--types Comment"
   end
 
+  # A create is not re-asked: Basecamp may have registered the webhook and
+  # lost only the answer, and a second create would register a second
+  # webhook whose id is never kept for teardown. The registration's own
+  # outer retry (Webhooks#create_with_retries) decides whether to try again.
+  def test_create_webhook_is_not_retried_on_a_transient_failure
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "webhooks create"
+    delays = []
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      build_cli(runner, wait: ->(seconds) { delays << seconds }).create_webhook(url: "https://example.org/hook/x", project: 222, types: "Comment")
+    end
+
+    assert_equal 1, runner.commands.length
+    assert_empty delays
+    assert_match(/`basecamp webhooks create .*` failed: .*auth_required/, error.message)
+  end
+
   def test_delete_webhook_returns_success_flag
     runner = FakeCommandRunner.new
     runner.stub "webhooks delete", exit_status: 0
