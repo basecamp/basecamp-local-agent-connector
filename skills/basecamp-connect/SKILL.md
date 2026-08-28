@@ -389,8 +389,7 @@ event stays unacknowledged. The snippet exits non-zero on every unsuccessful
 path and echoes the CLI's last error so the failure is visible in the log.
 
 If the boost did not verifiably land, record that for the dispatch (step c) and
-move on — the dispatched agent checks the recording's boosts and posts the
-fallback only if the ack is genuinely missing.
+move on — the dispatched agent posts the fallback boost.
 
 **b. Resolve the working repo** (front thread, fast). Infer the local repo from
 the project name (`recording.bucket.name`). Basecamp project names usually carry
@@ -420,40 +419,31 @@ everything it needs to finish **without the front thread**:
 - the **instruction** — `recording.content` with the agent mention removed, the
   rest of the raw HTML (links, other mentions) intact;
 - the **recording** URL/id and its parent URL;
-- the **agent profile name** (its reply identity) and its **Person id** (from
-  startup), plus the event's **`created_at`** — the fallback boost check needs
-  both;
+- the **agent profile name** (its reply identity);
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
   not necessarily the operator;
 - whether the **front thread's boost landed** (step a), so the agent knows
-  whether the ack still needs checking.
+  whether the ack is still owed.
 
 Instruct that background agent to, in order:
 
-1. **Boost only if the ack is missing.** The `On it!` is normally already on
-   the recording; the dispatched agent's boost is a **fallback, never a second
-   boost**. When the handoff says the front thread's boost did not verifiably
-   land, first read the recording's boosts and post only if none is an
-   `On it!` **by the agent, created at or after this event's `created_at`** —
-   a failed CLI call can still have landed server-side, and Basecamp does not
-   dedup boosts, but an `On it!` the agent left for an *earlier* event on the
-   same recording (a card assigned twice, a message re-mentioning the agent) is
-   that event's ack, not this one's, and must not suppress the fallback. Same
-   exceptions as the front thread: subscribed-thread comments and
-   `boost_created` events are never boosted.
+1. **Boost only if the handoff says the front thread's boost did not land.**
+   The `On it!` is normally already on the recording; the dispatched agent's
+   boost is a fallback for a front-thread call that failed, posted without
+   first listing the recording's boosts:
    ```bash
-   basecamp boost list <recording.url> --profile <agent> -j \
-     | jq -e --argjson me <agent-person-id> --arg since <event.created_at> \
-         '.data[] | select(.content == "On it!" and .booster.id == $me and .created_at >= $since)' >/dev/null \
-     || basecamp boost create <recording.url> "On it!" --profile <agent>
+   basecamp boost create <recording.url> "On it!" --profile <agent>
    ```
-   `boost list -j` returns `data[]` of `{id, content, created_at, booster}`,
-   where `booster.id` is the booster's Person id and `created_at` is an ISO
-   8601 UTC timestamp (`2026-08-28T19:42:53.986Z`), the same form as the
-   event's `created_at`, so the string comparison orders correctly. The
-   `<agent-person-id>` is the startup `people show me` value the handoff
-   carries (step c).
+   A front-thread call that Basecamp accepted but reported as failed (a
+   timeout reading the response, an envelope parse error) then produces a
+   second `On it!`. That is accepted: a boost is a reaction, a duplicate is
+   harmless, and a missing ack is the failure this whole step exists to
+   prevent. Checking first would be one more CLI call that can fail the same
+   transient way, and it would have to decide which earlier event an older
+   `On it!` on the same recording belonged to — the price of "never a second
+   boost" is a rulebook, not a guarantee. Same exceptions as the front thread:
+   subscribed-thread comments and `boost_created` events are never boosted.
 2. **Gather context from Basecamp** — it is the context store; the event is just
    the trigger + pointer:
    ```bash
@@ -506,9 +496,9 @@ on receipt exactly as for a mention — boosts work on todos and cards too, so a
 boost is the single ack for both triggers. The dispatched background agent
 should, in order:
 
-1. **Boost only if the ack is missing** — the same fallback rule as for a
-   mention (list first; post only if no `On it!` by the agent created at or
-   after this event's `created_at` is there); never a second boost.
+1. **Boost only if the handoff says the front thread's boost did not land** —
+   the same fallback rule as for a mention: post without listing first; a rare
+   duplicate is accepted over a missing ack.
 2. **Move the card out of Triage** — same rule as for mentions: if the assigned
    card sits in a Triage-like column and the table has an In-progress-like
    column, move it there before starting; skip silently otherwise.
