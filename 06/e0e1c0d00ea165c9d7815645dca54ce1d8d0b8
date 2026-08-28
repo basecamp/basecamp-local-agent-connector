@@ -1,0 +1,36 @@
+skills/basecamp-connect/SKILL.md
+  s_cb8638fd4deb07::t_b6f5f2d2a4cc25 190-194
+  s_cb8638fd4deb07::t_8a4ff7297db42c 271-273,278-286
+  s_cb8638fd4deb07::t_fcc058ac0b7c9f 359-361
+  s_cb8638fd4deb07::t_e6cc263c70e9b3 27-29
+  s_cb8638fd4deb07::t_8287e65cb8ebaf 554-556
+  s_cb8638fd4deb07::t_c09182e2f85812 496-517
+  s_cb8638fd4deb07::t_6d0cc256eb7bf4 316,326-328,332-336,338
+  s_cb8638fd4deb07::t_27df0b86d18bba 428-430
+  s_cb8638fd4deb07::t_0b7646dfcfb24c 7-10
+  s_cb8638fd4deb07::t_0e507c0d68821d 362-365
+  s_cb8638fd4deb07::t_3eee561c2fd3eb 264,267-270,274-277,287-294,296-308
+  s_cb8638fd4deb07::t_83c7286b7bb677 393-400
+  s_cb8638fd4deb07::t_94587108973513 553
+  s_cb8638fd4deb07::t_4cde7bbddb9d93 458-461
+  s_cb8638fd4deb07::t_6cf63b63da4672 487-490
+  s_cb8638fd4deb07::t_1be3e2dc75aefd 383
+README.md
+  s_cb8638fd4deb07::t_aa08ade5d29aa3 127,130,141-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "06e0e1c0d00ea165c9d7815645dca54ce1d8d0b8",
+  "prompts": {},
+  "sessions": {
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
