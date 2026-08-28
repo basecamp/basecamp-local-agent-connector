@@ -20,9 +20,10 @@ class BasecampAgentConnector::Basecamp::Client
     # across every CLI process on the account. The CLI's taxonomy reserves
     # the code "rate_limit" for that refusal, but today's binary relays the
     # API's own "rate limit exceeded" body as a generic api_error — so
-    # recognize either spelling. A caller that can defer should ease off
-    # rather than keep asking on its regular cadence; see the pollers'
-    # backoff.
+    # recognize either spelling (kept in step with TRANSIENT_API_ERROR,
+    # which classifies both as no-verdict). A caller that can defer should
+    # ease off rather than keep asking on its regular cadence; see the
+    # pollers' backoff.
     def rate_limited?
       code == "rate_limit" || @envelope["error"].to_s.match?(/rate limit/i)
     end
@@ -62,8 +63,13 @@ class BasecampAgentConnector::Basecamp::Client
   # The envelope drops the SDK's Retryable flag, so these fixed messages are
   # all there is to key on until the CLI emits that flag — the intended end
   # state, after which this pattern goes.
+  # A rate limit is transient too, in either spelling (the dedicated code
+  # above, or bc3's "rate limit exceeded" body relayed as an api_error):
+  # "not now" is no verdict on the recording, and the account-wide budget
+  # rolls over in seconds — so a webhook defers to redelivery and a poller
+  # to its next (backed-off) tick, rather than recording a drop.
   TRANSIENT_CODES = %w[auth_required network rate_limit]
-  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable/i
+  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable|rate limit/i
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp",
     wait: ->(seconds) { sleep seconds })

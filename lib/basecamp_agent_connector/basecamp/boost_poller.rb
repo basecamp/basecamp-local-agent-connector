@@ -49,6 +49,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # and drop it for good. See received_since_start?.
     @started_at = @clock.call.floor
     @stopping = false
+    @rate_limited = false
     @backoff = nil
   end
 
@@ -80,26 +81,32 @@ class BasecampAgentConnector::Basecamp::BoostPoller
   # baseline and a pre-start boost that deletions slide back into the
   # newest-page window later — either way, history is never dispatched.
   def poll
-    return if @stopping
+    unless @stopping
+      @rate_limited = false
 
-    boosts = @basecamp_cli.received_boosts(profile: @agent.profile)
-    ordered = boosts.sort_by { |boost| boost["id"].to_i }
-    warn_of_possible_overflow(ordered)
+      begin
+        boosts = @basecamp_cli.received_boosts(profile: @agent.profile)
+        ordered = boosts.sort_by { |boost| boost["id"].to_i }
+        warn_of_possible_overflow(ordered)
 
-    ordered.each do |boost|
-      if @seen_boost_ids.include?(boost["id"])
-        # already handled
-      elsif received_since_start?(boost)
-        process(boost)
-      else
-        @seen_boost_ids << boost["id"]
+        ordered.each do |boost|
+          if @seen_boost_ids.include?(boost["id"])
+            # already handled
+          elsif received_since_start?(boost)
+            process(boost)
+          else
+            @seen_boost_ids << boost["id"]
+          end
+        end
+      rescue BasecampAgentConnector::Basecamp::Client::Error => error
+        note_rate_limit(error)
+        log "boost poll failed: #{error.message}"
+      ensure
+        # In an ensure so a tick a bug crashes still settles: it drew no
+        # refusal, so it resets, and the crash stays visible via poll_loop.
+        @rate_limited ? extend_backoff : reset_backoff
       end
     end
-
-    reset_backoff
-  rescue BasecampAgentConnector::Basecamp::Client::Error => error
-    log "boost poll failed: #{error.message}"
-    error.rate_limited? ? extend_backoff : reset_backoff
   end
 
   private
@@ -144,6 +151,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
       @seen_boost_ids.delete(boost["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.boost_payload(boost))
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       @seen_boost_ids.delete(boost["id"])
+      note_rate_limit(error)
       log "could not corroborate boost #{boost["id"]}: #{error.message}; retried on the next poll"
     end
 
@@ -174,10 +182,21 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # MAX_BACKOFF; the first tick that draws no rate-limit refusal — a
     # success, or any other failure — restores the configured cadence.
     # Logged when the delay changes, not on every backed-off tick.
+    def note_rate_limit(error)
+      @rate_limited ||= error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
+    end
+
+    # Backoff only ever lengthens the delay: doubling stops at the cap, and
+    # a configured interval at or above the cap never backs off at all —
+    # min against a smaller cap would speed a slow poller *up*.
     def extend_backoff
-      extended = [ (@backoff || @interval) * 2, MAX_BACKOFF ].min
-      log "rate limited; backing off boost polls to #{extended}s" unless extended == @backoff
-      @backoff = extended
+      current = @backoff || @interval
+      extended = [ current * 2, [ @interval, MAX_BACKOFF ].max ].min
+
+      if extended > current
+        @backoff = extended
+        log "rate limited; backing off boost polls to #{extended}s"
+      end
     end
 
     def reset_backoff

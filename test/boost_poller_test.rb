@@ -281,7 +281,8 @@ class BoostPollerTest < Minitest::Test
   # doubles the effective sleep, a clean one restores the cadence.
   def test_rate_limited_polls_back_off_doubling_until_a_clean_poll_resets_the_cadence
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    # Three rate-limited ticks, each retried through by the client (3 attempts).
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 9
     runner.stub "api get /my/boosts.json", stdout: envelope([])
     delays = Queue.new
     ticks = Queue.new
@@ -344,7 +345,7 @@ class BoostPollerTest < Minitest::Test
   # cadence: whatever else went wrong, the budget stopped refusing.
   def test_a_non_rate_limit_failure_resets_an_active_backoff
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), once: true
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limited"), times: 3
     stub_transient_failure runner, "api get /my/boosts.json", stdout: "", exit_status: 6
     delays = Queue.new
     ticks = Queue.new
@@ -363,13 +364,55 @@ class BoostPollerTest < Minitest::Test
     poller&.stop
   end
 
+  # A configured interval at or above the cap is already slower than any
+  # backoff could make it — rate limiting must not speed the poller up.
+  def test_an_interval_beyond_the_cap_never_backs_off
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, interval: 600, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    2.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 600, 600, 600 ], waited
+    refute_match(/backing off/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
+  # A rate-limited corroborating re-fetch is the same budget refusing: the
+  # boost is forgotten for the next tick (as with any transient failure) and
+  # the tick still backs off.
+  def test_a_rate_limited_corroboration_backs_off_and_retries_the_boost
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner)
+
+    poller.poll
+    assert_empty @output.string
+    assert_match(/could not corroborate boost 88001/, @logs.string)
+    assert_match(/rate limited; backing off boost polls to 30s/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+    assert_match(/no longer rate limited; resuming 15s boost polls/, @logs.string)
+  end
+
   private
-    def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer)
+    def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer, interval: 15)
       BasecampAgentConnector::Basecamp::BoostPoller.new \
         basecamp_cli: build_cli(runner),
         pipeline: pipeline(runner, trust_authorizer),
         agent: @agent,
-        interval: 15,
+        interval: interval,
         logger: @logs,
         wait: wait,
         clock: clock

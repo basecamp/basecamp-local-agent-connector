@@ -295,7 +295,8 @@ class ChatPollerTest < Minitest::Test
   def test_rate_limited_polls_back_off_doubling_until_a_clean_poll_resets_the_cadence
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    # Three rate-limited ticks, each retried through by the client (3 attempts).
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 9
     runner.stub "chat messages", stdout: empty_envelope
     delays = Queue.new
     ticks = Queue.new
@@ -338,7 +339,9 @@ class ChatPollerTest < Minitest::Test
     poller&.stop
   end
 
-  def test_a_rate_limited_chat_listing_backs_off_too
+  # A refusal during start's synchronous discovery already proves the budget
+  # is exhausted, so even the first wait backs off.
+  def test_a_rate_limited_chat_listing_backs_off_from_the_start
     runner = FakeCommandRunner.new
     runner.stub "chat list", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
     delays = Queue.new
@@ -350,7 +353,7 @@ class ChatPollerTest < Minitest::Test
     ticks << true
     waited << delays.pop
 
-    assert_equal [ 15, 30 ], waited
+    assert_equal [ 30, 60 ], waited
   ensure
     poller&.stop
   end
@@ -374,6 +377,64 @@ class ChatPollerTest < Minitest::Test
     refute_match(/backing off/, @logs.string)
   ensure
     poller&.stop
+  end
+
+  # A configured interval at or above the cap is already slower than any
+  # backoff could make it — rate limiting must not speed the poller up.
+  def test_an_interval_beyond_the_cap_never_backs_off
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, interval: 600, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    2.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 600, 600, 600 ], waited
+    refute_match(/backing off/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
+  def test_polls_only_until_the_first_rate_limited_room
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash, chat_hash("id" => 444, "title" => "Ops") ])
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+
+    poller(runner).poll
+
+    # One refused fetch (three client attempts) for the first room; the
+    # second room's fetch waits for the backed-off next tick.
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/chat messages/).length
+  end
+
+  # A rate-limited corroborating re-fetch is the same budget refusing: the
+  # line is forgotten for the next tick (as with any transient failure) and
+  # the tick still backs off.
+  def test_a_rate_limited_corroboration_backs_off_and_retries_the_line
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope, once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    runner.stub "chat line ", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), times: 3
+    runner.stub "chat line ", stdout: envelope(chat_line)
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+    assert_empty @output.string
+    assert_match(/could not corroborate chat line 91001/, @logs.string)
+    assert_match(/rate limited; backing off chat polls to 30s/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+    assert_match(/no longer rate limited; resuming 15s chat polls/, @logs.string)
   end
 
   def test_warns_when_the_fetch_window_may_have_overflowed
@@ -539,13 +600,15 @@ class ChatPollerTest < Minitest::Test
     # The canonical chat_line is created at 12:00; the default clock starts the
     # poller before that, so fetched lines count as live traffic. Tests about
     # history/baselining override the clock to after 12:00 instead.
-    def poller(runner, projects: [ "A" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) })
+    def poller(runner, projects: [ "A" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) },
+      interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL)
       cli = build_cli(runner)
 
       BasecampAgentConnector::Basecamp::ChatPoller.new \
         basecamp_cli: cli,
         pipeline: pipeline(cli),
         projects: projects,
+        interval: interval,
         logger: @logs,
         wait: wait,
         clock: clock

@@ -60,6 +60,10 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   # on a room's first fetch.
   def start
     discovered = rooms
+    # A refusal during this synchronous discovery already proves the budget
+    # is exhausted — let the first wait back off instead of retrying at the
+    # configured cadence.
+    extend_backoff if @rate_limited
     @thread = Thread.new { poll_loop }
     discovered
   end
@@ -80,8 +84,20 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   def poll
     unless @stopping
       @rate_limited = false
-      rooms.each { |room| poll_room(room) }
-      @rate_limited ? extend_backoff : reset_backoff
+
+      begin
+        # One refusal is the account's shared budget saying no to everyone,
+        # so spending the rest of the tick's calls would only be refused
+        # too: stop at the first and let the backed-off next tick retry.
+        rooms.each do |room|
+          break if @rate_limited
+          poll_room(room)
+        end
+      ensure
+        # In an ensure so a tick a bug crashes still settles: it drew no
+        # refusal, so it resets, and the crash stays visible via poll_loop.
+        @rate_limited ? extend_backoff : reset_backoff
+      end
     end
   end
 
@@ -95,7 +111,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
 
   private
     def rooms_for(project)
-      refresh(project) if due_for_discovery?(project)
+      refresh(project) if due_for_discovery?(project) && !@rate_limited
       @rooms_by_project[project]
     end
 
@@ -200,6 +216,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       seen.delete(line["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.chat_line_payload(line))
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       seen.delete(line["id"])
+      note_rate_limit(error)
       log "could not corroborate chat line #{line["id"]}: #{error.message}; retried on the next poll"
     end
 
@@ -236,10 +253,17 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       @rate_limited ||= error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
     end
 
+    # Backoff only ever lengthens the delay: doubling stops at the cap, and
+    # a configured interval at or above the cap never backs off at all —
+    # min against a smaller cap would speed a slow poller *up*.
     def extend_backoff
-      extended = [ (@backoff || @interval) * 2, MAX_BACKOFF ].min
-      log "rate limited; backing off chat polls to #{extended}s" unless extended == @backoff
-      @backoff = extended
+      current = @backoff || @interval
+      extended = [ current * 2, [ @interval, MAX_BACKOFF ].max ].min
+
+      if extended > current
+        @backoff = extended
+        log "rate limited; backing off chat polls to #{extended}s"
+      end
     end
 
     def reset_backoff

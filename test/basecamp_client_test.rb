@@ -236,20 +236,19 @@ class BasecampClientTest < Minitest::Test
   # Production evidence (project 48672814's 15s chat poll): today's binary
   # relays bc3's 429 body as a generic api_error — {"ok": false, "error":
   # "rate limit exceeded", "code": "api_error"} on stdout, nonzero exit —
-  # rather than the taxonomy's dedicated rate_limit code. That is Basecamp's
-  # refusal, not a lost answer: it surfaces at once (one attempt — re-asking
-  # within the same limiting window only burns more budget) and is
-  # recognizable, so a poller can ease off.
-  def test_a_rate_limited_api_error_surfaces_at_once_and_is_recognizable
+  # rather than the taxonomy's dedicated rate_limit code. Either spelling is
+  # "not now", not a verdict: retried through like any transient failure
+  # (the budget window rolls over in seconds) and recognizable on the way
+  # out, so a caller that can defer eases off instead of recording a drop.
+  def test_a_rate_limited_api_error_is_transient_and_recognizable
     runner = FakeCommandRunner.new
-    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    stub_transient_failure runner, "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
 
-    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) do
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
       build_cli(runner).chat_lines(project: 222, chat: 333, limit: 50)
     end
 
-    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
-    assert_equal 1, runner.commands.length
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
     assert_predicate error, :rate_limited?
     assert_equal "api_error", error.code
   end
