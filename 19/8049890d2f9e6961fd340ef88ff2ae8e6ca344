@@ -1,0 +1,50 @@
+skills/basecamp-connect/SKILL.md
+  s_cb8638fd4deb07::t_45d4f79179a579 189-191
+  s_cb8638fd4deb07::t_c0a11aec57fea9 561-568
+  s_cb8638fd4deb07::t_4e97a3d07a5029 354-363
+  s_cb8638fd4deb07::t_6fa3e2e928ec4a 273-275
+  s_cb8638fd4deb07::t_1e4b1053954e62 260-261,269-272,276-277
+README.md
+  s_cb8638fd4deb07::t_27504538ba73d4 373-374,377-380
+  s_cb8638fd4deb07::t_e5b0a83977f7b4 381-386
+  s_cb8638fd4deb07::t_7b99f7ccb5f359 387
+test/verifier_test.rb
+  s_cb8638fd4deb07::t_55296cb35abe4c 127-149
+test/pipeline_test.rb
+  s_cb8638fd4deb07::t_f42f5b085ddc07 518-545,555-585,587-590
+  s_cb8638fd4deb07::t_7859b7084ef28f 546-554
+test/event_test.rb
+  s_cb8638fd4deb07::t_358fcf8337be41 40-53
+docs/spec.md
+  s_cb8638fd4deb07::t_86391b257b6c70 299-300,307-318
+  s_cb8638fd4deb07::t_52899151718d5a 319-325
+  s_964922bad4d340::t_9305710ddd5592 326
+lib/basecamp_agent_connector/basecamp/event.rb
+  s_cb8638fd4deb07::t_a092dd8a8e0fed 190-197,213-218,226-227
+lib/basecamp_agent_connector/basecamp/verifier.rb
+  s_cb8638fd4deb07::t_ebcfd07a17275c 74-76,78-79,87-88,105,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "198049890d2f9e6961fd340ef88ff2ae8e6ca344",
+  "prompts": {},
+  "sessions": {
+    "s_964922bad4d340": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b315b378-55b7-45e0-911e-b964de3ac103",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    },
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
