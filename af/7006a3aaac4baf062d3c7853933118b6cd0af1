@@ -1,0 +1,20 @@
+docs/spec.md
+  s_cb8638fd4deb07::t_03017e69a8e3a1 601,603-605
+  s_cb8638fd4deb07::t_5fe243d6528bd0 18-20,64-65,334-341,345-370,375-400,405-407,413-414,590-600,606-611,615-617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "af7006a3aaac4baf062d3c7853933118b6cd0af1",
+  "prompts": {},
+  "sessions": {
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
