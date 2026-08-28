@@ -187,6 +187,14 @@ class BasecampAgentConnector::Basecamp::Event
     assignment_changed? && added_person_ids.include?(agent.person_id)
   end
 
+  # True only on an authoritative event the Verifier stamped after matching the
+  # re-fetched recording's mention attachments against the agent's Person id —
+  # the same `mentions?` verdict the pipeline trusts, settled on the
+  # authoritative content rather than the forgeable webhook payload.
+  def mentioned?
+    @payload["agent_mentioned"] == true
+  end
+
   # True only on an authoritative event the Verifier stamped after confirming,
   # against the live subscribers API, that the agent subscribes to the comment's
   # parent. Reads nothing from the forgeable webhook payload.
@@ -202,6 +210,12 @@ class BasecampAgentConnector::Basecamp::Event
     @payload["agent_boosted"] == true
   end
 
+  # The top-level keys mirror the webhook envelope; `trigger` is the one
+  # connector-owned key, carrying the Verifier's verdicts on why this event
+  # targets the agent. Without it a watcher can tell a mention from a
+  # followed-thread comment only by decoding the mention markup itself against
+  # the agent's Person id. Assignments and boosts already announce themselves
+  # by `kind`, so these two are the verdicts a watcher cannot derive.
   def to_emitted_hash
     {
       "event_id" => id,
@@ -209,7 +223,8 @@ class BasecampAgentConnector::Basecamp::Event
       "created_at" => created_at,
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
-      "recording" => recording.slice(*EMITTED_RECORDING_FIELDS)
+      "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
+      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed? }
     }
   end
 
