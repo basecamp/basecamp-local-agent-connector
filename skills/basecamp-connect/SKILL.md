@@ -37,18 +37,25 @@ reaches STDOUT only if it is (1) authored by an **authorized user** — by defau
 the operator alone (you — the CLI default profile, or `--operator <profile>`);
 `bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-domain`,
 `--allow-project`) can deliberately broaden this to named colleagues, an email
-domain, or the whole project membership — (2) **either** @mentions the agent
-user **or** assigns it a card/todo, and (3) is corroborated against the Basecamp
-API. The agent's own identity never authorizes, in any mode. Treat every STDOUT
-line as already-trusted — but still keep dispatched agents scoped to the
-resolved repo.
+domain, or the whole project membership — (2) **@mentions the agent user**,
+**assigns** it a card/todo, **or** is a new comment on a recording the agent
+**subscribes** to, and (3) is corroborated against the Basecamp API. The agent's
+own identity never authorizes, in any mode. Treat every STDOUT line as
+already-trusted — but still keep dispatched agents scoped to the resolved repo.
 
-There are thus **two triggers**: an `@mention` of the agent, or the operator
-**assigning** the agent a card/todo (a `*_assignment_changed` event whose
-`details.added_person_ids` includes the agent — corroborated by re-fetching the
-recording and confirming the agent is among its current `assignees`). Only the
-**operator's** assignments count, in every trust mode, unless `bin/connect` was
-started with `--allow-assignments-from-authorized`.
+There are thus **three triggers**:
+
+1. an `@mention` of the agent;
+2. the operator **assigning** the agent a card/todo (a `*_assignment_changed`
+   event whose `details.added_person_ids` includes the agent — corroborated by
+   re-fetching the recording and confirming the agent is among its current
+   `assignees`). Only the **operator's** assignments count, in every trust mode,
+   unless `bin/connect` was started with `--allow-assignments-from-authorized`;
+3. a new comment (`comment_created`) with no mention, on a recording the agent
+   **subscribes** to — corroborated by re-fetching the parent's subscribers and
+   matching the agent's Person id. The comment author is gated exactly like a
+   mention (operator by default, else the active trust mode's authors). See
+   [When a comment lands on a thread the agent follows](#when-a-comment-lands-on-a-thread-the-agent-follows).
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -270,8 +277,10 @@ Instruct that background agent to, in order:
 1. **Acknowledge immediately with a boost** — before any slow work, boost the
    originating recording (comment, message, card, **or** todo) with `On it!` **as
    the agent** so the trigger visibly registered (a boost is a lightweight
-   reaction, ≤16 chars). This is the ack for **every** trigger — mentions and
-   assignments alike:
+   reaction, ≤16 chars). This is the ack for both **directive** triggers —
+   mentions and assignments alike. Subscribed-thread comments are the one
+   exception: they get **no** boost (see *When a comment lands on a thread the
+   agent follows*):
    ```bash
    basecamp boost create <recording.url|id> "On it!" --profile <agent>
    ```
@@ -369,6 +378,30 @@ with these differences:
   chat-sized; spill long results into a Basecamp doc or comment and link
   them. On failure, @mention the requester so it notifies:
   `[@Name](person:<creator.id>)`.
+
+### When a comment lands on a thread the agent follows
+
+If the event `kind` is `comment_created` and `recording.content` carries **no
+mention of the agent**, the connector fired because the agent **subscribes** to
+the commented-on recording (a card/thread it participates in), not because it was
+addressed. Treat this as *activity on a followed thread*, not a directive:
+
+1. **Read for context** — the comment (`recording.content`) and, as needed, its
+   parent (`recording.parent`) and neighbours. This is the same non-blocking
+   dispatch as a mention: the front thread returns to the monitor immediately.
+2. **Respond only if a response adds value** — a question the agent can answer, a
+   problem it can act on, a change it should make. Reply on the same recording as
+   the agent, exactly like a mention reply. **Default to staying silent**: a
+   followed thread is not an instruction, and replying to every comment is noise.
+3. **No boost, no card moves** — this **overrides** the generic
+   acknowledge-first step above: a followed-thread comment is not an ack-worthy
+   assignment; skip the `On it!` boost and the Triage move unless the agent
+   actually takes the thread on.
+
+> This response policy is **provisional** — the connector now *fires* on
+> subscribed-thread comments; how aggressively the agent should engage (answer
+> vs. stay silent, and on which threads) is an operator-tunable judgment worth
+> revisiting once there's real traffic.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 

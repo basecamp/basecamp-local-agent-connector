@@ -44,6 +44,17 @@ class BasecampClientTest < Minitest::Test
     assert build_cli(runner).delete_webhook(id: 555, project: 222)
   end
 
+  def test_subscription_shows_the_subscribers_of_an_item
+    runner = FakeCommandRunner.new
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    subscription = build_cli(runner).subscription("https://example.org/buckets/1/recordings/789")
+
+    assert_equal 200, subscription["subscribers"].first.fetch("id")
+    assert_includes runner.commands.first.join(" "),
+      "subscriptions show https://example.org/buckets/1/recordings/789"
+  end
+
   def test_raises_on_command_failure
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", exit_status: 1, stderr: "boom"

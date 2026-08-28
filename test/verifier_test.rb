@@ -72,6 +72,66 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(chat_line_payload))
   end
 
+  def test_stamps_subscribed_after_confirming_the_agent_subscribes_to_the_comments_parent
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention, just a note</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    assert verified.subscribed?
+    # subscription is checked on the comment's parent recording, not the comment
+    assert_includes runner.commands_matching(/subscriptions show/).first.join(" "), "cards/789"
+  end
+
+  def test_does_not_stamp_subscribed_when_the_agent_is_not_a_subscriber
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.subscribed?
+  end
+
+  def test_a_mentioning_comment_needs_no_subscribers_lookup
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.subscribed?
+    assert_empty runner.commands_matching(/subscriptions show/)
+  end
+
+  def test_does_not_stamp_subscribed_when_the_recording_is_not_a_comment
+    # A forged comment_created pointing at a subscribed Message/Card: creator
+    # corroborates, but the authoritative recording is not a Comment, so it is
+    # not treated as a subscribed comment and no subscribers lookup is made.
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("type" => "Message", "content" => "<p>an old message</p>"))
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.subscribed?
+    assert_empty runner.commands_matching(/subscriptions show/)
+  end
+
+  def test_a_failed_subscribers_lookup_stamps_not_subscribed
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    runner.stub "subscriptions show", exit_status: 1, stderr: "boom"
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.subscribed?
+  end
+
   private
     def verifier(runner)
       BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)

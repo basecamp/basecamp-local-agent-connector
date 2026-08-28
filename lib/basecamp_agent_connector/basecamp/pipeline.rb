@@ -24,11 +24,20 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
   private
     def actionable?(event)
-      event.actionable_kind? && @authorizer.authorizes?(event) && targets_agent?(event)
+      event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
+    end
+
+    # The pre-filter is deliberately looser than the authoritative target check:
+    # a comment carries no subscription flag in its payload, so it can't prove it
+    # targets the agent until the Verifier re-fetches subscribers. Admit every
+    # comment here (author is already gated) so subscription can be corroborated;
+    # `targets_agent?` on the verified event makes the real decision.
+    def worth_verifying?(event)
+      targets_agent?(event) || event.subscribable_comment?
     end
 
     def targets_agent?(event)
-      event.mentions?(@agent) || event.assigns?(@agent)
+      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed?
     end
 
     def fresh?(event)
@@ -50,7 +59,11 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # For an assignment the verifier corroborates the agent's current assignee
     # state but keeps the claimed assigner, so this re-check re-tests that same
     # claimed identity (the verifier confirms the live assignee state, not that
-    # the claimed assigner is who performed the assignment).
+    # the claimed assigner is who performed the assignment). For a comment on a
+    # subscribed recording there is no mention to re-check; the verifier stamps
+    # the subscription it confirmed against the live subscribers API, and
+    # `targets_agent?` reads only that stamp — so a comment the agent doesn't
+    # actually subscribe to is dropped here too.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 

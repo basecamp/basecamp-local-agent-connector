@@ -22,6 +22,21 @@ class EventTest < Minitest::Test
     refute BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload).assigns?(agent_identity(person_id: nil))
   end
 
+  def test_subscribable_comment
+    assert from_kind("comment_created").subscribable_comment?
+    refute from_kind("comment_content_changed").subscribable_comment?
+    refute from_kind("message_created").subscribable_comment?
+    refute from_kind("kanban_card_assignment_changed").subscribable_comment?
+    refute from_kind(nil).subscribable_comment?
+  end
+
+  def test_subscribed_reflects_only_the_verifier_stamp
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).subscribed?
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).subscribed?
+    # strictly boolean true — a truthy stand-in must not read as subscribed
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => "true")).subscribed?
+  end
+
   def test_to_emitted_hash_carries_assignment_details
     emitted = BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload).to_emitted_hash
 

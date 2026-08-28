@@ -205,10 +205,11 @@ For each delivered event:
    - `creator.email_address` matches the **operator** (case-insensitive). Email,
      not id — a webhook's `creator.id` is an account-scoped Person id while
      `basecamp me` returns a global identity id; the email bridges them.
-   - `recording.content` **@mentions the agent** — it contains a mention
-     attachment (`application/vnd.basecamp.mention`) whose rendered name matches
-     the agent. (A real Basecamp mention is an attachment carrying the person's
-     SGID, not literal `@name` text, so a plain text match would miss it.)
+   - The event **targets the agent** — its content `@mentions` the agent (a
+     mention attachment carrying the person's SGID, not literal `@name` text), or
+     it assigns the agent, or it is a `comment_created` (which may target the
+     agent by subscription; that can't be judged from the payload, so comments
+     are admitted here and decided at verification).
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
    set; at-least-once delivery means duplicates are expected). An id counts as
    seen once it reaches a verdict; an event Basecamp could not corroborate is
@@ -220,7 +221,11 @@ For each delivered event:
    and content. A forged POST (the funnel URL is public, Basecamp sends no
    signature) cannot survive this — if Basecamp doesn't corroborate the event, it
    is discarded. The payload's content field is never trusted directly; the
-   fetched content is authoritative.
+   fetched content is authoritative. For a **comment on a subscribed recording**,
+   verification additionally re-fetches the parent's subscribers
+   (`basecamp subscriptions show`) and stamps the agent's membership onto the
+   authoritative event, so the subscription that triggers is the live one
+   Basecamp reports, not a claim in the POST.
 4. **Emit** — print one NDJSON line to STDOUT with the verified event (see
    format below). Non-matching / unverified events are dropped (logged to
    STDERR).
@@ -450,7 +455,18 @@ Coverage the suite must include:
 
 - Trigger: a real @mention of the **agent** user (a local CLI profile of the
   same name, validated at startup), authored by the **operator** — **or** the
-  operator **assigning** the agent a card/todo.
+  operator **assigning** the agent a card/todo — **or** a new comment (authored
+  by an authorized user) on a recording the agent **subscribes** to.
+- Subscription trigger: a `comment_created` with no mention, when the agent is a
+  subscriber of the comment's parent (the commented-on card/todo/message —
+  subscriptions live on the container, not the comment). Corroborated by
+  re-fetching the parent's subscribers (`basecamp subscriptions show`) and
+  matching the agent's Person id; the author is gated exactly as a mention is
+  (operator by default, else the active trust mode's authors), and the agent's
+  own comments never re-trigger because its identity never authorizes.
+- Boosts on the agent's own recordings can't arrive this way — a boost never
+  fires a webhook — so boost coverage arrives separately, via a poll of the
+  agent's notifications feed (follow-up PR).
 - Assignment trigger: the documented-but-previously-undocumented
   `todo_assignment_changed` / `kanban_card_assignment_changed` /
   `kanban_step_assignment_changed` events (bc3 PR #12156). Actionable when

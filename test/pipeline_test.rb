@@ -41,13 +41,81 @@ class PipelineTest < Minitest::Test
     assert_empty @output.string
   end
 
-  def test_ignores_event_that_does_not_mention_the_agent
-    payload = sample_payload
-    payload["recording"]["content"] = "<p>just a normal comment, no mention</p>"
+  def test_ignores_a_comment_that_neither_mentions_nor_subscribes_the_agent
+    recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
-    pipeline(FakeCommandRunner.new).process(payload)
+    pipeline(runner).process(sample_payload("recording" => recording))
 
     assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+  end
+
+  def test_emits_for_a_comment_on_a_recording_the_agent_subscribes_to
+    recording = sample_recording("content" => "<p>no mention, just an update</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("recording" => recording))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "comment_created", JSON.parse(@output.string)["kind"]
+  end
+
+  def test_ignores_the_agents_own_comment_on_a_subscribed_recording
+    author = { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }
+    recording = sample_recording("content" => "<p>my own reply</p>", "creator" => author)
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(sample_payload("creator" => author, "recording" => recording))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_ignores_a_third_partys_comment_on_a_subscribed_recording
+    author = { "id" => 400, "email_address" => "sam@elsewhere.net" }
+    recording = sample_recording("content" => "<p>hi</p>", "creator" => author)
+    runner = FakeCommandRunner.new
+
+    pipeline(runner).process(sample_payload("creator" => author, "recording" => recording))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  def test_a_forged_comment_kind_pointing_at_a_subscribed_message_cannot_emit
+    # The POST claims comment_created but names an existing subscribed Message
+    # the operator authored. Creator corroborates and the agent even subscribes,
+    # but the authoritative recording is not a Comment, so nothing is emitted.
+    message = sample_recording("type" => "Message", "content" => "<p>an old message, no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(message)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("recording" => message))
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+    assert_empty runner.commands_matching(/subscriptions show/)
+  end
+
+  def test_a_forged_subscribed_flag_in_the_payload_cannot_emit
+    # The POST claims agent_subscribed=true, but the agent is not really a
+    # subscriber. The verifier discards the claimed flag and stamps its own from
+    # the live subscribers API, so the event is dropped, not emitted.
+    recording = sample_recording("content" => "<p>no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
+
+    pipeline(runner).process(sample_payload("agent_subscribed" => true, "recording" => recording))
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
   end
 
   def test_drops_uncorroborated_event
@@ -125,6 +193,7 @@ class PipelineTest < Minitest::Test
     # recording is authoritative and carries no mention, so it must not emit.
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>a plain operator note, no mention</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     pipeline(runner).process(sample_payload)
 
@@ -212,6 +281,38 @@ class PipelineTest < Minitest::Test
 
     assert_empty @output.string
     assert_empty runner.commands
+  end
+
+  def test_allowlist_emits_for_an_allowed_authors_comment_on_a_subscribed_recording
+    # The subscription trigger passes the same trust gate as a mention: a
+    # broadened mode's authors can drive the agent through a followed thread.
+    recording = sample_recording("content" => "<p>no mention, just an update</p>", "creator" => colleague)
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+      .process(sample_payload("creator" => colleague, "recording" => recording))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+  end
+
+  def test_project_trust_drops_a_client_authors_comment_on_a_subscribed_recording
+    # Subscription targeting never bypasses the authorizer: even when the agent
+    # really subscribes, the corroborated author must still be authorized. The
+    # claimed payload denies client status (passing the pre-filter); Basecamp's
+    # authoritative copy marks the author a client, and that copy decides.
+    recording = sample_recording("content" => "<p>no mention</p>", "creator" => colleague.merge("client" => true))
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner, authorizer: authorizer(trust: :project))
+      .process(sample_payload("creator" => colleague, "recording" => recording))
+
+    assert_empty @output.string
+    assert_match(/authoritative author is not authorized/, @logs.string)
   end
 
   def test_broadened_trust_keeps_assignments_operator_only
