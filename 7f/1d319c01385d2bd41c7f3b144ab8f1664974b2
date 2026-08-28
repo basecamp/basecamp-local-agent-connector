@@ -1,0 +1,23 @@
+docs/spec.md
+  s_cb8638fd4deb07::t_9eedf0be5990ce 392-393,540-541
+lib/basecamp_agent_connector/basecamp/client.rb
+  s_cb8638fd4deb07::t_6e8015a706cb81 11,121
+test/pipeline_test.rb
+  s_cb8638fd4deb07::t_483a7e37179065 206-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "7f1d319c01385d2bd41c7f3b144ab8f1664974b2",
+  "prompts": {},
+  "sessions": {
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
