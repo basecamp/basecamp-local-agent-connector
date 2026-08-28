@@ -1,0 +1,66 @@
+test/review_pipeline_test.rb
+  s_cb8638fd4deb07::t_02a5435a91fb9f 59-132,134,136
+  s_cb8638fd4deb07::t_85faf3c9a49942 144
+test/github_bridge_test.rb
+  s_cb8638fd4deb07::t_6f14cba989b334 44
+  s_cb8638fd4deb07::t_2938fd8e6b1ab5 48,51
+  s_cb8638fd4deb07::t_1b24d1b7a0100e 21-30
+docs/pr-review-loop.md
+  s_cb8638fd4deb07::t_f3da3309aac09a 124-125
+  s_cb8638fd4deb07::t_debbefbeaabe59 76-93
+  s_cb8638fd4deb07::t_322361ef3a7051 18
+  s_cb8638fd4deb07::t_362fd3ce60160d 146-147
+lib/basecamp_agent_connector/github/client.rb
+  s_cb8638fd4deb07::t_e502d57cd16c79 29-33
+lib/basecamp_agent_connector/github/bridge.rb
+  s_cb8638fd4deb07::t_cca98fb84ee2a2 35
+  s_cb8638fd4deb07::t_c09739ec4e8f25 9-12,14,17
+  s_cb8638fd4deb07::t_e281c1c3cf5b4f 61
+lib/basecamp_agent_connector/github/review_event.rb
+  s_cb8638fd4deb07::t_d855d065854415 69-77
+test/github_client_test.rb
+  s_cb8638fd4deb07::t_75be41b1e42abd 25-41
+lib/basecamp_agent_connector/connector.rb
+  s_cb8638fd4deb07::t_7b991799e079f2 18
+  s_cb8638fd4deb07::t_35333c28de764a 45
+  s_cb8638fd4deb07::t_7798604121c995 32
+  s_cb8638fd4deb07::t_12b59945d20813 96-97
+  s_cb8638fd4deb07::t_be1dc9b49fda8b 187
+  s_cb8638fd4deb07::t_9b79658628e989 214-222
+  s_cb8638fd4deb07::t_c5609edb2d6901 51-55
+test/review_event_test.rb
+  s_cb8638fd4deb07::t_0dc34761fef395 37-50
+test/connector_test.rb
+  s_cb8638fd4deb07::t_636f9b74baef26 231-241
+  s_cb8638fd4deb07::t_ee2933539ca29b 132-138
+  s_cb8638fd4deb07::t_8e7a06f38fe42f 165
+  s_cb8638fd4deb07::t_14b80133d171e9 199-200,203
+  s_cb8638fd4deb07::t_bfe8405ac0aa05 130-131,139-140
+  s_cb8638fd4deb07::t_e546f165391d52 178-196,198,201-202,204-211
+  s_cb8638fd4deb07::t_616994d43db3e9 197
+README.md
+  s_cb8638fd4deb07::t_9e9d3998b6b60d 320
+  s_cb8638fd4deb07::t_47e575056e6aa3 337-340
+  s_cb8638fd4deb07::t_3cf790cfee1df8 101-103
+lib/basecamp_agent_connector/github/review_pipeline.rb
+  s_cb8638fd4deb07::t_6e66262d56fe7c 3-12,14,16,44-48,63,65-68
+skills/basecamp-connect/SKILL.md
+  s_cb8638fd4deb07::t_18535b1623f42f 283-294
+  s_cb8638fd4deb07::t_1339bc64e94780 691-692
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "23bc83ba870be1d6e636342405a7ecc0c5a7bea2",
+  "prompts": {},
+  "sessions": {
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
