@@ -54,31 +54,37 @@ class BasecampAgentConnector::Basecamp::Client
   ATTEMPTS = 3
   RETRY_DELAYS = [ 0.5, 1.5 ] # seconds before the second and third attempt
 
-  # The CLI's error envelope says outright whether the failure was Basecamp's
-  # answer or the CLI's plight: a top-level boolean `retryable`, the SDK's
-  # own Retryable flag surfaced. It is on every error envelope the CLI
-  # writes (false when the CLI has no positive signal) and never on a
-  # success, and when present it decides — the code and message below are
-  # not consulted.
+  # A CLI that classifies its own failures says so in its error envelope: a
+  # top-level boolean `retryable`, the SDK's Retryable flag surfaced, on every
+  # error envelope and never on a success. The field speaks in one direction
+  # only. `true` is a positive signal — the CLI knows the failure was its own
+  # plight, whatever the code or message — and is retried without consulting
+  # the list below. `false` is not a verdict but the absence of that signal:
+  # the CLI stamps it on Basecamp's refusals and on every failure nothing
+  # classified, which includes the three CLI-local failures the retry loop
+  # exists for (a lost keyring probe surfaces as auth_required; a token
+  # refresh that lost the race as api_error; bc3's 500 is left unclassified
+  # by the SDK). So `false` falls through to the list, which the field can
+  # widen but never narrow. That reading also covers the CLI releases before
+  # the field, whose envelopes carry only ok/error/code/hint/meta.
   #
-  # The list is the fallback for CLIs older than the one that emits the
-  # field, whose envelopes carry only ok/error/code/hint/meta. There the
-  # code and, for `api_error`, the message are all there is to key on.
-  # `api_error` is ambiguous: Basecamp's own 4xx verdicts arrive as one, but
-  # so do three failures to get an answer at all — a token refresh that lost
-  # the keyring race ("token refresh failed: …"), bc3 answering 5xx ("Server
-  # error (500)" surfaces at once; "Gateway error (502|503|504)" and the
-  # generic "API error: 5xx …" are retried inside the SDK for ~3s first and
-  # then surface as "request failed after 3 attempts: …", a prefix the SDK
-  # puts only on retryable failures), and the CLI's own circuit breaker
-  # refusing to ask ("Service temporarily unavailable": file-backed across
-  # processes, open for 30s after five consecutive network/5xx failures).
-  # A rate limit is transient too, in either spelling (the dedicated code
-  # above, or bc3's "rate limit exceeded" body relayed as an api_error):
-  # "not now" is no verdict on the recording, and the account-wide budget
-  # rolls over in seconds — so a webhook defers to redelivery and a poller
-  # to its next (backed-off) tick, rather than recording a drop.
-  # A new spelling belongs in the CLI's flag, not here.
+  # The list names what the field does not: the code and, for `api_error`,
+  # the message. `api_error` is ambiguous: Basecamp's own 4xx verdicts arrive
+  # as one, but so do three failures to get an answer at all — a token
+  # refresh that lost the keyring race ("token refresh failed: …"), bc3
+  # answering 5xx ("Server error (500)" surfaces at once; "Gateway error
+  # (502|503|504)" and the generic "API error: 5xx …" are retried inside the
+  # SDK for ~3s first and then surface as "request failed after 3 attempts:
+  # …", a prefix the SDK puts only on retryable failures), and the CLI's own
+  # circuit breaker refusing to ask ("Service temporarily unavailable":
+  # file-backed across processes, open for 30s after five consecutive
+  # network/5xx failures). A rate limit is transient too, in either spelling
+  # (the dedicated code above, or bc3's "rate limit exceeded" body relayed as
+  # an api_error): "not now" is no verdict on the recording, and the
+  # account-wide budget rolls over in seconds — so a webhook defers to
+  # redelivery and a poller to its next (backed-off) tick, rather than
+  # recording a drop. A spelling the CLI stamps `retryable: true` needs no
+  # entry here; one it leaves at `false` does, until the CLI classifies it.
   TRANSIENT_CODES = %w[auth_required network rate_limit]
   TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable|rate limit/i
 
@@ -190,17 +196,17 @@ class BasecampAgentConnector::Basecamp::Client
 
     # No envelope at all — the process died before it could answer, or its
     # output was cut off — is the CLI's failure, not Basecamp's answer. An
-    # envelope that carries `retryable` has classified itself; one from an
-    # older CLI is classified by its code and message.
+    # envelope the CLI stamped retryable is retried on its word alone; any
+    # other is classified by its code and message, `retryable: false`
+    # included, since that is where the CLI leaves the failures it never
+    # classified.
     def transient?(parsed)
-      if !envelope?(parsed)
-        true
-      elsif parsed.key?("retryable")
-        parsed["retryable"] == true
-      else
-        code = parsed["code"].to_s
-        TRANSIENT_CODES.include?(code) || (code == "api_error" && parsed["error"].to_s.match?(TRANSIENT_API_ERROR))
-      end
+      !envelope?(parsed) || parsed["retryable"] == true || listed_transient?(parsed)
+    end
+
+    def listed_transient?(parsed)
+      code = parsed["code"].to_s
+      TRANSIENT_CODES.include?(code) || (code == "api_error" && parsed["error"].to_s.match?(TRANSIENT_API_ERROR))
     end
 
     # A successful exit only gets this far when its output didn't parse.

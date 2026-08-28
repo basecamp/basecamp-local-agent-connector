@@ -143,9 +143,9 @@ class BasecampClientTest < Minitest::Test
     end
   end
 
-  # A CLI that classifies its own failures says so in the envelope, and its
-  # word is final: a code and message the fallback list has never heard of
-  # is retried when the CLI says it is retryable.
+  # A CLI that classifies its own failures says so in the envelope, and a
+  # positive word is taken on its own: a code and message the fallback list
+  # has never heard of is retried when the CLI says it is retryable.
   def test_a_retryable_envelope_is_transient_whatever_its_code
     [
       error_envelope("timeout", "request timed out after 30s", retryable: true),
@@ -163,16 +163,43 @@ class BasecampClientTest < Minitest::Test
     end
   end
 
-  # And the same word says no: an auth_required or a 5xx-shaped api_error
-  # the fallback list would retry is a verdict when the CLI says it is not
-  # retryable — a revoked credential, not the keyring race.
-  def test_an_unretryable_envelope_is_a_verdict_whatever_its_code
+  # `retryable: false` is where the CLI leaves the failures it never
+  # classified, and those include the ones the retry loop exists for: the
+  # keyring race's auth_required and token-refresh api_error (the CLI's
+  # ErrAuth and ErrAPI constructors set no Retryable) and bc3's 500 (the
+  # SDK classifies only 502–504). A false stamp on a listed code or message
+  # must not narrow the list, or the first CLI release that emits the field
+  # turns the race into a dropped event.
+  def test_a_false_retryable_stamp_does_not_narrow_the_fallback_list
     [
       error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found", retryable: false),
-      error_envelope("api_error", "request failed after 3 attempts: Gateway error (503)", retryable: false)
+      error_envelope("api_error", "token refresh failed: Post \"https://launchpad.localhost:3011/oauth/token\": connection refused", retryable: false),
+      error_envelope("api_error", "Server error (500)", retryable: false)
     ].each do |stdout|
       runner = FakeCommandRunner.new
-      runner.stub "basecamp show", exit_status: 3, stdout: stdout
+      stub_transient_failure runner, "basecamp show", stdout: stdout, exit_status: 3
+      delays = []
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError, stdout) do
+        build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+      end
+
+      assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, stdout
+      assert_equal BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS, delays, stdout
+      assert_match(/failed on all 3 attempts/, error.message)
+    end
+  end
+
+  # A false stamp on a code and message the list does not know stays a
+  # verdict — the same reading an older CLI's envelope gets, so this holds
+  # with or without the field.
+  def test_a_false_retryable_stamp_on_an_unlisted_code_is_a_verdict
+    [
+      error_envelope("not_found", "Resource not found: https://example.org/recordings/456.json", retryable: false),
+      error_envelope("api_error", "API error: 410 Gone", retryable: false)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", exit_status: 2, stdout: stdout
       delays = []
 
       error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error, stdout) do

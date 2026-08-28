@@ -215,10 +215,13 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    under concurrent CLI invocations, a token refresh that lost that race, a
    network blip, bc3 answering 5xx, the CLI's open circuit breaker, garbled
    output — earns a 503; Basecamp's own refusal (not found, forbidden) is a
-   verdict. The CLI's `-j` error envelope tells the two apart with its
-   `retryable` field; an older CLI's envelope, without it, is classified by
-   a fixed list of codes and messages. A delivery that stays unanswerable
-   for all 10 of bc3's attempts
+   verdict. The two are told apart by a fixed list of codes and messages,
+   which the `retryable` field of the CLI's `-j` error envelope (from the
+   release that adds it, pending in basecamp-cli) widens but never narrows:
+   `true` is retried whatever the code, `false` — the CLI's stamp for its
+   verdicts and for anything it never classified, the keyring race included
+   — falls through to the list. A delivery that stays unanswerable for all
+   10 of bc3's attempts
    (~4.3h; a revoked credential is indistinguishable from the race) gets the
    webhook deactivated, silently on bc3's side — the 503 log line names the
    remedy: fix the CLI's credentials and restart `bin/connect`, which
