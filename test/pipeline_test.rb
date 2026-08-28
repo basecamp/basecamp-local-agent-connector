@@ -214,6 +214,36 @@ class PipelineTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  # Waiting is per event id: a delivery of a different id is verified while
+  # the first is still parked on its CLI call, not queued behind it — a
+  # burst serialized behind one slow verification would overrun bc3's 10s
+  # delivery timeout for every delivery after it.
+  def test_distinct_events_are_verified_concurrently
+    gate = Queue.new
+    other_recording = sample_recording("id" => 457, "url" => "https://3.basecamp.com/000/buckets/222/comments/457.json",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/comments/457")
+    runner = FakeCommandRunner.new
+    runner.stub "comments/456", stdout: envelope(sample_recording)
+    runner.stub "comments/457", stdout: envelope(other_recording)
+    gated = Object.new
+    gated.define_singleton_method(:run) { |*command| gate.pop if command.join(" ").include?("comments/456"); runner.run(*command) }
+    pipeline = pipeline(gated)
+    first = Thread.new { pipeline.process(sample_payload) }
+    Thread.pass while first.alive? && first.status != "sleep"
+    flunk "the first verification finished before blocking on the gate" unless first.alive?
+
+    second = Thread.new { pipeline.process(sample_payload("id" => 99003, "recording" => other_recording)) }
+    refute_nil second.join(2), "the second event queued behind the first's in-flight verification"
+    assert second.value
+    assert first.alive?, "the first verification settled without passing its gate"
+
+    gate << :go
+    assert first.value
+    assert_equal [ 99003, 99001 ], @output.string.lines.map { |line| JSON.parse(line)["event_id"] }
+  ensure
+    gate << :go
+  end
+
   def test_emits_for_a_boost_on_the_agents_work_by_the_operator
     runner = FakeCommandRunner.new
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])

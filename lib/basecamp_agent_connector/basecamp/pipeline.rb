@@ -6,7 +6,9 @@ class BasecampAgentConnector::Basecamp::Pipeline
     @emitter = emitter
     @logger = logger
     @seen_event_ids = Set.new
-    @verdict = Mutex.new
+    @in_flight_event_ids = Set.new
+    @lock = Mutex.new
+    @settled = ConditionVariable.new
   end
 
   # Returns whether the event reached a verdict (emitted, dropped, ignored,
@@ -19,24 +21,30 @@ class BasecampAgentConnector::Basecamp::Pipeline
   # Basecamp redelivers, a poller retries on its next tick — and must not
   # record a verdict, because there is none.
   #
-  # One delivery at a time, so that "seen" always means settled. Deliveries
-  # arrive on concurrent server threads, and a verification that overruns
-  # bc3's 10s delivery timeout is redelivered while the original is still in
-  # flight; unserialized, the redelivery would find the id seen, be answered
-  # 200 as a duplicate, and then the original could fail and forget the id —
-  # with nobody left to redeliver. Held here, the redelivery waits and finds
-  # either a settled id (a duplicate) or a forgotten one (a fresh attempt).
-  # The pollers each own a pipeline and poll from a single thread, so they
-  # never wait on this.
+  # Verdicts are per event id, so that "seen" always means settled: an id is
+  # claimed while its verification is in flight and stays seen once it
+  # settled. Deliveries arrive on concurrent server threads, and a
+  # verification that overruns bc3's 10s delivery timeout is redelivered
+  # while the original is still in flight; unsynchronized, the redelivery
+  # would find the id seen, be answered 200 as a duplicate, and then the
+  # original could fail and forget the id — with nobody left to redeliver.
+  # So a delivery of an id in flight waits for that id's verdict (see
+  # `claim`) and finds either a settled id (a duplicate) or a forgotten one
+  # (a fresh attempt). Distinct ids never wait on each other: each
+  # verification shells out to the CLI, and a burst serialized behind one
+  # slow verification would time out delivery after delivery. The pollers
+  # each own a pipeline and poll from a single thread, so they never wait.
   def process(payload)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    @verdict.synchronize do
-      if actionable?(event) && fresh?(event)
+    if actionable?(event) && claim(event)
+      begin
         emit_if_verified(event)
-      else
-        true
+      ensure
+        release(event)
       end
+    else
+      true
     end
   end
 
@@ -60,13 +68,33 @@ class BasecampAgentConnector::Basecamp::Pipeline
       event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted?
     end
 
-    def fresh?(event)
-      if @seen_event_ids.include?(event.id)
-        false
-      else
-        @seen_event_ids << event.id
-        true
+    # The in-flight set plus one condition variable is the whole mechanism:
+    # the lock is held only to read and update the two sets, never across a
+    # verification, and every settled verification broadcasts so a waiter
+    # re-checks its own id (a wake-up for someone else's id just loops).
+    def claim(event)
+      @lock.synchronize do
+        @settled.wait(@lock) while @in_flight_event_ids.include?(event.id)
+
+        if @seen_event_ids.include?(event.id)
+          false
+        else
+          @seen_event_ids << event.id
+          @in_flight_event_ids << event.id
+          true
+        end
       end
+    end
+
+    def release(event)
+      @lock.synchronize do
+        @in_flight_event_ids.delete(event.id)
+        @settled.broadcast
+      end
+    end
+
+    def forget(event)
+      @lock.synchronize { @seen_event_ids.delete(event.id) }
     end
 
     # Both trust predicates are re-checked on the verified event, not just the
@@ -91,7 +119,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
       verified = @verifier.verify(event)
 
       if verified.nil?
-        @seen_event_ids.delete(event.id)
+        forget(event)
         log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
       elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
@@ -103,7 +131,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
       !verified.nil?
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
-      @seen_event_ids.delete(event.id)
+      forget(event)
       raise
     end
 
