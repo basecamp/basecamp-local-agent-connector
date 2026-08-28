@@ -188,8 +188,16 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Identity.new(id: 200, profile: "clawdito", email: "clawdito@example.com", name: name, person_id: person_id)
   end
 
+  # The CLI's `-j` success envelope. An empty result is not always
+  # "data": [] — `chat messages` on a room with no lines omits "data"
+  # entirely, returning {"ok": true, "summary": "0 messages"} (verified
+  # against production) — which empty_envelope mirrors.
   def envelope(data)
     JSON.generate("ok" => true, "data" => data, "summary" => "ok")
+  end
+
+  def empty_envelope(summary = "0 messages")
+    JSON.generate("ok" => true, "summary" => summary)
   end
 
   def build_cli(command_runner)

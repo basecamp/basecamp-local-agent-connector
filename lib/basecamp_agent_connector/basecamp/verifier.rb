@@ -142,7 +142,7 @@ class BasecampAgentConnector::Basecamp::Verifier
     def fetch_boost(event)
       return nil if @agent.profile.nil?
 
-      Array(@basecamp_cli.received_boosts(profile: @agent.profile)).find { |boost| boost["id"] == event.id }
+      @basecamp_cli.received_boosts(profile: @agent.profile).find { |boost| boost["id"] == event.id }
     rescue BasecampAgentConnector::Basecamp::Client::Error
       nil
     end

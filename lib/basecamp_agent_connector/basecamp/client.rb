@@ -25,11 +25,11 @@ class BasecampAgentConnector::Basecamp::Client
   end
 
   def chats(project:)
-    json "chat", "list", "--project", project.to_s
+    Array json("chat", "list", "--project", project.to_s)
   end
 
   def chat_lines(project:, chat:, limit:)
-    json "chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s
+    Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s)
   end
 
   def chat_line(url_or_id)
@@ -45,7 +45,7 @@ class BasecampAgentConnector::Basecamp::Client
   # has no dedicated command for the received-boosts feed, so go through its
   # raw API passthrough.
   def received_boosts(profile:)
-    json "api", "get", "/my/boosts.json", *profile_flag(profile)
+    Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
   def create_webhook(url:, project:, types:)
@@ -73,8 +73,16 @@ class BasecampAgentConnector::Basecamp::Client
       raise Error, "`basecamp #{arguments.join(' ')}` returned malformed JSON: #{error.message}"
     end
 
+    # `-j` wraps every result in an envelope — {"ok": ..., "data": ...,
+    # "summary": ...} — and an empty result may omit "data" entirely:
+    # `chat messages` on a room with no lines returns just
+    # {"ok": true, "summary": "0 messages"} (verified against production).
+    # So the envelope is recognized by its "ok" marker, not by "data" —
+    # keying on "data" hands the bare envelope back for an empty room, and
+    # Array() on that hash downstream explodes it into ["ok", true]-style
+    # pairs whose ["id"] lookups raise TypeError.
     def unwrap(parsed)
-      if parsed.is_a?(Hash) && parsed.key?("data")
+      if parsed.is_a?(Hash) && parsed.key?("ok")
         parsed["data"]
       else
         parsed

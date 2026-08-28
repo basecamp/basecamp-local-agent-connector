@@ -65,7 +65,7 @@ class BasecampBridgeTest < Minitest::Test
   def test_chat_only_types_register_no_webhooks
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     bridge = bridge(runner, types: "Chat::Line")
 
     bridge.register(base_url: "https://host.ts.net")

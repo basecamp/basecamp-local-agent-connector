@@ -79,7 +79,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
   def poll
     return if @stopping
 
-    boosts = Array(@basecamp_cli.received_boosts(profile: @agent.profile))
+    boosts = @basecamp_cli.received_boosts(profile: @agent.profile)
     ordered = boosts.sort_by { |boost| boost["id"].to_i }
     warn_of_possible_overflow(ordered)
 

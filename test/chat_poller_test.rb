@@ -19,6 +19,19 @@ class ChatPollerTest < Minitest::Test
     assert_empty runner.commands_matching(/chat line /)
   end
 
+  # The live regression: the CLI omits "data" from the envelope for a room
+  # with no lines, and the poller choked on the bare envelope every tick.
+  def test_an_empty_room_polls_clean
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope
+
+    poller(runner).poll
+
+    assert_empty @output.string
+    assert_empty @logs.string
+  end
+
   def test_emits_a_new_line_mentioning_the_agent_by_the_operator
     runner = corroborating_runner
     poller = poller(runner)
@@ -47,7 +60,7 @@ class ChatPollerTest < Minitest::Test
     stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line("creator" => stranger) ])
     poller = poller(runner)
 
@@ -61,7 +74,7 @@ class ChatPollerTest < Minitest::Test
   def test_ignores_the_agents_own_line
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: \
       envelope([ chat_line("creator" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }) ])
     poller = poller(runner)
@@ -76,7 +89,7 @@ class ChatPollerTest < Minitest::Test
   def test_corroboration_drops_a_line_basecamp_does_not_return
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     runner.stub "chat line ", exit_status: 1, stderr: "not found"
     poller = poller(runner)
@@ -91,7 +104,7 @@ class ChatPollerTest < Minitest::Test
   def test_a_transient_corroboration_failure_is_retried_on_the_next_poll
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     runner.stub "chat line ", exit_status: 1, stderr: "502 Bad Gateway", once: true
     runner.stub "chat line ", stdout: envelope(chat_line)
@@ -113,7 +126,7 @@ class ChatPollerTest < Minitest::Test
   def test_a_line_that_reached_a_verdict_is_not_retried
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     runner.stub "chat line ", stdout: envelope(chat_line("content" => "<div>edited away</div>"))
     poller = poller(runner)
@@ -128,7 +141,7 @@ class ChatPollerTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: '{"data": [{"id": 333', once: true
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner)
 
     poller.poll
@@ -141,7 +154,7 @@ class ChatPollerTest < Minitest::Test
   def test_the_poll_thread_survives_an_exception_escaping_a_poll
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     ticks = Queue.new
     polled = Queue.new
     poller = poller(runner, wait: ->(_seconds) { ticks.pop })
@@ -169,7 +182,7 @@ class ChatPollerTest < Minitest::Test
   def test_authoritative_recheck_drops_a_line_whose_fetched_content_lost_the_mention
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     runner.stub "chat line ", stdout: envelope(chat_line("content" => "<div>edited away</div>"))
     poller = poller(runner)
@@ -216,7 +229,7 @@ class ChatPollerTest < Minitest::Test
   def test_polls_every_chat_in_a_project
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash, chat_hash("id" => 444, "title" => "Ops") ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
 
     poller(runner).poll
 
@@ -257,7 +270,7 @@ class ChatPollerTest < Minitest::Test
     end
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([]), once: true
+    runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope(window)
     poller = poller(runner)
 
@@ -271,7 +284,7 @@ class ChatPollerTest < Minitest::Test
     now = Time.now
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner, clock: -> { now })
 
     poller.poll
@@ -289,7 +302,7 @@ class ChatPollerTest < Minitest::Test
     runner.stub "chat list", stdout: envelope([ chat_hash ]), once: true
     runner.stub "chat list", exit_status: 1, stderr: "boom", once: true
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner, clock: -> { now })
 
     poller.poll
@@ -351,7 +364,7 @@ class ChatPollerTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list --project A", stdout: envelope([ chat_hash ])
     runner.stub "chat list --project B", exit_status: 1, stderr: "boom"
-    runner.stub "chat messages", stdout: envelope([])
+    runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner, projects: [ "A", "B" ], clock: -> { now })
 
     poller.poll
@@ -404,7 +417,7 @@ class ChatPollerTest < Minitest::Test
     def corroborating_runner
       runner = FakeCommandRunner.new
       runner.stub "chat list", stdout: envelope([ chat_hash ])
-      runner.stub "chat messages", stdout: envelope([]), once: true
+      runner.stub "chat messages", stdout: empty_envelope, once: true
       runner.stub "chat messages", stdout: envelope([ chat_line ])
       runner.stub "chat line ", stdout: envelope(chat_line)
       runner
