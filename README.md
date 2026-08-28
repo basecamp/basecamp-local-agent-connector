@@ -362,7 +362,11 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    the connector re-runs the CLI a few times first (its keyring probe loses a
    race under concurrent invocations and reports stale credentials; bc3 may
    answer 5xx mid-deploy), and a `503` makes bc3's delivery job redeliver the
-   event with backoff rather than settling it as uncorroborated. A delivery
+   event with backoff rather than settling it as uncorroborated. Whether a
+   failure was Basecamp's answer or the CLI's plight is read from the
+   `retryable` field of the CLI's `-j` error envelope; a CLI older than the
+   one that emits it is classified by a fixed list of codes and messages
+   instead (`Client::TRANSIENT_CODES`, `TRANSIENT_API_ERROR`). A delivery
    that stays unanswerable for all of bc3's 10 attempts (~4.3h — a revoked
    credential looks just like the race) makes bc3 deactivate the webhook: fix
    the CLI's credentials (`basecamp auth status --profile <agent>`) and

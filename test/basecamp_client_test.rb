@@ -121,8 +121,8 @@ class BasecampClientTest < Minitest::Test
 
   # bc3 answering 5xx, or the CLI's own circuit breaker refusing to ask,
   # arrive as api_error too — each with a fixed message from the SDK or the
-  # CLI, since the envelope drops the SDK's Retryable flag. None is a
-  # verdict on the recording.
+  # CLI, which is all an envelope without `retryable` (an older CLI) has to
+  # key on. None is a verdict on the recording.
   def test_a_5xx_or_an_open_circuit_is_transient
     [
       "Gateway error (503)",
@@ -140,6 +140,48 @@ class BasecampClientTest < Minitest::Test
 
       assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, message
       assert_includes error.message, message
+    end
+  end
+
+  # A CLI that classifies its own failures says so in the envelope, and its
+  # word is final: a code and message the fallback list has never heard of
+  # is retried when the CLI says it is retryable.
+  def test_a_retryable_envelope_is_transient_whatever_its_code
+    [
+      error_envelope("timeout", "request timed out after 30s", retryable: true),
+      error_envelope("api_error", "upstream reset the connection", retryable: true)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      stub_transient_failure runner, "basecamp show", stdout: stdout, exit_status: 7
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError, stdout) do
+        build_cli(runner).show("https://example.org/recordings/456")
+      end
+
+      assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, stdout
+      assert_match(/failed on all 3 attempts/, error.message)
+    end
+  end
+
+  # And the same word says no: an auth_required or a 5xx-shaped api_error
+  # the fallback list would retry is a verdict when the CLI says it is not
+  # retryable — a revoked credential, not the keyring race.
+  def test_an_unretryable_envelope_is_a_verdict_whatever_its_code
+    [
+      error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found", retryable: false),
+      error_envelope("api_error", "request failed after 3 attempts: Gateway error (503)", retryable: false)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", exit_status: 3, stdout: stdout
+      delays = []
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error, stdout) do
+        build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+      end
+
+      refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error, stdout
+      assert_equal 1, runner.commands_matching(/basecamp show/).length, stdout
+      assert_empty delays, stdout
     end
   end
 
