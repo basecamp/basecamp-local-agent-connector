@@ -4,9 +4,10 @@ description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted events — authored by an authorized
   user (the operator alone, by default) and @mentioning a real Basecamp agent
-  user — and hands each off to a background
-  agent that gathers context, does the work, and replies as that agent user, so the
-  watcher thread stays free to keep taking new mentions.
+  user — acknowledges each with an `On it!` boost as the agent within seconds,
+  then hands it off to a background agent that gathers context, does the work,
+  and replies as that agent user, so the watcher thread stays free to keep
+  taking new mentions.
   Invoked without arguments it recalls the last-used agent and projects from
   ~/.config/basecamp-connect/last.json, confirming them before starting.
   Use when asked to drive local agents from Basecamp, or to watch Basecamp for
@@ -23,8 +24,9 @@ triggers:
 # /basecamp-connect — drive local agents from Basecamp
 
 This skill turns a Basecamp comment/message/card into a local Claude Code task.
-You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); a background
-agent on this machine picks it up, gathers the surrounding context from Basecamp,
+You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); the watcher
+on this machine boosts it `On it!` **as that agent user** within seconds, and a
+background agent picks it up, gathers the surrounding context from Basecamp,
 acts on it, and replies **as that agent user**.
 
 The agent is identified by a **local `basecamp` CLI profile** of the same name
@@ -175,8 +177,17 @@ Before running, confirm the agent name maps to a usable local `basecamp` profile
 that is authed **as the agent user** (not as you):
 
 ```bash
-basecamp me --profile clawdito   # should show the agent's identity, distinct from yours
+basecamp me --profile clawdito                 # should show the agent's identity, distinct from yours
+basecamp people show me --profile clawdito -j  # data.id is the agent's Person id — keep it for the run
 ```
+
+`data.id` from `people show me` is the **account-scoped Person id** — the number
+mentions, assignments, subscriber lists, and boosts all carry (e.g. `51177542`).
+`basecamp me` reports the *global* identity id, a different number that matches
+nothing in an event; the connector resolves the Person id the same way
+(`Basecamp::Identity.account_person_id`). The front thread reads it once here
+and uses it for the mention discriminator under step 2a and for the dispatched
+agent's boost check.
 
 If it's missing or authed as the wrong user, set it up (interactive login as the
 agent/bot account):
@@ -184,6 +195,11 @@ agent/bot account):
 ```bash
 basecamp auth login --profile clawdito
 ```
+
+That check is for **startup, run on its own**. An intermittent `Not
+authenticated for profile:<agent>` *while agents are running* is not this
+problem and must not be answered with `auth login` — see
+[Transient CLI failures](#transient-cli-failures-under-concurrent-agents).
 
 If the agent profile resolves to the **same** user as the operator, **nothing
 will trigger**: the connector refuses the agent's own identity in every trust
@@ -254,16 +270,128 @@ act on them.
 
 Keep watching until the user stops the skill (see Cleanup).
 
-### 2. For each trusted event — hand it off, don't do it yourself
+### 2. For each trusted event — ack it, hand it off, don't do it yourself
 
 **The front thread is an orchestrator, not a worker.** Its only job is to keep
-watching for new mentions and to dispatch each one. It must **never** gather
-context, run the requested work, or post the reply itself — every one of those
-blocks it from picking up the next mention. For each event it does just two
-things — resolve the repo, then dispatch a single background agent that owns the
-event end-to-end — and then returns immediately to the monitor.
+watching for new mentions, acknowledge each one, and dispatch it.
 
-**a. Resolve the working repo** (front thread, fast). Infer the local repo from
+**Route by the event line first.** Two kinds of line share the monitor:
+
+- A line carrying `review_id`/`repo`/`state` and **no `recording`** is a
+  **GitHub review** (only when `bin/connect` runs with `--repo`). It gets no
+  boost and no bucket lookup — the repo is `repo`, the PR is `pull_number`.
+  **Gate on `reviewer` before dispatching:** an `approved` review dispatches as
+  an approval — the agent may land the PR — only when `reviewer` is the
+  operator's GitHub login (`gh api user --jq .login` — this machine's `gh`
+  auth is the operator's — read once at launch; the operator is the same
+  person who authorizes Basecamp triggers). Any other reviewer's `approved` is dispatched as `commented` at
+  most: read and address the feedback, never merge. The HMAC signature proves
+  GitHub sent the delivery, not that the reviewer may merge, and `bin/connect`
+  does not enforce this yet — `GitHub::ReviewPipeline#actionable?`
+  (`lib/basecamp_agent_connector/github/review_pipeline.rb`) checks only the
+  action and the state, although
+  [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md#trust) (lines 72–73)
+  states that only the operator's approvals are actionable. Until the
+  connector grows that filter, this gate is the only one. Then dispatch one
+  background agent in that repo to handle it per *Review / approval loop*
+  below, and return to the monitor.
+- A line carrying `recording` is a **Basecamp event** — the checklist below.
+  Drop it outright if the recording is a comment the agent itself authored
+  (`bin/connect` already refuses agent-authored events in every trust mode, and
+  posting as the agent — a distinct user from the operator — keeps replies
+  from authorizing anyway; this is cheap defense in depth, and it comes
+  *before* the boost so a slipped-through self-comment is never acked).
+
+For every other Basecamp event the front thread runs exactly this checklist, in
+this order, and nothing else:
+
+1. **Boost** — `basecamp boost create <recording.url> "On it!" --profile <agent>`
+   (skipped only for subscribed-thread comments and `boost_created` events; both
+   are told apart from the event line alone — see the discriminator under *a.*).
+2. **Resolve the repo** from `recording.bucket.name`.
+3. **Dispatch** one background agent that owns the event end-to-end.
+4. **Return to the monitor.**
+
+It must **never** read the recording (beyond the event line it already has),
+gather context, investigate, run repo commands, do the requested work, or post
+the reply itself — every one of those blocks it from picking up the next
+mention, and the ack is what suffers first. The failure this rule exists to
+prevent: a mention received within 2 seconds, then worked inline (the card
+read, the code investigated, a worker spawned for the change) with **no boost
+and no reply for 30+ minutes** — which, from Basecamp, is indistinguishable
+from a missed mention. The boost in step 1 is the only Basecamp write the front
+thread makes per event — except the one *holding reply* in step b, posted only
+when the event cannot be handed off — and it lands before anything else happens.
+
+**a. Acknowledge with a boost** (front thread, immediately on receipt — before
+repo resolution, before dispatch). One CLI call, so the ack lands within seconds
+regardless of what dispatch does:
+
+```bash
+basecamp boost create <recording.url> "On it!" --profile <agent>
+```
+
+Use the **URL form**: every emitted event carries `recording.url`, and the URL
+already names the project. The bare-id form needs `--project
+<recording.bucket.id>` — without it the CLI falls into interactive project
+resolution, which a background shell cannot answer.
+
+A boost is a lightweight reaction (≤16 chars) posted **as the agent**, so the
+trigger visibly registered. It is the ack for both **directive** triggers —
+mentions and assignments alike (boosts work on comments, messages, cards, and
+todos) — and for Campfire mentions (boost the chat line; see *When the mention
+arrives in Campfire*). Exactly two kinds of Basecamp event get **no** boost
+(see their sections below):
+
+- **subscribed-thread comments** — a `comment_created` whose `recording.content`
+  has no `<bc-attachment content-type="application/vnd.basecamp.mention">`
+  carrying **the agent's Person id**. The id is the **only** discriminator:
+  the attachment's embedded `content` markup names it as
+  `<bc-mention … gid="gid://bc3/Person/<id>">`, and the attachment's own
+  `sgid` attribute encodes the same `gid://bc3/Person/<id>` (base64 in the
+  segment before `--`, which is what the connector's own matcher decodes —
+  `Event#mentioned_person_ids` in
+  `lib/basecamp_agent_connector/basecamp/event.rb`). Compare against the
+  Person id captured at startup (`basecamp people show me --profile <agent>
+  -j` → `data.id`, see *Prerequisite*). Never match on the name: the
+  `<bc-mention>` also carries a first name, and names are not unique — a
+  colleague who shares the agent's name would turn a followed-thread comment
+  into a boosted, dispatched directive. A mention attachment naming someone
+  *else* is still a followed-thread comment, and a plain-text `@name` with no
+  attachment is not a mention at all;
+- **`boost_created`** events.
+
+If the call fails, don't block on it — but retry only the two failures that
+happen **before any request is sent**, `Not authenticated for profile:` and
+`token refresh failed:` (the transient credential-store failure described in
+[Transient CLI failures](#transient-cli-failures-under-concurrent-agents)). Any
+other failure may have landed the boost server-side (a timeout reading the
+response, an envelope parse error), and a retry would post a duplicate. One
+shell call does both:
+
+```bash
+landed=false
+for i in 1 2 3; do
+  if out=$(basecamp boost create <recording.url> "On it!" --profile <agent> 2>&1); then
+    landed=true; break
+  fi
+  echo "$out" | grep -qE 'Not authenticated for|token refresh failed' || break   # anything else: no retry
+  sleep 2
+done
+[ "$landed" = true ] || { echo "boost did not verifiably land: $out" >&2; false; }
+```
+
+The explicit `landed` flag is what makes the exit status honest: a bare `break`
+on a non-retryable error would leave the loop at status 0, and exhausting the
+retries would leave it at `sleep`'s status 0 — either way the front thread
+would hand off "boost landed" to an agent that then skips its fallback, and the
+event stays unacknowledged. The snippet exits non-zero on every unsuccessful
+path and echoes the CLI's last error so the failure is visible in the log.
+
+If the boost did not verifiably land, record that for the dispatch (step c) and
+move on — the dispatched agent posts the fallback boost.
+
+**b. Resolve the working repo** (front thread, fast). Infer the local repo from
 the project name (`recording.bucket.name`). Basecamp project names usually carry
 an app token — e.g. a `BC5 …` project maps to the Basecamp repo under
 `~/Work/<org>/<repo>`. A mapping table (see `config/project_repos.toml`, if
@@ -271,7 +399,20 @@ present) backs the heuristic. **If you cannot confidently map the project to a
 repo, ask the user which repo to use — do not guess and do not silently fall
 back.** This is the one step that may need you; everything after it is delegated.
 
-**b. Dispatch one background agent that owns the whole event.** Use the Agent
+**The ack must never precede an indefinite silence.** The boost has already told
+the requester "received"; if this step has to stop and ask the user, or step c
+fails to dispatch, nobody is working the event and nothing else will post. So
+*before* asking (or on the dispatch failure), post one short **holding reply**
+as the agent on the originating recording — in the Campfire for a chat trigger
+— that @mentions the requester (the event `creator`): received, but held, and
+why ("waiting on the operator to pick a repo"). One line, once; it is the only
+reply the front thread ever posts, and only on directive triggers (mentions,
+assignments, chat) — a followed-thread comment or a boost gets no boost and no
+holding reply either. Under the default operator-only trust the requester *is*
+the user you are about to ask; post it anyway, so Basecamp never shows an
+acked task nobody holds.
+
+**c. Dispatch one background agent that owns the whole event.** Use the Agent
 tool with `run_in_background: true`, running in the resolved repo. Give it
 everything it needs to finish **without the front thread**:
 
@@ -281,20 +422,28 @@ everything it needs to finish **without the front thread**:
 - the **agent profile name** (its reply identity);
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
-  not necessarily the operator.
+  not necessarily the operator;
+- whether the **front thread's boost landed** (step a), so the agent knows
+  whether the ack is still owed.
 
 Instruct that background agent to, in order:
 
-1. **Acknowledge immediately with a boost** — before any slow work, boost the
-   originating recording (comment, message, card, **or** todo) with `On it!` **as
-   the agent** so the trigger visibly registered (a boost is a lightweight
-   reaction, ≤16 chars). This is the ack for both **directive** triggers —
-   mentions and assignments alike. Subscribed-thread comments are the one
-   exception: they get **no** boost (see *When a comment lands on a thread the
-   agent follows*):
+1. **Boost only if the handoff says the front thread's boost did not land.**
+   The `On it!` is normally already on the recording; the dispatched agent's
+   boost is a fallback for a front-thread call that failed, posted without
+   first listing the recording's boosts:
    ```bash
-   basecamp boost create <recording.url|id> "On it!" --profile <agent>
+   basecamp boost create <recording.url> "On it!" --profile <agent>
    ```
+   A front-thread call that Basecamp accepted but reported as failed (a
+   timeout reading the response, an envelope parse error) then produces a
+   second `On it!`. That is accepted: a boost is a reaction, a duplicate is
+   harmless, and a missing ack is the failure this whole step exists to
+   prevent. Checking first would be one more CLI call that can fail the same
+   transient way, and it would have to decide which earlier event an older
+   `On it!` on the same recording belonged to — the price of "never a second
+   boost" is a rulebook, not a guarantee. Same exceptions as the front thread:
+   subscribed-thread comments and `boost_created` events are never boosted.
 2. **Gather context from Basecamp** — it is the context store; the event is just
    the trigger + pointer:
    ```bash
@@ -314,7 +463,13 @@ Instruct that background agent to, in order:
    ```
    If there's no Triage-like or no In-progress-like column, skip this silently —
    never invent columns.
-4. **Do the requested work** in the repo.
+4. **Do the requested work** in the repo. **Reply latency:** the boost says
+   "received"; it does not say "still working." If the work will take more than
+   **~10 minutes**, post a short **interim reply** as the agent on the
+   originating recording (in the Campfire, for a chat trigger) — one or two
+   lines: what it is doing and where progress can be followed (the PR link once
+   it exists, otherwise the branch) — then the final reply when done. One
+   interim reply, not a running commentary.
 5. **Reply on the originating recording as the agent** — commenting with the
    agent's profile so the reply posts as the agent user:
    ```bash
@@ -332,22 +487,18 @@ front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
 
-**c. Drop self-authored events.** If an event's recording is a comment the agent
-itself just posted, ignore it. `bin/connect` already refuses agent-authored
-events in every trust mode, and posting as the agent (a distinct user from the
-operator) keeps replies from authorizing anyway — but this is cheap defense in
-depth.
-
 ### When the agent is assigned a card/todo
 
 If the event `kind` ends in `_assignment_changed`, the operator assigned the
 agent to the recording (a card/todo/step) — there's no mention to strip; **the
-recording itself is the task**. The dispatched background agent should, in order:
+recording itself is the task**. The front thread boosts the recording `On it!`
+on receipt exactly as for a mention — boosts work on todos and cards too, so a
+boost is the single ack for both triggers. The dispatched background agent
+should, in order:
 
-1. **Acknowledge first with a boost** — same as for a mention: boost the
-   recording with `On it!` as the agent (`basecamp boost create <recording.url|id>
-   "On it!" --profile <agent>`). Boosts work on todos and cards too, so a boost is
-   the single ack for both triggers.
+1. **Boost only if the handoff says the front thread's boost did not land** —
+   the same fallback rule as for a mention: post without listing first; a rare
+   duplicate is accepted over a missing ack.
 2. **Move the card out of Triage** — same rule as for mentions: if the assigned
    card sits in a Triage-like column and the table has an In-progress-like
    column, move it there before starting; skip silently otherwise.
@@ -375,8 +526,9 @@ with these differences:
   basecamp chat line <recording.url> -j                                  # the line itself
   basecamp chat messages --project <bucket.id> --room <recording.parent.id> -n 25 -j   # the conversation
   ```
-- **Ack** — boost the line (`basecamp boost create <recording.url> "On it!"
-  --profile <agent>`), same as any recording.
+- **Ack** — the front thread boosts the **line** on receipt (`basecamp boost
+  create <recording.url> "On it!" --profile <agent>`), same as any recording;
+  the dispatched agent boosts only as the fallback.
 - **No card moves** — there is no board; skip the Triage step.
 - **Reply in the chat as the agent** — post to the same Campfire, not a comment:
   ```bash
@@ -393,9 +545,11 @@ with these differences:
 ### When a comment lands on a thread the agent follows
 
 If the event `kind` is `comment_created` and `recording.content` carries **no
-mention of the agent**, the connector fired because the agent **subscribes** to
-the commented-on recording (a card/thread it participates in), not because it was
-addressed. Treat this as *activity on a followed thread*, not a directive:
+mention attachment naming the agent** (the discriminator under step 2a — a
+mention of someone else, or a plain-text `@name`, does not count), the connector
+fired because the agent **subscribes** to the commented-on recording (a
+card/thread it participates in), not because it was addressed. Treat this as
+*activity on a followed thread*, not a directive:
 
 1. **Read for context** — the comment (`recording.content`) and, as needed, its
    parent (`recording.parent`) and neighbours. This is the same non-blocking
@@ -404,10 +558,12 @@ addressed. Treat this as *activity on a followed thread*, not a directive:
    problem it can act on, a change it should make. Reply on the same recording as
    the agent, exactly like a mention reply. **Default to staying silent**: a
    followed thread is not an instruction, and replying to every comment is noise.
-3. **No boost, no card moves** — this **overrides** the generic
-   acknowledge-first step above: a followed-thread comment is not an ack-worthy
-   assignment; skip the `On it!` boost and the Triage move unless the agent
-   actually takes the thread on.
+3. **No boost, no card moves, no interim reply** — this **overrides** the front
+   thread's boost-first step above and the dispatched agent's ~10-minute
+   interim-reply rule: a followed-thread comment is not an ack-worthy
+   assignment, so the front thread skips the `On it!` boost and the dispatched
+   agent doesn't add one either; skip the Triage move and the interim reply
+   too unless the agent actually takes the thread on.
 
 > This response policy is **provisional** — the connector now *fires* on
 > subscribed-thread comments; how aggressively the agent should engage (answer
@@ -432,12 +588,41 @@ characters, so it is a *signal*, not an instruction: `👍`, `🔥`, `redo`, `wr
    work needs another look: re-read the thread for what to fix; when the signal
    is too terse to act on confidently, reply on the boosted recording as the
    agent asking one concrete question.
-3. **No boost back, no card moves** — never boost a boost, and skip the Triage
-   move unless the agent actually resumes work on the recording.
+3. **No boost back, no card moves, no interim reply** — the front thread skips
+   its boost-first step for `boost_created` events and the dispatched agent
+   never boosts a boost; skip the Triage move and the ~10-minute interim reply
+   unless the agent actually resumes work on the recording.
 
 > This response policy is **provisional**, like the followed-thread one: 16
 > characters can't carry much intent, so lean strongly toward silence and let
 > real traffic tune the judgment.
+
+### Transient CLI failures under concurrent agents
+
+With several agents running at once, the `basecamp` CLI intermittently fails
+with `Not authenticated for profile:<agent>: credentials not found …` or
+`token refresh failed: …` — from the front thread's boost, a dispatched agent's
+`basecamp show`, or the connector's own pollers. This is a **transient failure
+of the CLI's credential store under concurrent invocations** — the observed
+fact is that the same call run alone succeeds — **not a credentials problem**:
+the profile exists and its tokens are fine. The cause is not pinned down; the
+CLI source offers two candidates, and neither is confirmed: the CLI probes the
+OS keyring once per process and silently falls back to the credentials file
+when the probe errors (or, with no terminal and no GUI session, exceeds its 10s
+bound), and concurrent token refreshes can rotate the refresh token out from
+under each other. Many simultaneous `basecamp` invocations make both likelier.
+Both symptoms surface before the actual API request is sent.
+
+- **Retry the call** — 2–3 times with a short pause (a second or two) — and only
+  then treat it as a real failure. Retry only on these two signatures: any other
+  error may mean the request went through, and a retried write posts twice.
+- **Never run `basecamp auth login`** in response to it: an interactive login
+  can't complete from a background agent, and re-authing a profile that isn't
+  broken only risks clobbering the good credentials.
+- **Never treat it as "the agent profile is missing"**, and never report it as
+  such on Basecamp. The startup check in *Prerequisite* runs on its own and is
+  the authority on whether the profile exists; an intermittent error mid-run is
+  not.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 
@@ -474,9 +659,12 @@ green** — getting CI green is part of finishing the task, not a follow-up:
    fix it, push, and re-watch. Loop until every check is green (remote can fail
    what local passed).
 5. **Only now reply "done"** on Basecamp, with the PR link. Never communicate
-   success on a red or unchecked branch. If you cannot get it green after a
-   reasonable effort, reply with **what is failing** and @mention the requester
-   (the event `creator`) — not a false "done."
+   success on a red or unchecked branch. (The ~10-minute **interim reply** from
+   the dispatched agent's step 4 in *For each trusted event* still applies and
+   may link the PR early — it says "in progress, follow it here," never
+   "done.") If you cannot get it green after a reasonable effort, reply with
+   **what is failing** and @mention the requester (the event `creator`) — not
+   a false "done."
 
 #### Review / approval loop (GitHub webhook)
 
@@ -503,7 +691,9 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
   push, and reply.
-- **`approved`** — land per the repo's policy and reply done.
+- **`approved`** — **from the operator** (the router's `reviewer` gate): land
+  per the repo's policy and reply done. Anyone else's approval arrives here as
+  `commented` — read it, address it, never merge on it.
 
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API

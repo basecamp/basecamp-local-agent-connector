@@ -124,9 +124,10 @@ automatically. In Claude Code, ending the skill does this; from a terminal, pres
                                               │
                                               ▼
                           /basecamp-connect  (the driver, a Claude skill)
+                                     • boosts the recording `On it!` as the agent (the ack)
                                      • resolves the local repo from the project
-                                     • gathers context via the `basecamp` CLI
                                      • dispatches a background Claude agent in that repo
+                                       (which gathers context via the `basecamp` CLI)
                                      • replies on the card as the agent (--profile)
 ```
 
@@ -137,8 +138,8 @@ Two halves, deliberately separated:
    and verification. It emits only trusted events as NDJSON and touches nothing
    else.
 2. **`/basecamp-connect`** — the **driver**. A Claude Code skill that runs the
-   bridge, reads its output, turns each event into a background-agent task in the
-   right repo, and posts the reply.
+   bridge, reads its output, acks each event with a boost as the agent, turns it
+   into a background-agent task in the right repo, and posts the reply.
 
 The bridge is dumb-and-safe; the driver is smart-and-contextual. You can run
 `bin/connect` on its own to see exactly what would be dispatched.
