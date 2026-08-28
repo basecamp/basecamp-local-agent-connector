@@ -101,6 +101,41 @@ class BasecampClientTest < Minitest::Test
     assert_equal 456, build_cli(runner).show("https://example.org/recordings/456").fetch("id")
   end
 
+  # bc3 answering 5xx, or the CLI's own circuit breaker refusing to ask,
+  # arrive as api_error too — each with a fixed message from the SDK or the
+  # CLI, since the envelope drops the SDK's Retryable flag. None is a
+  # verdict on the recording.
+  def test_a_5xx_or_an_open_circuit_is_transient
+    [
+      "Gateway error (503)",
+      "request failed after 3 attempts: Gateway error (502)",
+      "Server error (500)",
+      "request failed after 3 attempts: API error: 502 Bad Gateway",
+      "Service temporarily unavailable"
+    ].each do |message|
+      runner = FakeCommandRunner.new
+      stub_transient_failure runner, "basecamp show", stdout: error_envelope("api_error", message), exit_status: 7
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError, message) do
+        build_cli(runner).show("https://example.org/recordings/456")
+      end
+
+      assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, message
+      assert_includes error.message, message
+    end
+  end
+
+  # A 4xx Basecamp reports as api_error is its verdict, like a not_found.
+  def test_a_4xx_api_error_is_not_transient
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 7, stdout: error_envelope("api_error", "API error: 410 Gone")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("https://example.org/recordings/456") }
+
+    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    assert_equal 1, runner.commands.length
+  end
+
   def test_a_nonzero_exit_without_an_envelope_is_transient
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", exit_status: 1, stderr: "502 Bad Gateway", once: true

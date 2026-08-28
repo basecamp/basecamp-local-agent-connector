@@ -92,7 +92,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
       if verified.nil?
         @seen_event_ids.delete(event.id)
-        log "dropped event #{event.id}: not corroborated by Basecamp (retried if delivered again)"
+        log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
       elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)

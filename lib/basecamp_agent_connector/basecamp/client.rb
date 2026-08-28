@@ -25,17 +25,29 @@ class BasecampAgentConnector::Basecamp::Client
   # token-refresh api_error although nothing is wrong with the credentials
   # (19/20 parallel probes lost in a 20-way run; 20/20 serial ones passed).
   # The race clears as soon as the neighbours finish, so a failed invocation
-  # is tried again after a short, growing pause. The whole budget (~2s of
-  # waiting plus the calls themselves) stays inside the 10s Basecamp allows a
-  # webhook delivery, so a verdict can still be answered synchronously.
+  # is tried again after a short, growing pause: ~2s of waiting per command,
+  # plus the calls themselves. A verification that runs two commands (a
+  # comment on a subscribed recording: `show`, then `subscriptions show`)
+  # can still overrun the 10s Basecamp allows a webhook delivery, which the
+  # bridge tolerates (see Bridge#handler).
   ATTEMPTS = 3
   RETRY_DELAYS = [ 0.5, 1.5 ] # seconds before the second and third attempt
 
   # Error-envelope codes that describe the CLI's plight, not Basecamp's
-  # answer. `api_error` is ambiguous: a token refresh that lost the keyring
-  # race reports as one, a real 4xx from the API does too.
+  # answer. `api_error` is ambiguous: Basecamp's own 4xx verdicts arrive as
+  # one, but so do three failures to get an answer at all — a token refresh
+  # that lost the keyring race ("token refresh failed: …"), bc3 answering 5xx
+  # ("Server error (500)" surfaces at once; "Gateway error (502|503|504)" and
+  # the generic "API error: 5xx …" are retried inside the SDK for ~3s first
+  # and then surface as "request failed after 3 attempts: …", a prefix the
+  # SDK puts only on retryable failures), and the CLI's own circuit breaker
+  # refusing to ask ("Service temporarily unavailable": file-backed across
+  # processes, open for 30s after five consecutive network/5xx failures).
+  # The envelope drops the SDK's Retryable flag, so these fixed messages are
+  # all there is to key on until the CLI emits that flag — the intended end
+  # state, after which this pattern goes.
   TRANSIENT_CODES = %w[auth_required network rate_limit]
-  TRANSIENT_API_ERROR = /token refresh/i
+  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable/i
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp",
     wait: ->(seconds) { sleep seconds })

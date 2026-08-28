@@ -135,6 +135,23 @@ class BasecampBridgeTest < Minitest::Test
     refute_match(/not corroborated/, logs.string)
   end
 
+  # bc3 answering 5xx (a deploy, an incident) is the other way Basecamp could
+  # not be asked; a 200 here would settle a real mention as uncorroborated
+  # while a 503 brings it back seconds later.
+  def test_handler_answers_503_when_basecamp_answered_5xx
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show", exit_status: 7,
+      stdout: error_envelope("api_error", "request failed after 3 attempts: Gateway error (503)")
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, output: output)
+
+    assert_equal 503, bridge.handler.call(request(sample_payload))
+
+    assert_empty output.string
+    assert_match(/Gateway error \(503\).*; answered 503 so Basecamp redelivers/, logs.string)
+  end
+
   def test_a_redelivery_after_a_503_is_verified_afresh_and_emitted_once
     runner = FakeCommandRunner.new
     stub_transient_failure runner, "basecamp show"
