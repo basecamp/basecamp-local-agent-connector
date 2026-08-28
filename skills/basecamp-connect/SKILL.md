@@ -177,8 +177,17 @@ Before running, confirm the agent name maps to a usable local `basecamp` profile
 that is authed **as the agent user** (not as you):
 
 ```bash
-basecamp me --profile clawdito   # should show the agent's identity, distinct from yours
+basecamp me --profile clawdito                 # should show the agent's identity, distinct from yours
+basecamp people show me --profile clawdito -j  # data.id is the agent's Person id — keep it for the run
 ```
+
+`data.id` from `people show me` is the **account-scoped Person id** — the number
+mentions, assignments, subscriber lists, and boosts all carry (e.g. `51177542`).
+`basecamp me` reports the *global* identity id, a different number that matches
+nothing in an event; the connector resolves the Person id the same way
+(`Basecamp::Identity.account_person_id`). The front thread reads it once here
+and uses it for the mention discriminator under step 2a and for the dispatched
+agent's boost check.
 
 If it's missing or authed as the wrong user, set it up (interactive login as the
 agent/bot account):
@@ -271,8 +280,21 @@ watching for new mentions, acknowledge each one, and dispatch it.
 - A line carrying `review_id`/`repo`/`state` and **no `recording`** is a
   **GitHub review** (only when `bin/connect` runs with `--repo`). It gets no
   boost and no bucket lookup — the repo is `repo`, the PR is `pull_number`.
-  Dispatch one background agent in that repo to handle it per *Review /
-  approval loop* below, then return to the monitor.
+  **Gate on `reviewer` before dispatching:** an `approved` review dispatches as
+  an approval — the agent may land the PR — only when `reviewer` is the
+  operator's GitHub login (`gh api user --jq .login` — this machine's `gh`
+  auth is the operator's — read once at launch; the operator is the same
+  person who authorizes Basecamp triggers). Any other reviewer's `approved` is dispatched as `commented` at
+  most: read and address the feedback, never merge. The HMAC signature proves
+  GitHub sent the delivery, not that the reviewer may merge, and `bin/connect`
+  does not enforce this yet — `GitHub::ReviewPipeline#actionable?`
+  (`lib/basecamp_agent_connector/github/review_pipeline.rb`) checks only the
+  action and the state, although
+  [`docs/pr-review-loop.md`](../../docs/pr-review-loop.md#trust) (lines 72–73)
+  states that only the operator's approvals are actionable. Until the
+  connector grows that filter, this gate is the only one. Then dispatch one
+  background agent in that repo to handle it per *Review / approval loop*
+  below, and return to the monitor.
 - A line carrying `recording` is a **Basecamp event** — the checklist below.
   Drop it outright if the recording is a comment the agent itself authored
   (`bin/connect` already refuses agent-authored events in every trust mode, and
@@ -323,10 +345,18 @@ arrives in Campfire*). Exactly two kinds of Basecamp event get **no** boost
 
 - **subscribed-thread comments** — a `comment_created` whose `recording.content`
   has no `<bc-attachment content-type="application/vnd.basecamp.mention">`
-  naming **the agent**: the attachment's embedded `content` markup carries the
-  mentioned person's `gid://bc3/Person/<id>` and first name inside a
-  `<bc-mention>`, so match the agent's Person id (from `basecamp me --profile
-  <agent>` at startup) or its name there. A mention attachment naming someone
+  carrying **the agent's Person id**. The id is the **only** discriminator:
+  the attachment's embedded `content` markup names it as
+  `<bc-mention … gid="gid://bc3/Person/<id>">`, and the attachment's own
+  `sgid` attribute encodes the same `gid://bc3/Person/<id>` (base64 in the
+  segment before `--`, which is what the connector's own matcher decodes —
+  `Event#mentioned_person_ids` in
+  `lib/basecamp_agent_connector/basecamp/event.rb`). Compare against the
+  Person id captured at startup (`basecamp people show me --profile <agent>
+  -j` → `data.id`, see *Prerequisite*). Never match on the name: the
+  `<bc-mention>` also carries a first name, and names are not unique — a
+  colleague who shares the agent's name would turn a followed-thread comment
+  into a boosted, dispatched directive. A mention attachment naming someone
   *else* is still a followed-thread comment, and a plain-text `@name` with no
   attachment is not a mention at all;
 - **`boost_created`** events.
@@ -340,12 +370,23 @@ response, an envelope parse error), and a retry would post a duplicate. One
 shell call does both:
 
 ```bash
+landed=false
 for i in 1 2 3; do
-  out=$(basecamp boost create <recording.url> "On it!" --profile <agent> 2>&1) && break
+  if out=$(basecamp boost create <recording.url> "On it!" --profile <agent> 2>&1); then
+    landed=true; break
+  fi
   echo "$out" | grep -qE 'Not authenticated for|token refresh failed' || break   # anything else: no retry
   sleep 2
 done
+[ "$landed" = true ] || { echo "boost did not verifiably land: $out" >&2; false; }
 ```
+
+The explicit `landed` flag is what makes the exit status honest: a bare `break`
+on a non-retryable error would leave the loop at status 0, and exhausting the
+retries would leave it at `sleep`'s status 0 — either way the front thread
+would hand off "boost landed" to an agent that then skips its fallback, and the
+event stays unacknowledged. The snippet exits non-zero on every unsuccessful
+path and echoes the CLI's last error so the failure is visible in the log.
 
 If the boost did not verifiably land, record that for the dispatch (step c) and
 move on — the dispatched agent checks the recording's boosts and posts the
@@ -379,7 +420,9 @@ everything it needs to finish **without the front thread**:
 - the **instruction** — `recording.content` with the agent mention removed, the
   rest of the raw HTML (links, other mentions) intact;
 - the **recording** URL/id and its parent URL;
-- the **agent profile name** (its reply identity);
+- the **agent profile name** (its reply identity) and its **Person id** (from
+  startup), plus the event's **`created_at`** — the fallback boost check needs
+  both;
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
   not necessarily the operator;
@@ -391,14 +434,26 @@ Instruct that background agent to, in order:
 1. **Boost only if the ack is missing.** The `On it!` is normally already on
    the recording; the dispatched agent's boost is a **fallback, never a second
    boost**. When the handoff says the front thread's boost did not verifiably
-   land, first read the recording's boosts and post only if none by the agent
-   is there — a failed CLI call can still have landed server-side, and Basecamp
-   does not dedup boosts. Same exceptions as the front thread: subscribed-thread
-   comments and `boost_created` events are never boosted.
+   land, first read the recording's boosts and post only if none is an
+   `On it!` **by the agent, created at or after this event's `created_at`** —
+   a failed CLI call can still have landed server-side, and Basecamp does not
+   dedup boosts, but an `On it!` the agent left for an *earlier* event on the
+   same recording (a card assigned twice, a message re-mentioning the agent) is
+   that event's ack, not this one's, and must not suppress the fallback. Same
+   exceptions as the front thread: subscribed-thread comments and
+   `boost_created` events are never boosted.
    ```bash
-   basecamp boost list <recording.url> --profile <agent> -j   # any "On it!" whose booster is the agent? then stop
-   basecamp boost create <recording.url> "On it!" --profile <agent>   # only if not
+   basecamp boost list <recording.url> --profile <agent> -j \
+     | jq -e --argjson me <agent-person-id> --arg since <event.created_at> \
+         '.data[] | select(.content == "On it!" and .booster.id == $me and .created_at >= $since)' >/dev/null \
+     || basecamp boost create <recording.url> "On it!" --profile <agent>
    ```
+   `boost list -j` returns `data[]` of `{id, content, created_at, booster}`,
+   where `booster.id` is the booster's Person id and `created_at` is an ISO
+   8601 UTC timestamp (`2026-08-28T19:42:53.986Z`), the same form as the
+   event's `created_at`, so the string comparison orders correctly. The
+   `<agent-person-id>` is the startup `people show me` value the handoff
+   carries (step c).
 2. **Gather context from Basecamp** — it is the context store; the event is just
    the trigger + pointer:
    ```bash
@@ -451,10 +506,9 @@ on receipt exactly as for a mention — boosts work on todos and cards too, so a
 boost is the single ack for both triggers. The dispatched background agent
 should, in order:
 
-1. **Boost only if the ack is missing** — same fallback rule as for a mention
-   (`basecamp boost list <recording.url> --profile <agent> -j` first, then
-   `basecamp boost create <recording.url> "On it!" --profile <agent>` only if
-   no `On it!` by the agent is there); never a second boost.
+1. **Boost only if the ack is missing** — the same fallback rule as for a
+   mention (list first; post only if no `On it!` by the agent created at or
+   after this event's `created_at` is there); never a second boost.
 2. **Move the card out of Triage** — same rule as for mentions: if the assigned
    card sits in a Triage-like column and the table has an In-progress-like
    column, move it there before starting; skip silently otherwise.
@@ -647,7 +701,9 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
   push, and reply.
-- **`approved`** — land per the repo's policy and reply done.
+- **`approved`** — **from the operator** (the router's `reviewer` gate): land
+  per the repo's policy and reply done. Anyone else's approval arrives here as
+  `commented` — read it, address it, never merge on it.
 
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API
