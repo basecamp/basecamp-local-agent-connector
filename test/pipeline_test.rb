@@ -131,11 +131,49 @@ class PipelineTest < Minitest::Test
 
   def test_an_uncorroborated_event_is_retried_when_delivered_again
     runner = FakeCommandRunner.new
-    runner.stub "basecamp show", exit_status: 1, stderr: "502 Bad Gateway", once: true
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found"), once: true
     runner.stub "basecamp show", stdout: envelope(sample_recording)
     pipeline = pipeline(runner)
 
     refute pipeline.process(sample_payload)
+    assert pipeline.process(sample_payload)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  # One lost keyring probe must cost nothing visible: the client's retry
+  # absorbs it, the event settles on this delivery, and the redelivery
+  # Basecamp would send anyway is a duplicate.
+  def test_an_event_corroborated_after_one_transient_failure_is_emitted_exactly_once
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 3, once: true,
+      stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found")
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+
+    assert pipeline.process(sample_payload)
+    assert pipeline.process(sample_payload)
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal 2, runner.commands_matching(/basecamp show/).length
+    refute_match(/not corroborated/, @logs.string)
+  end
+
+  # A failure that outlasts the retries is no verdict: it propagates (for the
+  # webhook handler to answer 503) rather than logging "not corroborated",
+  # and forgets the id so the redelivery is verified afresh — and emitted
+  # exactly once.
+  def test_a_transient_failure_that_outlasts_the_retries_propagates_and_forgets_the_event
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { pipeline.process(sample_payload) }
+    assert_empty @output.string
+    refute_match(/not corroborated/, @logs.string)
+
+    assert pipeline.process(sample_payload)
     assert pipeline.process(sample_payload)
 
     assert_equal 1, @output.string.lines.length
@@ -149,6 +187,29 @@ class PipelineTest < Minitest::Test
     assert pipeline.process(sample_payload)
     assert pipeline.process(sample_payload)
     assert pipeline.process(sample_payload("kind" => "comment_archived"))
+    assert_equal 1, @output.string.lines.length
+  end
+
+  # The interleaving the pipeline's lock prevents: a verification overruns
+  # bc3's delivery timeout, the redelivery arrives while it is in flight, and
+  # the original then fails. Answered 200 as a duplicate, the redelivery
+  # would have been the last one; waiting, it becomes the fresh attempt.
+  def test_a_redelivery_during_an_in_flight_verification_waits_for_its_outcome
+    gate = Queue.new
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    gated = Object.new
+    gated.define_singleton_method(:run) { |*command| gate.pop; runner.run(*command) }
+    pipeline = pipeline(gated)
+    original = Thread.new { pipeline.process(sample_payload) rescue $! }
+    Thread.pass until original.status == "sleep"
+
+    redelivery = Thread.new { pipeline.process(sample_payload) }
+    4.times { gate << :go }
+
+    assert_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, original.value
+    assert redelivery.value
     assert_equal 1, @output.string.lines.length
   end
 

@@ -29,6 +29,9 @@ class BasecampAgentConnector::GitHub::Bridge
     log "To watch another repo on the fly, register a webhook to #{endpoint} (secret #{@hmac_secret})."
   end
 
+  # Answers 200 at once (nil, to the server) and verifies off the request
+  # thread: GitHub does not redeliver a failed delivery on its own, so there
+  # is no verdict worth holding the response for.
   def handler
     lambda do |request|
       Thread.new do
@@ -36,6 +39,8 @@ class BasecampAgentConnector::GitHub::Bridge
       rescue => error
         log "pipeline error: #{error.message}"
       end
+
+      nil
     end
   end
 

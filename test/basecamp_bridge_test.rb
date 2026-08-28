@@ -84,11 +84,69 @@ class BasecampBridgeTest < Minitest::Test
     logs = StringIO.new
     bridge = bridge(runner, types: "Comment", logger: logs, output: output)
 
-    bridge.handler.call(Struct.new(:body).new(JSON.generate(chat_line_payload))).join
+    assert_nil bridge.handler.call(request(chat_line_payload))
 
     assert_empty output.string
     assert_match(/ignored chat-kind payload/, logs.string)
     assert_empty runner.commands_matching(/chat line /)
+  end
+
+  def test_handler_answers_200_once_an_event_is_settled
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    output = StringIO.new
+    bridge = bridge(runner, output: output)
+
+    assert_nil bridge.handler.call(request(sample_payload))
+    assert_equal 1, output.string.lines.length
+  end
+
+  # A recording Basecamp says is not there is a verdict — the event is
+  # dropped and the delivery is acknowledged, so a forged or deleted event
+  # is never redelivered.
+  def test_handler_answers_200_for_an_uncorroborated_event
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, output: output)
+
+    assert_nil bridge.handler.call(request(sample_payload))
+
+    assert_empty output.string
+    assert_match(/dropped event 99001: not corroborated/, logs.string)
+    assert_equal 1, runner.commands_matching(/basecamp show/).length
+  end
+
+  # A fetch the CLI could not complete is no verdict: answer 503 so bc3's
+  # delivery job redelivers (Webhook::DeliveryJob retries any non-2xx), and
+  # say so in the log instead of calling the event uncorroborated.
+  def test_handler_answers_503_when_the_recording_could_not_be_fetched
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, output: output)
+
+    assert_equal 503, bridge.handler.call(request(sample_payload))
+
+    assert_empty output.string
+    assert_match(/could not fetch recording for event 99001: .*failed on all 3 attempts.*; answered 503 so Basecamp redelivers/, logs.string)
+    refute_match(/not corroborated/, logs.string)
+  end
+
+  def test_a_redelivery_after_a_503_is_verified_afresh_and_emitted_once
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    output = StringIO.new
+    bridge = bridge(runner, output: output)
+
+    assert_equal 503, bridge.handler.call(request(sample_payload))
+    assert_nil bridge.handler.call(request(sample_payload))
+    assert_nil bridge.handler.call(request(sample_payload))
+
+    assert_equal 1, output.string.lines.length
   end
 
   def test_register_starts_the_boost_poller_and_logs_after_the_webhook_readiness_line
@@ -130,7 +188,7 @@ class BasecampBridgeTest < Minitest::Test
     logs = StringIO.new
     bridge = bridge(runner, logger: logs, output: output)
 
-    bridge.handler.call(Struct.new(:body).new(JSON.generate(boost_payload))).join
+    assert_nil bridge.handler.call(request(boost_payload))
 
     assert_empty output.string
     assert_match(/ignored boost-kind payload/, logs.string)
@@ -138,6 +196,10 @@ class BasecampBridgeTest < Minitest::Test
   end
 
   private
+    def request(payload)
+      BasecampAgentConnector::Server::Request.new(body: JSON.generate(payload), headers: {})
+    end
+
     def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new,
       boost_poll_interval: nil)
       BasecampAgentConnector::Basecamp::Bridge.new \

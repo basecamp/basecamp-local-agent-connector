@@ -6,19 +6,37 @@ class BasecampAgentConnector::Basecamp::Pipeline
     @emitter = emitter
     @logger = logger
     @seen_event_ids = Set.new
+    @verdict = Mutex.new
   end
 
   # Returns whether the event reached a verdict (emitted, dropped, ignored,
-  # or a duplicate). False means Basecamp could not corroborate it, in which
-  # case the id is forgotten so a redelivery gets a fresh attempt: the fetch
-  # may have failed transiently, and re-verifying is idempotent either way.
+  # or a duplicate). False means Basecamp did not corroborate it — the
+  # recording is gone, or never existed — in which case the id is forgotten
+  # so a redelivery gets a fresh attempt, since re-verifying is idempotent.
+  # When Basecamp could not be asked at all (Client::TransientError, after
+  # the client's own retries) that error propagates with the id likewise
+  # forgotten: the caller decides how to defer — a webhook answers 503 so
+  # Basecamp redelivers, a poller retries on its next tick — and must not
+  # record a verdict, because there is none.
+  #
+  # One delivery at a time, so that "seen" always means settled. Deliveries
+  # arrive on concurrent server threads, and a verification that overruns
+  # bc3's 10s delivery timeout is redelivered while the original is still in
+  # flight; unserialized, the redelivery would find the id seen, be answered
+  # 200 as a duplicate, and then the original could fail and forget the id —
+  # with nobody left to redeliver. Held here, the redelivery waits and finds
+  # either a settled id (a duplicate) or a forgotten one (a fresh attempt).
+  # The pollers each own a pipeline and poll from a single thread, so they
+  # never wait on this.
   def process(payload)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    if actionable?(event) && fresh?(event)
-      emit_if_verified(event)
-    else
-      true
+    @verdict.synchronize do
+      if actionable?(event) && fresh?(event)
+        emit_if_verified(event)
+      else
+        true
+      end
     end
   end
 
@@ -84,6 +102,9 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
 
       !verified.nil?
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      @seen_event_ids.delete(event.id)
+      raise
     end
 
     def log(message)

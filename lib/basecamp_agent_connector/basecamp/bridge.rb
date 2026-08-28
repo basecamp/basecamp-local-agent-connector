@@ -68,28 +68,45 @@ class BasecampAgentConnector::Basecamp::Bridge
     log "Trust: #{@authorizer.description}"
   end
 
+  # Each delivery is verified on the request thread and answered with its
+  # verdict: 200 once the event is settled (emitted, dropped, or a
+  # duplicate), 503 when Basecamp could not be asked. bc3 retries any
+  # non-2xx delivery (Webhook::DeliveryJob: polynomially_longer backoff,
+  # 10 attempts, then the webhook is deactivated), so a 503 is a request
+  # for redelivery — of an event whose id the pipeline has forgotten, so the
+  # redelivery gets a fresh attempt. Everything else answers 200: an
+  # impostor payload, a malformed body, and a pipeline bug are settled here,
+  # and redelivering them would only repeat the same outcome. The client's
+  # retry budget keeps the synchronous verification inside bc3's 10s
+  # delivery timeout; overrunning it is harmless (a timed-out delivery is
+  # redelivered and then deduped or re-verified), just wasteful.
   def handler
     lambda do |request|
-      Thread.new do
-        payload = JSON.parse(request.body)
+      payload = JSON.parse(request.body)
 
-        # Basecamp never delivers chat or boost events by webhook, so either
-        # kind on this route is by definition not from Basecamp. The pollers
-        # are the sole sources; refuse the impostor rather than corroborate it
-        # (or let it replay a real boost through this pipeline's separate dedupe).
-        event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
-        if event.chat_kind?
-          log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
-        elsif event.boost?
-          log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
-        else
-          pipeline.process(payload)
-        end
-      rescue JSON::ParserError => error
-        log "ignored malformed payload: #{error.message}"
-      rescue => error
-        log "pipeline error: #{error.message}"
+      # Basecamp never delivers chat or boost events by webhook, so either
+      # kind on this route is by definition not from Basecamp. The pollers
+      # are the sole sources; refuse the impostor rather than corroborate it
+      # (or let it replay a real boost through this pipeline's separate dedupe).
+      event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
+      if event.chat_kind?
+        log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
+      elsif event.boost?
+        log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
+      else
+        pipeline.process(payload)
       end
+
+      nil
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
+      log "could not fetch recording for event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers"
+      503
+    rescue JSON::ParserError => error
+      log "ignored malformed payload: #{error.message}"
+      nil
+    rescue => error
+      log "pipeline error: #{error.message}"
+      nil
     end
   end
 

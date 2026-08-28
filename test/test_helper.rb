@@ -16,17 +16,20 @@ class FakeCommandRunner
     @stubs = []
   end
 
-  def stub(matcher, stdout: "", stderr: "", exit_status: 0, once: false)
+  # A stub answers every matching command until it is used up: `once: true`
+  # answers one, `times: n` answers n (a transient failure the client retries
+  # through needs one per attempt), and the default answers forever.
+  def stub(matcher, stdout: "", stderr: "", exit_status: 0, once: false, times: nil)
     result = BasecampAgentConnector::CommandRunner::Result.new(stdout: stdout, stderr: stderr, exit_status: exit_status)
-    @stubs << { matcher: matcher, result: result, once: once, consumed: false }
+    @stubs << { matcher: matcher, result: result, remaining: once ? 1 : times }
   end
 
   def run(*command)
     @commands << command
-    stub = @stubs.find { |candidate| !candidate[:consumed] && matches?(command, candidate[:matcher]) }
+    stub = @stubs.find { |candidate| candidate[:remaining] != 0 && matches?(command, candidate[:matcher]) }
     raise "no stub for command: #{command.join(' ')}" if stub.nil?
 
-    stub[:consumed] = true if stub[:once]
+    stub[:remaining] -= 1 unless stub[:remaining].nil?
     stub[:result]
   end
 
@@ -200,8 +203,22 @@ module PayloadHelpers
     JSON.generate("ok" => true, "summary" => summary)
   end
 
-  def build_cli(command_runner)
-    BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner)
+  # The CLI's `-j` failure envelope, printed on stdout with a nonzero exit
+  # (verified against production: `basecamp show <missing> -j` exits 2 with
+  # {"ok": false, "error": "Resource not found: ...", "code": "not_found"}).
+  def error_envelope(code, error = code.tr("_", " "))
+    JSON.generate("ok" => false, "error" => error, "code" => code)
+  end
+
+  # Stubs a command to fail transiently on every attempt the client makes,
+  # so the failure survives its retries.
+  def stub_transient_failure(runner, matcher, stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found"), exit_status: 3)
+    runner.stub matcher, stdout: stdout, exit_status: exit_status, times: BasecampAgentConnector::Basecamp::Client::ATTEMPTS
+  end
+
+  # No sleeping between retries in tests; pass `wait:` to observe the delays.
+  def build_cli(command_runner, wait: ->(_seconds) { })
+    BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner, wait: wait)
   end
 
   def build_github_cli(command_runner)

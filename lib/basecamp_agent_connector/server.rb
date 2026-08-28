@@ -34,10 +34,12 @@ class BasecampAgentConnector::Server
         AccessLog: []
     end
 
+    # A handler answers with the HTTP status to send, or nil for 200. The
+    # Basecamp route uses that to ask for a redelivery (503) when it could
+    # not reach a verdict; a handler that defers its work returns nil.
     def handle(request, response, handler)
       if request.request_method == "POST"
-        handler.call(Request.new(body: request.body, headers: request.header))
-        response.status = 200
+        response.status = handler.call(Request.new(body: request.body, headers: request.header)) || 200
       else
         response.status = 404
       end

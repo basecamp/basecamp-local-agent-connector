@@ -6,9 +6,10 @@ class ServerTest < Minitest::Test
     @port = free_port
     @hook = []
     @gh = []
+    @status = nil
     @server = BasecampAgentConnector::Server.new(port: @port, logger: StringIO.new, routes: {
-      "/hook/s3cret" => ->(request) { @hook << request },
-      "/gh/ghs3cret" => ->(request) { @gh << request }
+      "/hook/s3cret" => ->(request) { @hook << request; @status },
+      "/gh/ghs3cret" => ->(request) { @gh << request; nil }
     })
     @thread = Thread.new { @server.start }
     wait_until_listening(@port)
@@ -31,6 +32,18 @@ class ServerTest < Minitest::Test
     post("/gh/ghs3cret", "{}", "X-Hub-Signature-256" => "sha256=abc")
 
     assert_equal "sha256=abc", @gh.first.header("X-Hub-Signature-256")
+  end
+
+  def test_answers_200_when_the_handler_returns_no_status
+    assert_equal "200", post("/hook/s3cret", "{}").code
+    assert_equal "200", post("/gh/ghs3cret", "{}").code
+  end
+
+  def test_answers_the_status_the_handler_returns
+    @status = 503
+
+    assert_equal "503", post("/hook/s3cret", "{}").code
+    assert_equal 1, @hook.length
   end
 
   def test_returns_404_for_unknown_paths

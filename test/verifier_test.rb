@@ -20,9 +20,26 @@ class VerifierTest < Minitest::Test
 
   def test_rejects_when_recording_not_found
     runner = FakeCommandRunner.new
-    runner.stub "basecamp show", exit_status: 1, stderr: "not found"
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
 
     assert_nil verifier(runner).verify(event(sample_payload))
+    assert_equal 1, runner.commands.length
+  end
+
+  # No verdict without an answer: a fetch the CLI could not complete is not
+  # "Basecamp says it isn't there", so it propagates instead of rejecting.
+  def test_a_transient_fetch_failure_propagates_instead_of_rejecting
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(sample_payload)) }
+  end
+
+  def test_a_transient_chat_line_fetch_failure_propagates_instead_of_rejecting
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "chat line "
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(chat_line_payload)) }
   end
 
   def test_does_not_call_basecamp_without_a_locator
@@ -121,15 +138,26 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands_matching(/subscriptions show/)
   end
 
-  def test_a_failed_subscribers_lookup_stamps_not_subscribed
+  def test_a_refused_subscribers_lookup_stamps_not_subscribed
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
-    runner.stub "subscriptions show", exit_status: 1, stderr: "boom"
+    runner.stub "subscriptions show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
 
     verified = verifier(runner).verify(event(sample_payload))
 
     refute_nil verified
     refute verified.subscribed?
+  end
+
+  # Stamping "not subscribed" on a lookup that never got an answer would
+  # settle the event as "does not target the agent" — a drop Basecamp never
+  # redelivers. It propagates instead, like the recording fetch.
+  def test_a_transient_subscribers_lookup_failure_propagates
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    stub_transient_failure runner, "subscriptions show"
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(sample_payload)) }
   end
 
   def test_corroborates_a_boost_against_the_agents_own_feed_and_stamps_it
@@ -161,11 +189,18 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(boost_payload))
   end
 
-  def test_rejects_a_boost_when_the_feed_fetch_fails
+  def test_rejects_a_boost_when_the_feed_fetch_is_refused
     runner = FakeCommandRunner.new
-    runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "boom"
+    runner.stub "api get /my/boosts.json", exit_status: 4, stdout: error_envelope("forbidden", "Access denied")
 
     assert_nil verifier(runner).verify(event(boost_payload))
+  end
+
+  def test_a_transient_feed_fetch_failure_propagates_instead_of_rejecting
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "api get /my/boosts.json"
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(boost_payload)) }
   end
 
   def test_rejects_a_boost_when_the_agent_has_no_profile

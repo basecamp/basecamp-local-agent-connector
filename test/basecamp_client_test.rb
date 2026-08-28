@@ -17,11 +17,11 @@ class BasecampClientTest < Minitest::Test
     assert_includes runner.commands.last.join(" "), "--profile clawdito"
   end
 
-  def test_malformed_json_from_a_successful_command_is_a_client_error
+  def test_malformed_json_from_a_successful_command_is_a_transient_error
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit'
 
-    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).chats(project: 222) }
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { build_cli(runner).chats(project: 222) }
     assert_match(/malformed JSON/, error.message)
   end
 
@@ -72,6 +72,91 @@ class BasecampClientTest < Minitest::Test
     assert_raises BasecampAgentConnector::Basecamp::Client::Error do
       build_cli(runner).me
     end
+  end
+
+  # The keyring-probe race: a concurrent CLI invocation lost its keyring
+  # probe, fell back to a stale credentials file, and reported auth_required
+  # though the profile is fine. The next attempt, once the neighbours are
+  # done, succeeds — and the caller never learns there was a hiccup.
+  def test_retries_a_transient_failure_and_returns_the_eventual_answer
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 3, once: true,
+      stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found")
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    delays = []
+
+    recording = build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+
+    assert_equal 456, recording.fetch("id")
+    assert_equal 2, runner.commands_matching(/basecamp show/).length
+    assert_equal [ BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS.first ], delays
+  end
+
+  def test_a_token_refresh_failure_is_transient
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 7, once: true,
+      stdout: error_envelope("api_error", "token refresh failed: Post \"https://launchpad.localhost:3011/oauth/token\": connection refused")
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    assert_equal 456, build_cli(runner).show("https://example.org/recordings/456").fetch("id")
+  end
+
+  def test_a_nonzero_exit_without_an_envelope_is_transient
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 1, stderr: "502 Bad Gateway", once: true
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    assert_equal 456, build_cli(runner).show("https://example.org/recordings/456").fetch("id")
+  end
+
+  def test_a_transient_failure_that_outlasts_the_retries_is_a_transient_error
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "basecamp show"
+    delays = []
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+    end
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, error.attempts
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length
+    assert_equal BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS, delays
+    assert_match(/failed on all 3 attempts: .*auth_required/, error.message)
+  end
+
+  # Basecamp's own verdict is final: a recording that is not there (deleted,
+  # or never existed because the POST was forged) must stay uncorroborated,
+  # and asking twice more would only delay saying so.
+  def test_does_not_retry_a_not_found
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found: https://example.org/recordings/456.json")
+    delays = []
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) do
+      build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+    end
+
+    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    assert_equal 1, runner.commands_matching(/basecamp show/).length
+    assert_empty delays
+  end
+
+  def test_does_not_retry_a_forbidden
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 4, stdout: error_envelope("forbidden", "Access denied")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("https://example.org/recordings/456") }
+
+    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    assert_equal 1, runner.commands.length
+  end
+
+  def test_retries_malformed_output_from_a_successful_command
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit', once: true
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+
+    assert_equal 333, build_cli(runner).chats(project: 222).first.fetch("id")
   end
 
   # A failing command prints the {"ok": false, ...} error envelope on stdout

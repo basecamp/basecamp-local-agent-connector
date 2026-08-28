@@ -203,9 +203,15 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    `--no-boosts`): it fetches nothing until its first interval pass, well after
    the readiness lines print, so no event can beat the funnel's consumer to the
    stream.
-7. **Listen** — for each incoming POST, run the pipeline below. Always respond
-   **200 OK quickly** (so Basecamp does not retry); filtering/verification/
-   dispatch happen out of band.
+7. **Listen** — for each incoming POST, run the pipeline below on the request
+   thread and answer with its verdict: **200 OK** once the event is settled
+   (emitted, dropped, or a duplicate — Basecamp must not redeliver those),
+   **503** when Basecamp could not be asked, so its delivery job redelivers the
+   event with backoff (bc3 retries any non-2xx delivery). Only a transient CLI
+   failure that outlasts the client's own retries — the keyring-probe race
+   under concurrent CLI invocations, a token refresh that lost that race, a
+   network blip, garbled output — earns a 503; Basecamp's own refusal (not
+   found, forbidden) is a verdict.
 
 ### Event pipeline
 
@@ -225,9 +231,12 @@ For each delivered event:
      are admitted here and decided at verification).
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
    set; at-least-once delivery means duplicates are expected). An id counts as
-   seen once it reaches a verdict; an event Basecamp could not corroborate is
-   forgotten again so a redelivery (or, for chat, the next poll) retries it —
-   the fetch may have failed transiently, and re-verifying is idempotent.
+   seen once it reaches a verdict; an event Basecamp did not corroborate is
+   forgotten again so a redelivery (or, for chat and boosts, the next poll)
+   retries it — re-verifying is idempotent. An event Basecamp could not be
+   asked about (the corroborating fetch failed transiently, even after the
+   CLI client's retries) is forgotten the same way and, for a webhook,
+   answered 503 so the redelivery actually comes.
 3. **Authoritative verification** (the real trust gate): re-fetch the recording
    from Basecamp via the CLI (`basecamp show <recording.url|app_url>` /
    `basecamp ... -j`) and confirm it **actually exists** with the claimed creator

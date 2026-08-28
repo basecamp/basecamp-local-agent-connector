@@ -345,12 +345,17 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    received-boosts feed is fetched every `--boost-poll` seconds and each new
    boost runs the same pipeline as a webhook delivery. The first fetch is a
    baseline — history is never dispatched.
-5. **Listen.** For each delivery: respond `200` immediately, then off the hot
-   path — pre-filter (authorized author + mentions agent + actionable kind),
-   de-duplicate by event id, verify against the Basecamp API, re-check that the
+5. **Listen.** For each delivery, on the request thread: pre-filter
+   (authorized author + mentions agent + actionable kind), de-duplicate by
+   event id, verify against the Basecamp API, re-check that the
    **corroborated** author is authorized, and **print the trusted event as one
-   line of NDJSON** to STDOUT. Dropped/diagnostic lines go
-   to STDERR.
+   line of NDJSON** to STDOUT. Dropped/diagnostic lines go to STDERR. The
+   delivery is answered with the verdict: `200` once the event is settled
+   (emitted, dropped, or a duplicate), `503` when Basecamp could not be asked —
+   the CLI retries a transient failure (its keyring probe loses a race under
+   concurrent invocations and reports stale credentials) a few times first,
+   and a `503` makes bc3's delivery job redeliver the event with backoff
+   rather than settling it as uncorroborated.
 
 **Emitted event (STDOUT, one JSON object per line):**
 
@@ -431,7 +436,7 @@ bin/connect                          # shim → Connector.start(ARGV) — Baseca
 lib/basecamp_agent_connector/
   connector        # unified: one multi-route server on shared-funnel paths, mounts each transport's bridge
   command_runner   # shared: runs subprocesses; the seam tests stub
-  server           # shared: WEBrick server, path→handler routes; 200-fast, raw body + headers
+  server           # shared: WEBrick server, path→handler routes; answers the handler's status, raw body + headers
   tunnel           # shared: mounts/unmounts our own paths on the host's Tailscale Funnel
   emitter          # shared: NDJSON writer
   basecamp/        # Basecamp:: — the Basecamp webhook transport

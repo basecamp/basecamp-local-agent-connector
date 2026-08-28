@@ -91,7 +91,7 @@ class ChatPollerTest < Minitest::Test
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: empty_envelope, once: true
     runner.stub "chat messages", stdout: envelope([ chat_line ])
-    runner.stub "chat line ", exit_status: 1, stderr: "not found"
+    runner.stub "chat line ", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
     poller = poller(runner)
 
     poller.poll
@@ -101,7 +101,10 @@ class ChatPollerTest < Minitest::Test
     assert_match(/not corroborated/, @logs.string)
   end
 
-  def test_a_transient_corroboration_failure_is_retried_on_the_next_poll
+  # One lost keyring probe on the corroborating re-fetch is absorbed by the
+  # client's retry: the line settles on this poll, nothing is logged as
+  # uncorroborated, and later polls see it as seen.
+  def test_a_transient_corroboration_failure_is_retried_within_the_poll
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: empty_envelope, once: true
@@ -112,12 +115,34 @@ class ChatPollerTest < Minitest::Test
 
     poller.poll
     poller.poll
-    assert_empty @output.string
-    assert_match(/not corroborated/, @logs.string)
+    assert_equal 1, @output.string.lines.length
+    assert_equal 2, runner.commands_matching(/chat line /).length
+    refute_match(/not corroborated/, @logs.string)
 
     poller.poll
     assert_equal 1, @output.string.lines.length
     assert_equal 2, runner.commands_matching(/chat line /).length
+  end
+
+  # A failure that outlasts the client's retries is forgotten, not settled:
+  # the next poll — this poller's redelivery — verifies it afresh.
+  def test_a_corroboration_failure_that_outlasts_the_retries_is_retried_on_the_next_poll
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope, once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    stub_transient_failure runner, "chat line "
+    runner.stub "chat line ", stdout: envelope(chat_line)
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+    assert_empty @output.string
+    assert_match(/could not corroborate chat line 91001: .*retried on the next poll/, @logs.string)
+    refute_match(/not corroborated/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
 
     poller.poll
     assert_equal 1, @output.string.lines.length
@@ -139,7 +164,7 @@ class ChatPollerTest < Minitest::Test
 
   def test_malformed_discovery_output_is_logged_and_retried
     runner = FakeCommandRunner.new
-    runner.stub "chat list", stdout: '{"data": [{"id": 333', once: true
+    stub_transient_failure runner, "chat list", stdout: '{"data": [{"id": 333', exit_status: 0
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner)
@@ -197,7 +222,7 @@ class ChatPollerTest < Minitest::Test
   def test_a_failed_fetch_leaves_the_baseline_for_the_next_successful_poll
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", exit_status: 1, stderr: "boom", once: true
+    stub_transient_failure runner, "chat messages", stdout: "", exit_status: 1
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     poller = poller(runner, clock: -> { Time.utc(2026, 6, 28, 13, 0, 0) })
 
@@ -213,7 +238,7 @@ class ChatPollerTest < Minitest::Test
 
   def test_a_failed_chat_listing_is_retried_on_the_next_poll
     runner = FakeCommandRunner.new
-    runner.stub "chat list", exit_status: 1, stderr: "boom", once: true
+    stub_transient_failure runner, "chat list", stdout: "", exit_status: 1
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     poller = poller(runner, clock: -> { Time.utc(2026, 6, 28, 13, 0, 0) })
@@ -300,7 +325,7 @@ class ChatPollerTest < Minitest::Test
     now = Time.now
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ]), once: true
-    runner.stub "chat list", exit_status: 1, stderr: "boom", once: true
+    runner.stub "chat list", exit_status: 4, stdout: error_envelope("forbidden", "Access denied"), once: true
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner, clock: -> { now })
@@ -363,7 +388,7 @@ class ChatPollerTest < Minitest::Test
     now = Time.now
     runner = FakeCommandRunner.new
     runner.stub "chat list --project A", stdout: envelope([ chat_hash ])
-    runner.stub "chat list --project B", exit_status: 1, stderr: "boom"
+    runner.stub "chat list --project B", exit_status: 4, stdout: error_envelope("forbidden", "Access denied")
     runner.stub "chat messages", stdout: empty_envelope
     poller = poller(runner, projects: [ "A", "B" ], clock: -> { now })
 
