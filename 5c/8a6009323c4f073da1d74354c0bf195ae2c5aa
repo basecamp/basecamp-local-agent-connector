@@ -1,0 +1,31 @@
+docs/pr-review-loop.md
+  s_cb8638fd4deb07::t_b317f547d8acd9 138-142
+lib/basecamp_agent_connector/connector.rb
+  s_cb8638fd4deb07::t_d664ba7b5c1889 52-53,55
+lib/basecamp_agent_connector/github/review_event.rb
+  s_cb8638fd4deb07::t_bb90ce8b7c44a3 25-28,30
+lib/basecamp_agent_connector/github/review_pipeline.rb
+  s_cb8638fd4deb07::t_0768570e294d93 31-36,48,70,76-79
+test/connector_test.rb
+  s_cb8638fd4deb07::t_10a9ab429248ad 133,140-142
+test/review_event_test.rb
+  s_cb8638fd4deb07::t_b3d95e159605dc 14-23
+test/review_pipeline_test.rb
+  s_cb8638fd4deb07::t_c05aa445b122be 87,135-136,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "5c8a6009323c4f073da1d74354c0bf195ae2c5aa",
+  "prompts": {},
+  "sessions": {
+    "s_cb8638fd4deb07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7799bc4b-8db5-43d6-af8e-1895e0ebc853",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Jeremy Daer <jeremy@37signals.com>"
+    }
+  }
+}
