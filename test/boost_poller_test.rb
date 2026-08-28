@@ -406,6 +406,19 @@ class BoostPollerTest < Minitest::Test
     assert_match(/no longer rate limited; resuming 15s boost polls/, @logs.string)
   end
 
+  def test_stops_processing_boosts_after_a_rate_limited_corroboration
+    second = received_boost("id" => 88002)
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost, second ]), once: true
+    runner.stub "api get /my/boosts.json", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+
+    poller(runner).poll
+
+    # The feed fetch plus one refused corroboration (three client attempts);
+    # the second boost's verification waits for the backed-off next tick.
+    assert_equal 1 + BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
   private
     def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer, interval: 15)
       BasecampAgentConnector::Basecamp::BoostPoller.new \

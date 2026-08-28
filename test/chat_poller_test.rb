@@ -437,6 +437,24 @@ class ChatPollerTest < Minitest::Test
     assert_match(/no longer rate limited; resuming 15s chat polls/, @logs.string)
   end
 
+  def test_stops_processing_lines_after_a_rate_limited_corroboration
+    second = chat_line("id" => 91002, "app_url" => "https://3.basecamp.com/000/buckets/222/chats/333@91002",
+      "url" => "https://3.basecamp.com/000/buckets/222/chats/333/lines/91002.json")
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope, once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line, second ])
+    runner.stub "chat line ", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+
+    # One refused corroboration (three client attempts); the second line's
+    # verification waits for the backed-off next tick.
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/chat line /).length
+  end
+
   def test_warns_when_the_fetch_window_may_have_overflowed
     stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
     window = Array.new(BasecampAgentConnector::Basecamp::ChatPoller::FETCH_LIMIT) do |index|

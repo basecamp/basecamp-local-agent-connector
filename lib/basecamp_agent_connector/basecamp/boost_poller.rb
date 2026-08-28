@@ -90,6 +90,12 @@ class BasecampAgentConnector::Basecamp::BoostPoller
         warn_of_possible_overflow(ordered)
 
         ordered.each do |boost|
+          # A corroboration the budget refused ends the tick too: each
+          # further actionable boost would re-fetch the feed with more
+          # refused calls. Unprocessed boosts stay unseen, so the backed-off
+          # next tick picks them up.
+          break if @rate_limited
+
           if @seen_boost_ids.include?(boost["id"])
             # already handled
           elsif received_since_start?(boost)

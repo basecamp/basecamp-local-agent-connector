@@ -169,6 +169,11 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       warn_of_possible_overflow(room, ordered, seen, first_fetch)
 
       ordered.each do |line|
+        # A corroboration the budget refused ends the room too: each further
+        # actionable line would spend more refused calls. Unprocessed lines
+        # stay unseen, so the backed-off next tick picks them up.
+        break if @rate_limited
+
         if seen.include?(line["id"])
           # already handled
         elsif posted_since_start?(line)
