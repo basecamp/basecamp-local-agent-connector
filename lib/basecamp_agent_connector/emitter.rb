@@ -3,10 +3,18 @@ require "json"
 class BasecampAgentConnector::Emitter
   def initialize(output: $stdout)
     @output = output
+    @lock = Mutex.new
   end
 
+  # Serialized: webhook deliveries are processed on their own threads and the
+  # chat poller emits from its poll thread, all into one NDJSON stream — an
+  # interleaved write would tear a line and break the watcher.
   def emit(event)
-    @output.puts JSON.generate(event.to_emitted_hash)
-    @output.flush
+    line = JSON.generate(event.to_emitted_hash)
+
+    @lock.synchronize do
+      @output.puts line
+      @output.flush
+    end
   end
 end

@@ -146,7 +146,11 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
 - `--operator` — profile whose user is allowed to trigger (default: CLI default
   profile).
 - `--types` — optional comma-separated Basecamp event types
-  (default: `Comment, Message, Kanban::Card`).
+  (default: `Comment, Message, Kanban::Card, Kanban::Step, Todo, Chat::Line`).
+  `Chat::Line` selects Campfire coverage: bc3 excludes chat kinds from webhook
+  relay entirely, so the bridge covers chat with an integrated poller (interval
+  `--chat-poll`, default 15s) that runs each new line through the same
+  authorizer + corroboration pipeline as webhook deliveries.
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence
@@ -165,16 +169,28 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    A random unguessable path segment is generated per run (defense-in-depth; see
    Security). All other paths return 404. **One server + one funnel + one secret
    path serve every project**; the payload's `recording.bucket.id` identifies
-   which project an event came from.
+   which project an event came from. A chat-only run (`--types` reduces to
+   chat entries alone) mounts **no** `/bc5` route at all — there is no inbound
+   ingress to expose or forge.
 4. **Expose via Tailscale Funnel** — `tailscale funnel <port>` publishes the
    server on the public internet at a stable `*.ts.net` HTTPS URL. `serve`
    (tailnet-only) is insufficient — Basecamp's servers must reach the endpoint,
-   so `funnel` (public) is required.
-5. **Register webhooks** — for **each** project in the set, `basecamp webhooks
-   create <funnel-url>/bc5/<secret> --project <project> --types <types>`. Capture
+   so `funnel` (public) is required. **Skipped entirely when nothing mounts an
+   inbound path** (chat-only): no funnel, and no Tailscale requirement.
+5. **Start the Campfire poller** — chat-typed `--types` entries start the
+   integrated poller: discover each project's chats synchronously (so the
+   readiness log reports the room count), then fetch on the `--chat-poll`
+   interval from a background thread. The first fetch baselines: lines
+   predating the poller are marked seen, later ones process as live — and
+   nothing emits before the connector reports readiness. Runs before webhook
+   registration so discovery never widens the register-to-listen window.
+6. **Register webhooks** — for **each** project in the set, `basecamp webhooks
+   create <funnel-url>/bc5/<secret> --project <project> --types <webhook types>`
+   — the **webhook-eligible** types only; chat-typed entries went to the poller,
+   and Basecamp would reject them. Skipped when no webhook types remain. Capture
    every created webhook ID for cleanup. Surface per-project registration
    failures without aborting the rest.
-6. **Listen** — for each incoming POST, run the pipeline below. Always respond
+7. **Listen** — for each incoming POST, run the pipeline below. Always respond
    **200 OK quickly** (so Basecamp does not retry); filtering/verification/
    dispatch happen out of band.
 
@@ -194,7 +210,10 @@ For each delivered event:
      the agent. (A real Basecamp mention is an attachment carrying the person's
      SGID, not literal `@name` text, so a plain text match would miss it.)
 2. **Dedup** — drop the event if its `event.id` has already been seen (in-memory
-   set; at-least-once delivery means duplicates are expected).
+   set; at-least-once delivery means duplicates are expected). An id counts as
+   seen once it reaches a verdict; an event Basecamp could not corroborate is
+   forgotten again so a redelivery (or, for chat, the next poll) retries it —
+   the fetch may have failed transiently, and re-verifying is idempotent.
 3. **Authoritative verification** (the real trust gate): re-fetch the recording
    from Basecamp via the CLI (`basecamp show <recording.url|app_url>` /
    `basecamp ... -j`) and confirm it **actually exists** with the claimed creator
@@ -339,7 +358,7 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Linked identity | Basecamp user id (+ email) for the filter target & reply identity | CLI-authed user (`clawdito`) |
 | Watched projects | Explicit `--project` list (name/URL/ID), required | — (at least one) |
 | Project→repo map | Maps Basecamp project names / app tokens to local repo paths under `~/Work/<org>/<repo>` | heuristic + ask-on-miss |
-| Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card, Kanban::Step, Todo` |
+| Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card, Kanban::Step, Todo` + `Chat::Line` (polled — chat has no webhooks) |
 | Local port | WEBrick bind port | unused high port |
 
 ---

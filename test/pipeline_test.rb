@@ -54,10 +54,34 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 999 }))
 
-    pipeline(runner).process(sample_payload)
+    pipeline = pipeline(runner)
 
+    refute pipeline.process(sample_payload)
     assert_empty @output.string
     assert_match(/not corroborated/, @logs.string)
+  end
+
+  def test_an_uncorroborated_event_is_retried_when_delivered_again
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 1, stderr: "502 Bad Gateway", once: true
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+
+    refute pipeline.process(sample_payload)
+    assert pipeline.process(sample_payload)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_settled_event_reports_a_verdict
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+
+    assert pipeline.process(sample_payload)
+    assert pipeline.process(sample_payload)
+    assert pipeline.process(sample_payload("kind" => "comment_archived"))
+    assert_equal 1, @output.string.lines.length
   end
 
   def test_emits_for_an_assignment_of_the_agent_by_the_operator

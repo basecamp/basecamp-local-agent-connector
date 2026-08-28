@@ -294,7 +294,8 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
 | `--allow-project` | Trust any corroborated non-client author of a recording the operator's account can read. Implies `--trust project`. | off |
 | `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
-| `--types` | Comma-separated Basecamp event types to subscribe to. | `Comment,Message,Kanban::Card,Kanban::Step,Todo` |
+| `--types` | Comma-separated Basecamp event types to subscribe to. `Chat::Line` selects Campfire coverage — chat has no webhooks, so the connector polls each watched project's chats for it. | `Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line` |
+| `--chat-poll` | Campfire poll interval, in seconds. | `15` |
 | `--port` | Local port for the webhook server. | an unused high port |
 
 **What it does, in order:**
@@ -366,7 +367,10 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)
   maps Basecamp project-name tokens to local repo paths. The skill uses it to
   decide where to run each agent; if nothing matches, it asks you.
-- **Event types** — `--types` (default `Comment,Message,Kanban::Card`).
+- **Event types** — `--types` (default `Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line`).
+  `Chat::Line` is Campfire coverage: Basecamp delivers no chat webhooks, so the
+  connector polls each watched project's chats and runs new lines through the
+  same trust gate as webhook events.
 - **Port** — `--port` (default: an unused high port).
 
 ---

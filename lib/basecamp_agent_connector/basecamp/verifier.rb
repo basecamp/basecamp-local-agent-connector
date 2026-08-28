@@ -13,11 +13,21 @@ class BasecampAgentConnector::Basecamp::Verifier
   end
 
   private
+    # Chat lines don't resolve through the generic recordings endpoint `show`
+    # uses (bc3 keeps chat out of it), so corroborate them through the chat
+    # line endpoint instead. Corroborating a polled line the poller itself just
+    # fetched is not redundant: it keeps chat on the identical trust path as
+    # webhook kinds, and re-reads the line at dispatch time so one deleted (or
+    # edited away from the mention) between poll and processing is dropped.
     def fetch_recording(event)
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
 
-      @basecamp_cli.show(locator)
+      if event.chat_kind?
+        @basecamp_cli.chat_line(locator)
+      else
+        @basecamp_cli.show(locator)
+      end
     rescue BasecampAgentConnector::Basecamp::Client::Error
       nil
     end

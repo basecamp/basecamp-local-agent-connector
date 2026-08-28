@@ -17,6 +17,14 @@ class BasecampClientTest < Minitest::Test
     assert_includes runner.commands.last.join(" "), "--profile clawdito"
   end
 
+  def test_malformed_json_from_a_successful_command_is_a_client_error
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit'
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).chats(project: 222) }
+    assert_match(/malformed JSON/, error.message)
+  end
+
   def test_create_webhook_passes_project_and_types
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
@@ -43,5 +51,35 @@ class BasecampClientTest < Minitest::Test
     assert_raises BasecampAgentConnector::Basecamp::Client::Error do
       build_cli(runner).me
     end
+  end
+
+  def test_chats_lists_a_projects_chats
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+
+    chats = build_cli(runner).chats(project: 222)
+
+    assert_equal 333, chats.first.fetch("id")
+    assert_includes runner.commands.first.join(" "), "chat list --project 222"
+  end
+
+  def test_chat_lines_fetches_recent_lines_for_a_room
+    runner = FakeCommandRunner.new
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+
+    lines = build_cli(runner).chat_lines(project: 222, chat: 333, limit: 25)
+
+    assert_equal 91001, lines.first.fetch("id")
+    assert_includes runner.commands.first.join(" "), "chat messages --project 222 --room 333 --limit 25"
+  end
+
+  def test_chat_line_fetches_one_line_by_url
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line)
+
+    line = build_cli(runner).chat_line("https://example.org/lines/91001.json")
+
+    assert_equal 91001, line.fetch("id")
+    assert_includes runner.commands.first.join(" "), "chat line https://example.org/lines/91001.json"
   end
 end

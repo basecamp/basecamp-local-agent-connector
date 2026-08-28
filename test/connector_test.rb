@@ -7,7 +7,7 @@ class ConnectorTest < Minitest::Test
     assert_equal "clawdito", options.agent
     assert_equal [ "Queenbee" ], options.projects
     assert_empty options.repos
-    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo", options.types
+    assert_equal "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line", options.types
     assert_equal [ "pull_request_review" ], options.events
     assert_nil options.port
     assert_equal :operator, options.trust
@@ -47,6 +47,23 @@ class ConnectorTest < Minitest::Test
     options = parse "@clawdito", "--project", "A", "--allow-project", "--allow-assignments-from-authorized"
 
     assert options.allow_assignments
+  end
+
+  def test_parses_the_chat_poll_interval
+    assert_equal 15, parse("@clawdito", "--project", "A").chat_poll
+    assert_equal 60, parse("@clawdito", "--project", "A", "--chat-poll", "60").chat_poll
+  end
+
+  def test_refuses_a_non_positive_chat_poll_interval
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--chat-poll", "0"
+    end
+  end
+
+  def test_refuses_types_that_reduce_to_nothing
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--types", " , "
+    end
   end
 
   def test_refuses_value_flags_that_imply_different_trust_modes
@@ -137,6 +154,20 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "tailscale", "funnel", "--bg", "--set-path", path, "http://127.0.0.1:4567#{path}" ], mounted.first
     assert_equal [ [ "tailscale", "funnel", "--set-path", path, "off" ] ], runner.commands_matching(/funnel --set-path/)
     assert_empty runner.commands_matching(/reset/)
+  end
+
+  def test_start_skips_the_funnel_entirely_for_a_chat_only_run
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+    runner.stub "basecamp me", stdout: JSON.generate("data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
+    runner.stub "people show me", stdout: JSON.generate("data" => { "id" => 52007412 })
+    runner.stub "chat list", stdout: "[]"
+
+    _out, err = start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner
+
+    assert_empty runner.commands_matching(/\Atailscale/)
+    assert_empty runner.commands_matching(/webhooks/)
+    assert_match(/Polling 0 Campfire\(s\)/, err)
   end
 
   private
