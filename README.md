@@ -381,8 +381,9 @@ mention attachment for the agent's Person id, `subscribed` when a
 recording. A `comment_created` is exactly one of the two. An assignment or a
 boost is a directive by `kind` alone: `subscribed` is `false` for both, and
 `mentioned` is a fact about the content (an assigned card whose description
-mentions the agent reads `true`; a boost's feed representation has no content,
-so it reads `false`). A watcher reads `trigger` to tell a directive from
+mentions the agent reads `true`; a boost is a reaction, not content, so the
+boost path settles no mention verdict and it always reads `false`). A watcher
+reads `trigger` to tell a directive from
 followed-thread activity instead of decoding the mention markup itself.
 
 **Teardown.** On `SIGINT`/`SIGTERM` it deletes **every** registered webhook

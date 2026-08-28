@@ -248,7 +248,10 @@ For each delivered event:
    and content. A forged POST (the funnel URL is public, Basecamp sends no
    signature) cannot survive this — if Basecamp doesn't corroborate the event, it
    is discarded. The payload's content field is never trusted directly; the
-   fetched content is authoritative. For a **comment on a subscribed recording**,
+   fetched content is authoritative. The mention match against the agent's
+   Person id is also settled on that fetched content and stamped onto the
+   authoritative event as `agent_mentioned`, which is what the emitted
+   `trigger.mentioned` reports. For a **comment on a subscribed recording**,
    verification additionally re-fetches the parent's subscribers
    (`basecamp subscriptions show`) and stamps the agent's membership onto the
    authoritative event, so the subscription that triggers is the live one
@@ -310,7 +313,8 @@ connector owns, carrying the verifier's verdicts on **why** the event targets
 the agent, both settled on the re-fetched recording rather than on the POST:
 
 - `mentioned` — the authoritative content carries a mention attachment for the
-  agent's Person id (the same match the pipeline's mention gate applies).
+  agent's Person id (the `agent_mentioned` stamp from verification step 3 —
+  the same match the pipeline's mention gate applies).
 - `subscribed` — a `comment_created` with no mention of the agent, on a
   recording the live subscribers API confirms the agent subscribes to (the
   `agent_subscribed` stamp from verification step 3).
@@ -319,8 +323,10 @@ Every emitted line carries both booleans. A `comment_created` is exactly one
 of the two. An assignment or a boost is a directive by `kind` alone:
 `subscribed` is `false` for both, and `mentioned` stays a fact about the
 authoritative content — an assigned card whose description mentions the agent
-reads `true`; a boost's feed representation carries no content, so it reads
-`false`. The skill reads `trigger` to decide boost vs. no-boost and directive
+reads `true`. A boost is a reaction to the agent's own work, not content that
+could mention it: the boost path settles no mention verdict at all, so a boost
+reads `false` by construction, whatever its feed representation carries. The
+skill reads `trigger` to decide boost vs. no-boost and directive
 vs. followed-thread activity, so it never has to decode the mention SGID
 against the agent's Person id itself.
 

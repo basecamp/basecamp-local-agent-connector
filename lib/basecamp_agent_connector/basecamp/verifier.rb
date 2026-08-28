@@ -71,9 +71,11 @@ class BasecampAgentConnector::Basecamp::Verifier
       Array(recording["assignees"]).map { |assignee| assignee["id"] }
     end
 
-    # Both trigger verdicts are stamped from the re-fetched recording, so what
-    # the pipeline re-checks and what the watcher reads off the emitted line
-    # are one computation on the authoritative content.
+    # Both trigger verdicts are settled on the re-fetched recording — the same
+    # authoritative content the pipeline's `targets_agent?` re-check reads — so
+    # the stamps the watcher reads off the emitted line cannot disagree with
+    # the drop decision. The pipeline still runs `Event#mentions?` itself; the
+    # `agent_mentioned` stamp exists for the emitted line, not for the gate.
     def authoritative_event(event, recording)
       mentioned = mentions_agent?(recording)
 

@@ -186,9 +186,10 @@ mentions, assignments, subscriber lists, and boosts all carry (e.g. `51177542`).
 `basecamp me` reports the *global* identity id, a different number that matches
 nothing in an event; the connector resolves the Person id the same way
 (`Basecamp::Identity.account_person_id`). The front thread reads it once here
-and uses it for the dispatched agent's boost check and for the fallback mention
-discriminator under step 2a (only an older connector's event lines need it —
-current ones carry the verdict as `trigger`).
+and uses it to strip the agent's own mention from the dispatched instruction
+(step 2c — never by name) and for the fallback mention discriminator under
+step 2a (only an older connector's event lines need it there — current ones
+carry the verdict as `trigger`).
 
 If it's missing or authed as the wrong user, set it up (interactive login as the
 agent/bot account):
@@ -272,7 +273,8 @@ verdict on **why** the event fired, settled on the re-fetched recording:
 id) or `subscribed` (a `comment_created` on a recording the agent follows, with
 no mention of it). A `comment_created` is exactly one of the two; an assignment
 or a boost is a directive by `kind` alone (`subscribed` is `false` for both;
-`mentioned` just reports whether the content mentions the agent). STDERR
+`mentioned` reports whether an assigned recording's content mentions the
+agent, and is always `false` on a boost — a reaction is not content). STDERR
 carries diagnostics (dropped/uncorroborated events, registration notices) —
 surface them but don't act on them.
 
