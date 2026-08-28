@@ -24,6 +24,15 @@ class BasecampAgentConnector::Basecamp::Event
   # event under `agent_subscribed`; a raw webhook payload never carries it.
   COMMENT_CREATED_KIND = "comment_created"
 
+  # A fourth way to trigger the agent: someone boosts a recording of the
+  # agent's. Basecamp never delivers boosts by webhook — in bc3 a Boost is not
+  # a Recording and creates no Event, so there is no kind to even subscribe
+  # to. Boost-kind events exist only as events the BoostPoller synthesizes
+  # from the agent's own received-boosts feed, named as bc3 would have named
+  # the event had one existed (Boost => boost_created) — and a boost-kind
+  # payload arriving on the webhook route is by definition not from Basecamp.
+  BOOST_KIND = "boost_created"
+
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
   # The webhook delivers a mention as an unexpanded attachment carrying only an
@@ -46,7 +55,7 @@ class BasecampAgentConnector::Basecamp::Event
 
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]
-  EMITTED_DETAIL_FIELDS = %w[added_person_ids removed_person_ids]
+  EMITTED_DETAIL_FIELDS = %w[added_person_ids removed_person_ids boost]
 
   def self.from_payload(payload)
     new(payload)
@@ -68,6 +77,20 @@ class BasecampAgentConnector::Basecamp::Event
 
   def self.chat_line_kind(type)
     "#{type.to_s.gsub("::", "_").gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase}_created"
+  end
+
+  # The BoostPoller has no webhook envelope to parse, so it synthesizes one per
+  # new feed entry: the boosted recording is the recording, the booster is the
+  # creator, and the boost's own id and content ride in `details`.
+  def self.boost_payload(boost)
+    {
+      "id" => boost["id"],
+      "kind" => BOOST_KIND,
+      "created_at" => boost["created_at"],
+      "creator" => boost["booster"] || {},
+      "details" => { "boost" => boost.slice("id", "content") },
+      "recording" => boost["recording"] || {}
+    }
   end
 
   def initialize(payload)
@@ -138,10 +161,18 @@ class BasecampAgentConnector::Basecamp::Event
     kind == COMMENT_CREATED_KIND
   end
 
-  def authored_by?(identity)
-    return false if creator_email.nil? || identity.email.nil?
+  def boost?
+    kind == BOOST_KIND
+  end
 
-    creator_email.casecmp?(identity.email)
+  # Email or account Person id — either key identifies the author. Email alone
+  # is not enough: bc3 redacts other users' addresses from non-admin viewers
+  # (`Person#can_see_email_address_of?` is self-or-admin), so a feed the agent
+  # fetches shows every other booster as `j••••@••••.•••`. The Person id is
+  # visible to every viewer and is the same account-scoped id space the
+  # webhook's `creator.id` uses, so it matches where a redacted email cannot.
+  def authored_by?(identity)
+    authored_by_email?(identity) || authored_by_person_id?(identity)
   end
 
   def mentions?(agent)
@@ -163,6 +194,14 @@ class BasecampAgentConnector::Basecamp::Event
     @payload["agent_subscribed"] == true
   end
 
+  # True only on an authoritative event the Verifier stamped after re-fetching
+  # the agent's own received-boosts feed and finding this boost in it — the
+  # feed files a boost under the person it was aimed at, so membership is the
+  # targeting fact. Reads nothing from a forgeable payload.
+  def boosted?
+    @payload["agent_boosted"] == true
+  end
+
   def to_emitted_hash
     {
       "event_id" => id,
@@ -175,6 +214,14 @@ class BasecampAgentConnector::Basecamp::Event
   end
 
   private
+    def authored_by_email?(identity)
+      !creator_email.nil? && !identity.email.nil? && creator_email.casecmp?(identity.email)
+    end
+
+    def authored_by_person_id?(identity)
+      !identity.person_id.nil? && creator_id == identity.person_id
+    end
+
     def mentioned_person_ids
       mention_attachment_sgids.flat_map { |sgid| person_ids_in(sgid) }
     end

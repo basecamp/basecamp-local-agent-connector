@@ -55,6 +55,16 @@ class BasecampClientTest < Minitest::Test
       "subscriptions show https://example.org/buckets/1/recordings/789"
   end
 
+  def test_received_boosts_fetches_the_profiles_boost_feed
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    boosts = build_cli(runner).received_boosts(profile: "clawdito")
+
+    assert_equal 88001, boosts.first.fetch("id")
+    assert_includes runner.commands.first.join(" "), "api get /my/boosts.json --profile clawdito"
+  end
+
   def test_raises_on_command_failure
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", exit_status: 1, stderr: "boom"

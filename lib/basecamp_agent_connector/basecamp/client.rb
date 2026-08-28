@@ -40,6 +40,14 @@ class BasecampAgentConnector::Basecamp::Client
     json "subscriptions", "show", url_or_id
   end
 
+  # The boosts the profile's user has received (bc3's `/my/boosts.json` — the
+  # report behind the "You've got Boosts!" notification), newest first. The CLI
+  # has no dedicated command for the received-boosts feed, so go through its
+  # raw API passthrough.
+  def received_boosts(profile:)
+    json "api", "get", "/my/boosts.json", *profile_flag(profile)
+  end
+
   def create_webhook(url:, project:, types:)
     json "webhooks", "create", url, "--project", project.to_s, "--types", types
   end

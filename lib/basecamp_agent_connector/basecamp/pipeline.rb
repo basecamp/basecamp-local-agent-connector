@@ -29,15 +29,17 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
     # The pre-filter is deliberately looser than the authoritative target check:
     # a comment carries no subscription flag in its payload, so it can't prove it
-    # targets the agent until the Verifier re-fetches subscribers. Admit every
-    # comment here (author is already gated) so subscription can be corroborated;
-    # `targets_agent?` on the verified event makes the real decision.
+    # targets the agent until the Verifier re-fetches subscribers — and a boost
+    # can't prove it landed on the agent's work until the Verifier re-fetches the
+    # agent's own received-boosts feed. Admit both here (author is already gated)
+    # so the live fact can be corroborated; `targets_agent?` on the verified
+    # event makes the real decision.
     def worth_verifying?(event)
-      targets_agent?(event) || event.subscribable_comment?
+      targets_agent?(event) || event.subscribable_comment? || event.boost?
     end
 
     def targets_agent?(event)
-      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed?
+      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted?
     end
 
     def fresh?(event)
@@ -63,7 +65,10 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # subscribed recording there is no mention to re-check; the verifier stamps
     # the subscription it confirmed against the live subscribers API, and
     # `targets_agent?` reads only that stamp — so a comment the agent doesn't
-    # actually subscribe to is dropped here too.
+    # actually subscribe to is dropped here too. A boost works the same way:
+    # the verifier stamps `agent_boosted` only after finding the boost in a
+    # fresh fetch of the agent's own received-boosts feed, with the emitted
+    # booster and content taken from that fetch.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 

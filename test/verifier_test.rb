@@ -132,6 +132,52 @@ class VerifierTest < Minitest::Test
     refute verified.subscribed?
   end
 
+  def test_corroborates_a_boost_against_the_agents_own_feed_and_stamps_it
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("content" => "👏") ])
+
+    verified = verifier(runner).verify(event(boost_payload))
+
+    refute_nil verified
+    assert verified.boosted?
+    # The authoritative content is the fetched one, not the claimed one.
+    assert_equal "👏", verified.details["boost"]["content"]
+    assert_equal 456, verified.recording["id"]
+    assert_includes runner.commands.first.join(" "), "--profile clawdito"
+    assert_empty runner.commands_matching(/basecamp show/)
+  end
+
+  def test_rejects_a_boost_absent_from_the_agents_feed
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("id" => 77000) ])
+
+    assert_nil verifier(runner).verify(event(boost_payload))
+  end
+
+  def test_rejects_a_boost_whose_authoritative_booster_does_not_match
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => { "id" => 999 }) ])
+
+    assert_nil verifier(runner).verify(event(boost_payload))
+  end
+
+  def test_rejects_a_boost_when_the_feed_fetch_fails
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "boom"
+
+    assert_nil verifier(runner).verify(event(boost_payload))
+  end
+
+  def test_rejects_a_boost_when_the_agent_has_no_profile
+    runner = FakeCommandRunner.new
+    verifier = BasecampAgentConnector::Basecamp::Verifier.new \
+      basecamp_cli: build_cli(runner),
+      agent: BasecampAgentConnector::Basecamp::Identity.new(id: 200, email: "clawdito@example.com", person_id: 200)
+
+    assert_nil verifier.verify(event(boost_payload))
+    assert_empty runner.commands
+  end
+
   private
     def verifier(runner)
       BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)

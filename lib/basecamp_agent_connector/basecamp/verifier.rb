@@ -7,10 +7,14 @@ class BasecampAgentConnector::Basecamp::Verifier
   end
 
   def verify(event)
-    recording = fetch_recording(event)
+    if event.boost?
+      verify_boost(event)
+    else
+      recording = fetch_recording(event)
 
-    if corroborated?(recording, event)
-      authoritative_event(event, recording)
+      if corroborated?(recording, event)
+        authoritative_event(event, recording)
+      end
     end
   end
 
@@ -114,5 +118,43 @@ class BasecampAgentConnector::Basecamp::Verifier
       Array(@basecamp_cli.subscription(locator)["subscribers"]).map { |subscriber| subscriber["id"] }
     rescue BasecampAgentConnector::Basecamp::Client::Error
       []
+    end
+
+    # A boost has no recording endpoint to re-fetch — it is not a Recording.
+    # The one place Basecamp reports it is the boostee's own received-boosts
+    # feed, so corroborate against a fresh fetch of the agent's feed: the
+    # claimed boost id must be present with the claimed booster. Everything
+    # emitted — booster, content, boosted recording — comes from that fresh
+    # fetch, so a payload contributes nothing but the id to look up. Presence
+    # in the agent's own feed is also the targeting fact (the feed files a
+    # boost under the person it was aimed at), stamped as `agent_boosted` for
+    # the pipeline's authoritative target re-check. A boost deleted — or
+    # scrolled off the feed's newest-page window — between poll and dispatch
+    # stops being corroborable and is dropped, exactly like a deleted comment.
+    def verify_boost(event)
+      boost = fetch_boost(event)
+
+      if !boost.nil? && boost.dig("booster", "id") == event.creator_id
+        authoritative_boost_event(event, boost)
+      end
+    end
+
+    def fetch_boost(event)
+      return nil if @agent.profile.nil?
+
+      Array(@basecamp_cli.received_boosts(profile: @agent.profile)).find { |boost| boost["id"] == event.id }
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      nil
+    end
+
+    def authoritative_boost_event(event, boost)
+      BasecampAgentConnector::Basecamp::Event.from_payload \
+        "id" => event.id,
+        "kind" => event.kind,
+        "created_at" => boost["created_at"],
+        "details" => { "boost" => boost.slice("id", "content") },
+        "creator" => boost["booster"],
+        "recording" => boost["recording"] || {},
+        "agent_boosted" => true
     end
 end

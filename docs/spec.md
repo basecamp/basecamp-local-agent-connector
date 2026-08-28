@@ -50,12 +50,17 @@ author, agent replies are never re-ingested — this is the structural fix for t
 reply feedback loop. The connector warns at startup if the two resolve to the
 same user.
 
-The author match is keyed on **email address**, not id. Basecamp has two id
-spaces — a webhook's `creator.id` is an account-scoped **Person** id, while
-`basecamp me` returns a global **identity** id; they differ for the same human.
-The email address is consistent across both, so it is the reliable trust key.
-The mention match looks for a mention attachment
-(`application/vnd.basecamp.mention`) naming the agent.
+The author match is keyed on **email address or account Person id** — either
+identifies the author. Basecamp has two id spaces — a webhook's `creator.id`
+is an account-scoped **Person** id, while `basecamp me` returns a global
+**identity** id; they differ for the same human — so the connector resolves
+both the email and the account Person id for each identity at startup. Email
+alone is not enough: bc3 **redacts other users' email addresses from
+non-admin viewers** (`Person#can_see_email_address_of?` is self-or-admin), so
+a feed fetched as the (non-admin) agent shows every other author as
+`j••••@••••.•••` — there the Person id is the only usable key. The mention
+match looks for a mention attachment (`application/vnd.basecamp.mention`)
+naming the agent.
 
 ---
 
@@ -88,7 +93,8 @@ basecamp-local-agent-connector/
 │       │   ├── webhooks.rb            #   register/delete webhooks across all projects
 │       │   ├── event.rb               #   payload value object (kind, creator, recording)
 │       │   ├── verifier.rb            #   authoritative Basecamp API verification
-│       │   └── pipeline.rb            #   pre-filter → dedup → verify → emit orchestration
+│       │   ├── pipeline.rb            #   pre-filter → dedup → verify → emit orchestration
+│       │   └── boost_poller.rb        #   received-boosts feed poll (boosts have no webhooks)
 │       └── github/                    # GitHub:: — the PR review-loop transport
 │           ├── bridge.rb              #   one route: secret path + HMAC, register repo hooks, handler, teardown
 │           ├── client.rb              #   thin wrapper over the `gh` CLI (JSON in/out)
@@ -132,7 +138,7 @@ behavior in Component 2. Discovery follows the standard Claude Code mechanism
 ### Invocation
 
 ```
-bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types>] [--port <port>]
+bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types>] [--boost-poll <seconds>|--no-boosts] [--port <port>]
 ```
 
 - `@AGENT` — the agent user / local profile name (e.g. `@Clawdito` or
@@ -151,6 +157,10 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
   relay entirely, so the bridge covers chat with an integrated poller (interval
   `--chat-poll`, default 15s) that runs each new line through the same
   authorizer + corroboration pipeline as webhook deliveries.
+- `--boost-poll` / `--no-boosts` — boosts have no webhooks (a Boost is not a
+  Recording and creates no Event in bc3), so the bridge polls the **agent's own
+  received-boosts feed** (`/my/boosts.json`) for them on this interval (default
+  60s); `--no-boosts` disables the boost trigger.
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence
@@ -189,7 +199,10 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    — the **webhook-eligible** types only; chat-typed entries went to the poller,
    and Basecamp would reject them. Skipped when no webhook types remain. Capture
    every created webhook ID for cleanup. Surface per-project registration
-   failures without aborting the rest.
+   failures without aborting the rest. Then start the **boost poller** (unless
+   `--no-boosts`): it fetches nothing until its first interval pass, well after
+   the readiness lines print, so no event can beat the funnel's consumer to the
+   stream.
 7. **Listen** — for each incoming POST, run the pipeline below. Always respond
    **200 OK quickly** (so Basecamp does not retry); filtering/verification/
    dispatch happen out of band.
@@ -225,7 +238,14 @@ For each delivered event:
    verification additionally re-fetches the parent's subscribers
    (`basecamp subscriptions show`) and stamps the agent's membership onto the
    authoritative event, so the subscription that triggers is the live one
-   Basecamp reports, not a claim in the POST.
+   Basecamp reports, not a claim in the POST. For a **boost** there is no
+   recording endpoint to re-fetch (a boost is not a Recording): verification
+   re-fetches the **agent's own received-boosts feed** and requires the claimed
+   boost id to be present with the claimed booster — the emitted booster,
+   content, and boosted recording all come from that fresh fetch, and presence
+   in the feed doubles as the targeting fact (stamped `agent_boosted`). The
+   webhook route refuses boost-kind payloads outright: Basecamp never delivers
+   them, so the poller is the sole boost source.
 4. **Emit** — print one NDJSON line to STDOUT with the verified event (see
    format below). Non-matching / unverified events are dropped (logged to
    STDERR).
@@ -268,6 +288,12 @@ One JSON object per line (NDJSON), built from the **verified** recording:
 
 `app_url` / `url` and `bucket` are the handles the downstream agent uses to pull
 full context and resolve the working repo.
+
+A **boost** event (`"kind": "boost_created"`) is synthesized from the agent's
+received-boosts feed rather than a webhook: `creator` is the **booster**,
+`recording` is the boosted recording (the agent's comment/card/answer — no
+`content` field in this feed representation), and `details.boost` carries the
+boost's own `id` and `content` (up to 16 characters, e.g. `"🔥"` or `"redo"`).
 
 ---
 
@@ -364,6 +390,7 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
 | Watched projects | Explicit `--project` list (name/URL/ID), required | — (at least one) |
 | Project→repo map | Maps Basecamp project names / app tokens to local repo paths under `~/Work/<org>/<repo>` | heuristic + ask-on-miss |
 | Default event types | Subscribed Basecamp types | `Comment, Message, Kanban::Card, Kanban::Step, Todo` + `Chat::Line` (polled — chat has no webhooks) |
+| Boost poll | Received-boosts feed poll interval (`--no-boosts` disables) | 60s |
 | Local port | WEBrick bind port | unused high port |
 
 ---
@@ -430,6 +457,7 @@ Coverage the suite must include:
 | Identity | expired token triggers a single `auth refresh`; still-failing exits with a clear message |
 | Projects | explicit `--project` list honored; empty list enumerates all accessible projects |
 | CLI/arg parsing | flags map to the right config; required `<trigger>` enforced |
+| Boost poller | first fetch baselines without replaying history; a post-start boost emits once; an uncorroborated boost is retried while it stays in the feed; a full all-new page warns of possible overflow |
 
 ## Security considerations
 
@@ -464,9 +492,23 @@ Coverage the suite must include:
   matching the agent's Person id; the author is gated exactly as a mention is
   (operator by default, else the active trust mode's authors), and the agent's
   own comments never re-trigger because its identity never authorizes.
-- Boosts on the agent's own recordings can't arrive this way — a boost never
-  fires a webhook — so boost coverage arrives separately, via a poll of the
-  agent's notifications feed (follow-up PR).
+- Boost trigger: someone boosts the agent's work. A boost never fires a webhook
+  (not a Recording, no Event), so the bridge polls the **agent's own
+  received-boosts feed** (`/my/boosts.json`, the report behind the "You've got
+  Boosts!" notification) every `--boost-poll` seconds (default 60) and
+  synthesizes a `boost_created` event per new entry. The booster is gated
+  exactly as a mention author is (operator by default, else the active trust
+  mode's authors; the agent's own boosts never authorize), corroboration is a
+  fresh fetch of the same feed (claimed id present with the claimed booster;
+  emitted booster/content/recording all from the fetch), and feed membership is
+  the targeting fact. The agent's view of the feed **redacts other users'
+  emails** (bc3 shows real addresses only to yourself or an admin), so the
+  booster matches by account Person id; email-keyed trust modes (`allowlist`,
+  `domain`) therefore cannot broaden the boost trigger beyond the operator
+  unless the agent can see emails — `project` mode, keyed on the corroborated
+  Person id and client flag, broadens it fine. History is baselined by time, never dispatched; the feed
+  is account-wide, so the bound is the agent's identity rather than the
+  watched-project list. `--no-boosts` disables the trigger.
 - Assignment trigger: the documented-but-previously-undocumented
   `todo_assignment_changed` / `kanban_card_assignment_changed` /
   `kanban_step_assignment_changed` events (bc3 PR #12156). Actionable when

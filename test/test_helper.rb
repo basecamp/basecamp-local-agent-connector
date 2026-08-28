@@ -134,6 +134,40 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Event.chat_line_payload(line)
   end
 
+  # An entry from the agent's received-boosts feed (`/my/boosts.json`): the
+  # boost itself plus the booster and the boosted recording (which has no
+  # `content` field in this representation). There is no webhook envelope —
+  # the BoostPoller synthesizes one via Event.boost_payload.
+  # The booster's email arrives redacted: bc3 shows real addresses only to the
+  # person themselves or an admin, and the agent fetching its feed is neither.
+  # The account Person id is what identifies the booster.
+  def received_boost(overrides = {})
+    {
+      "id" => 88001,
+      "content" => "🔥",
+      "created_at" => "2026-06-28T12:00:00Z",
+      "booster" => { "id" => 100, "name" => "Operator", "email_address" => "o•••••••@•••••••.•••", "client" => false },
+      "recording" => boosted_recording
+    }.merge(overrides)
+  end
+
+  def boosted_recording(overrides = {})
+    {
+      "id" => 456,
+      "type" => "Comment",
+      "title" => "Re: a card",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/comments/456",
+      "url" => "https://3.basecamp.com/000/buckets/222/comments/456.json",
+      "creator" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" },
+      "parent" => { "id" => 789, "type" => "Kanban::Card", "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789" },
+      "bucket" => { "id" => 222, "name" => "BC5 Calendar", "type" => "Project" }
+    }.merge(overrides)
+  end
+
+  def boost_payload(boost = received_boost)
+    BasecampAgentConnector::Basecamp::Event.boost_payload(boost)
+  end
+
   # The `basecamp subscriptions show` envelope: the subscribers of a recording,
   # each a person with an id. The connector matches the agent's Person id here.
   def subscribers_envelope(*person_ids)
@@ -141,7 +175,7 @@ module PayloadHelpers
   end
 
   def operator_identity
-    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com")
+    BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: 100)
   end
 
   def authorizer(trust: :operator, emails: [], domains: [], allow_assignments: false, operator: operator_identity, agent: agent_identity)

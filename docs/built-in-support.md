@@ -31,7 +31,7 @@ Every mechanism in the connector maps to a gap in Basecamp:
 | 4 | **Public inbound endpoint** — Tailscale Funnel publishes the laptop | Webhooks push to a URL; nothing lets a consumer connect *out* and receive events |
 | 5 | **Forgeable deliveries** — every event re-fetched and corroborated | Webhook deliveries carry no signature |
 | 6 | **Manual lifecycle, orphan risk** — teardown required; SIGKILL leaves stale webhooks and a live funnel; silent deactivation after 10 failures | Webhooks are durable registrations with no lease, TTL, or self-expiry |
-| 7 | **No conversation** — a plain reply to the agent's question never reaches it | Mentions already auto-subscribe the mentionee, and subscribers are notified of every comment — but no machine consumer can read a person's notification stream |
+| 7 | **No conversation** — a plain reply to the agent's question never reaches it | Mentions already auto-subscribe the mentionee, and subscribers are notified of every comment — but no machine consumer can read a person's notification stream (the received-boosts report is the one API-readable slice, which is what makes the boost trigger possible — by polling) |
 | 8 | **Client-side filtering of a project firehose** — operator and mention checks happen on the laptop | Webhooks filter by recording type only, not addressee or author |
 | 9 | **No structural events** — card-moved-to-column / todo-added means client-side diffing | Those events exist internally but aren't subscribable per-container |
 | 10 | **Two id spaces joined by email** — account Person id vs. global identity id | No stable common key surfaced in both places |

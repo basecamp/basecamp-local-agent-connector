@@ -1,0 +1,279 @@
+require "test_helper"
+
+class BoostPollerTest < Minitest::Test
+  # The sample boost is received at 12:00; a poller whose clock starts before
+  # that treats it as live, one starting after treats it as history.
+  BEFORE_THE_BOOST = Time.utc(2026, 6, 28, 11, 0, 0)
+  AFTER_THE_BOOST = Time.utc(2026, 6, 28, 13, 0, 0)
+
+  def setup
+    @agent = agent_identity
+    @output = StringIO.new
+    @logs = StringIO.new
+  end
+
+  def test_first_fetch_is_a_baseline_and_never_replays_history
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    poller(runner, clock: -> { AFTER_THE_BOOST }).poll
+
+    assert_empty @output.string
+    assert_equal 1, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_emits_a_new_boost_from_the_operator
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    poller(runner).poll
+
+    emitted = JSON.parse(@output.string)
+    assert_equal 1, @output.string.lines.length
+    assert_equal 88001, emitted["event_id"]
+    assert_equal "boost_created", emitted["kind"]
+    assert_equal "🔥", emitted["details"]["boost"]["content"]
+    # The operator authorized by Person id — the agent's view of the feed
+    # redacts other users' emails.
+    assert_equal 100, emitted["creator"]["id"]
+    assert_equal 456, emitted["recording"]["id"]
+    assert_includes runner.commands_matching(%r{api get /my/boosts\.json}).first.join(" "), "--profile clawdito"
+  end
+
+  def test_does_not_reprocess_a_seen_boost
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner)
+
+    3.times { poller.poll }
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_ignores_a_boost_from_an_unauthorized_booster
+    stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => stranger) ])
+
+    poller(runner).poll
+
+    assert_empty @output.string
+    # The pre-filter dropped it before any corroborating re-fetch.
+    assert_equal 1, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_ignores_the_agents_own_boost
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: \
+      envelope([ received_boost("booster" => { "id" => 200, "name" => "Clawdito", "email_address" => "clawdito@example.com" }) ])
+
+    poller(runner).poll
+
+    assert_empty @output.string
+    assert_equal 1, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_corroboration_drops_a_boost_that_left_the_feed
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([])
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+
+    assert_empty @output.string
+    assert_match(/not corroborated/, @logs.string)
+  end
+
+  def test_a_transient_corroboration_failure_is_retried_on_the_next_poll
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ]), once: true
+    runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "502 Bad Gateway", once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner)
+
+    poller.poll
+    assert_empty @output.string
+    assert_match(/not corroborated/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_boost_that_reached_a_verdict_is_not_retried
+    # A boost from an author the trust mode cannot match — here an allowlisted
+    # colleague whose email the feed redacts, leaving only a Person id the
+    # allowlist can't key on — is a settled drop, not a retry: later polls
+    # skip it without ever re-fetching.
+    colleague = { "id" => 300, "name" => "Marie", "email_address" => "m••••@•••••••.•••", "client" => false }
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => colleague) ])
+    poller = poller(runner, trust_authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+
+    3.times { poller.poll }
+
+    assert_empty @output.string
+    # One fetch per poll and no corroborating re-fetches: the drop settled at
+    # the pre-filter and stayed settled.
+    assert_equal 3, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_a_prestart_boost_entering_the_window_late_is_not_dispatched
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([]), once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("created_at" => "2026-06-28T10:59:59Z") ])
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+
+    assert_empty @output.string
+    assert_equal 2, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_a_boost_in_the_pollers_start_second_is_dispatched
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("created_at" => "2026-06-28T11:00:00Z") ])
+
+    poller(runner, clock: -> { BEFORE_THE_BOOST + 0.5 }).poll
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_boost_with_an_unreadable_timestamp_is_baselined
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: \
+      envelope([ received_boost("created_at" => "garbage"), received_boost("id" => 88002, "created_at" => nil) ])
+
+    poller(runner).poll
+
+    assert_empty @output.string
+    assert_equal 1, runner.commands_matching(%r{api get /my/boosts\.json}).length
+  end
+
+  def test_warns_of_a_possible_feed_overflow_when_every_fetched_boost_is_new
+    stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
+    window = Array.new(BasecampAgentConnector::Basecamp::BoostPoller::FEED_WINDOW) do |index|
+      received_boost("id" => 88100 + index, "booster" => stranger)
+    end
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope(window)
+
+    poller(runner).poll
+
+    assert_match(/possible boost feed overflow/, @logs.string)
+  end
+
+  def test_no_overflow_warning_when_the_window_overlaps_seen_boosts
+    stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
+    window = Array.new(BasecampAgentConnector::Basecamp::BoostPoller::FEED_WINDOW) do |index|
+      received_boost("id" => 88100 + index, "booster" => stranger)
+    end
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope(window.first(1)), once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope(window)
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+
+    refute_match(/possible boost feed overflow/, @logs.string)
+  end
+
+  def test_a_failed_fetch_leaves_the_baseline_for_the_next_successful_poll
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 1, stderr: "boom", once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner, clock: -> { AFTER_THE_BOOST })
+
+    poller.poll
+    assert_match(/boost poll failed/, @logs.string)
+
+    # First success baselines by time instead of replaying history as "new".
+    poller.poll
+    assert_empty @output.string
+  end
+
+  def test_malformed_feed_output_is_logged_and_retried
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: '{"data": [{"id": 88', once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    poller = poller(runner)
+
+    poller.poll
+    assert_match(/boost poll failed.*malformed JSON/, @logs.string)
+
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_the_poll_thread_survives_an_exception_escaping_a_poll
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([])
+    ticks = Queue.new
+    polled = Queue.new
+    poller = poller(runner, wait: ->(_seconds) { ticks.pop })
+    attempts = 0
+    poller.define_singleton_method(:poll) do
+      attempts += 1
+      polled << attempts
+      raise "surprise" if attempts == 1
+      super()
+    end
+
+    poller.start
+    ticks << true
+    ticks << true
+    polled.pop until attempts >= 2
+
+    assert_match(/boost poll failed: surprise/, @logs.string)
+    assert_predicate poller.instance_variable_get(:@thread), :alive?
+  ensure
+    poller&.stop
+  end
+
+  def test_start_fetches_nothing_before_the_first_interval_and_stop_ends_the_thread
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(_seconds) { ticks.pop })
+
+    poller.start
+    # Nothing is fetched or emitted before the thread's first pass, so the
+    # caller can report readiness before any event can reach the funnel.
+    assert_empty runner.commands_matching(%r{api get /my/boosts\.json})
+
+    2.times { ticks << true }
+    deadline = Time.now + 2
+    sleep 0.01 while @output.string.empty? && Time.now < deadline
+    assert_equal 1, @output.string.lines.length
+
+    poller.stop
+    refute poller.instance_variable_get(:@thread)
+  end
+
+  private
+    def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer)
+      BasecampAgentConnector::Basecamp::BoostPoller.new \
+        basecamp_cli: build_cli(runner),
+        pipeline: pipeline(runner, trust_authorizer),
+        agent: @agent,
+        interval: 15,
+        logger: @logs,
+        wait: wait,
+        clock: clock
+    end
+
+    def pipeline(runner, trust_authorizer)
+      BasecampAgentConnector::Basecamp::Pipeline.new \
+        authorizer: trust_authorizer,
+        agent: @agent,
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
+        emitter: BasecampAgentConnector::Emitter.new(output: @output),
+        logger: @logs
+    end
+end
