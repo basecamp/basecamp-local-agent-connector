@@ -203,7 +203,8 @@ class PipelineTest < Minitest::Test
     gated.define_singleton_method(:run) { |*command| gate.pop; runner.run(*command) }
     pipeline = pipeline(gated)
     original = Thread.new { pipeline.process(sample_payload) rescue $! }
-    Thread.pass until original.status == "sleep"
+    Thread.pass while original.alive? && original.status != "sleep"
+    flunk "the original verification finished (#{original.value.inspect}) before blocking on the gate" unless original.alive?
 
     redelivery = Thread.new { pipeline.process(sample_payload) }
     4.times { gate << :go }

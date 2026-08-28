@@ -8,14 +8,7 @@ class BasecampAgentConnector::Basecamp::Client
   # The CLI never got an answer out of Basecamp — on any of ATTEMPTS tries.
   # Asking again later may well succeed, so a caller that can defer (a webhook
   # redelivery, the next poll) should, rather than read this as a verdict.
-  class TransientError < Error
-    attr_reader :attempts
-
-    def initialize(message, attempts:)
-      super(message)
-      @attempts = attempts
-    end
-  end
+  class TransientError < Error; end
 
   # The CLI probes the OS keyring on every invocation by writing and deleting
   # one shared item (service "credstore.probe.basecamp"). Concurrent
@@ -125,8 +118,7 @@ class BasecampAgentConnector::Basecamp::Client
         end
       end
 
-      raise TransientError.new("`basecamp #{arguments.join(' ')}` #{outcome(result)} on all #{ATTEMPTS} attempts: #{detail(result)}",
-        attempts: ATTEMPTS)
+      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)} on all #{ATTEMPTS} attempts: #{detail(result)}"
     end
 
     def parse(stdout)

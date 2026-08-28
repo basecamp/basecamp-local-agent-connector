@@ -389,8 +389,8 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   — there is no shared-secret signature to verify, which is *why* authoritative
   API verification (not the payload) is the trust gate.
 - **Delivery semantics**: at-least-once, up to 10 retries on non-2xx before the
-  webhook is deactivated; redirects not followed. → respond 200 fast + dedup by
-  `event.id`.
+  webhook is deactivated; redirects not followed. → answer 200 only once the
+  event is settled (dedup by `event.id`), 503 to request redelivery.
 - **Scope**: per-bucket (= per-project). Type filtering possible but cannot be
   scoped narrower than a project. Limit: 50 active webhooks per project.
 
@@ -537,7 +537,8 @@ Coverage the suite must include:
   card/todo as the instruction.
 - Reply: post results back **as the agent** (`basecamp comment --profile
   <agent>`). On failure, post an error summary that @mentions the operator.
-- Dedup: in-memory, keyed on `event.id`; always 200-OK fast.
+- Dedup: in-memory, keyed on `event.id`; 200 once settled, 503 to ask for
+  redelivery.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
 - Triggers: both `*_created` and `*_content_changed`.

@@ -153,7 +153,6 @@ class BasecampClientTest < Minitest::Test
       build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
     end
 
-    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, error.attempts
     assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length
     assert_equal BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS, delays
     assert_match(/failed on all 3 attempts: .*auth_required/, error.message)
