@@ -213,16 +213,23 @@ class BasecampClientTest < Minitest::Test
 
   # A failing command prints the {"ok": false, ...} error envelope on stdout
   # and exits nonzero (verified against production); the raised error carries
-  # that envelope as its detail, which the pollers log and retry.
-  def test_a_failed_command_surfaces_the_error_envelope_as_detail
+  # that envelope as its detail, which the pollers log. A 429 arrives as
+  # `rate_limit` — the one spelling the SDK (checkResponse, the 429 arm of
+  # the raw client) and the CLI (convertSDKError, for its own limiter and
+  # bulkhead too) give it, exit status 5 — and is no verdict on the
+  # recording, so it is retried and then surfaces transient.
+  def test_a_rate_limit_is_transient_and_surfaces_the_envelope_as_detail
     runner = FakeCommandRunner.new
-    runner.stub "chat messages", exit_status: 2,
-      stdout: JSON.generate("ok" => false, "error" => "Too many requests", "code" => "too_many_requests")
+    stub_transient_failure runner, "chat messages", exit_status: 5,
+      stdout: JSON.generate("ok" => false, "error" => "Rate limit exceeded", "code" => "rate_limit",
+        "hint" => "Too many requests. Please wait before trying again.")
 
-    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) do
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
       build_cli(runner).chat_lines(project: 222, chat: 333, limit: 50)
     end
-    assert_match(/too_many_requests/, error.message)
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
+    assert_match(/failed on all 3 attempts: .*rate_limit/, error.message)
   end
 
   def test_chats_lists_a_projects_chats
