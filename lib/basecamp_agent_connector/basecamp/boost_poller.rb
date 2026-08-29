@@ -31,6 +31,8 @@ class BasecampAgentConnector::Basecamp::BoostPoller
   # overflow warning, not a request parameter.
   FEED_WINDOW = 15
 
+  MAX_BACKOFF = 300
+
   def initialize(basecamp_cli:, pipeline:, agent:, interval: DEFAULT_INTERVAL, logger: $stderr,
     wait: ->(seconds) { sleep seconds }, clock: -> { Time.now })
     @basecamp_cli = basecamp_cli
@@ -47,6 +49,8 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # and drop it for good. See received_since_start?.
     @started_at = @clock.call.floor
     @stopping = false
+    @rate_limited = false
+    @backoff = nil
   end
 
   # Nothing is fetched or emitted until the poll thread's first pass, one
@@ -77,23 +81,38 @@ class BasecampAgentConnector::Basecamp::BoostPoller
   # baseline and a pre-start boost that deletions slide back into the
   # newest-page window later — either way, history is never dispatched.
   def poll
-    return if @stopping
+    unless @stopping
+      @rate_limited = false
 
-    boosts = @basecamp_cli.received_boosts(profile: @agent.profile)
-    ordered = boosts.sort_by { |boost| boost["id"].to_i }
-    warn_of_possible_overflow(ordered)
+      begin
+        boosts = @basecamp_cli.received_boosts(profile: @agent.profile)
+        ordered = boosts.sort_by { |boost| boost["id"].to_i }
+        warn_of_possible_overflow(ordered)
 
-    ordered.each do |boost|
-      if @seen_boost_ids.include?(boost["id"])
-        # already handled
-      elsif received_since_start?(boost)
-        process(boost)
-      else
-        @seen_boost_ids << boost["id"]
+        ordered.each do |boost|
+          # A corroboration the budget refused ends the tick too: each
+          # further actionable boost would re-fetch the feed with more
+          # refused calls. Unprocessed boosts stay unseen, so the backed-off
+          # next tick picks them up.
+          break if @rate_limited
+
+          if @seen_boost_ids.include?(boost["id"])
+            # already handled
+          elsif received_since_start?(boost)
+            process(boost)
+          else
+            @seen_boost_ids << boost["id"]
+          end
+        end
+      rescue BasecampAgentConnector::Basecamp::Client::Error => error
+        note_rate_limit(error)
+        log "boost poll failed: #{error.message}"
+      ensure
+        # In an ensure so a tick a bug crashes still settles: it drew no
+        # refusal, so it resets, and the crash stays visible via poll_loop.
+        @rate_limited ? extend_backoff : reset_backoff
       end
     end
-  rescue BasecampAgentConnector::Basecamp::Client::Error => error
-    log "boost poll failed: #{error.message}"
   end
 
   private
@@ -102,7 +121,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
     # must cost one tick, not all coverage for the rest of the session.
     def poll_loop
       until @stopping
-        @wait.call(@interval)
+        @wait.call(@backoff || @interval)
 
         begin
           poll
@@ -138,6 +157,7 @@ class BasecampAgentConnector::Basecamp::BoostPoller
       @seen_boost_ids.delete(boost["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.boost_payload(boost))
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       @seen_boost_ids.delete(boost["id"])
+      note_rate_limit(error)
       log "could not corroborate boost #{boost["id"]}: #{error.message}; retried on the next poll"
     end
 
@@ -159,6 +179,35 @@ class BasecampAgentConnector::Basecamp::BoostPoller
       else
         ordered.none? { |boost| @seen_boost_ids.include?(boost["id"]) }
       end
+    end
+
+    # The API budget is shared account-wide across every concurrent CLI
+    # process, so a rate-limited poll means the account is over budget, not
+    # that anything here is wrong — see ChatPoller's backoff for the full
+    # rationale. Each rate-limited tick doubles the effective sleep, up to
+    # MAX_BACKOFF; the first tick that draws no rate-limit refusal — a
+    # success, or any other failure — restores the configured cadence.
+    # Logged when the delay changes, not on every backed-off tick.
+    def note_rate_limit(error)
+      @rate_limited ||= error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
+    end
+
+    # Backoff only ever lengthens the delay: doubling stops at the cap, and
+    # a configured interval at or above the cap never backs off at all —
+    # min against a smaller cap would speed a slow poller *up*.
+    def extend_backoff
+      current = @backoff || @interval
+      extended = [ current * 2, [ @interval, MAX_BACKOFF ].max ].min
+
+      if extended > current
+        @backoff = extended
+        log "rate limited; backing off boost polls to #{extended}s"
+      end
+    end
+
+    def reset_backoff
+      log "no longer rate limited; resuming #{@interval}s boost polls" if @backoff
+      @backoff = nil
     end
 
     def log(message)

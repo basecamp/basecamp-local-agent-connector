@@ -26,6 +26,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   DEFAULT_INTERVAL = 15
   FETCH_LIMIT = 50
   REDISCOVER_AFTER = 600
+  MAX_BACKOFF = 300
 
   Room = Data.define(:project, :chat_id, :title)
 
@@ -47,6 +48,8 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # drop it for good. See posted_since_start?.
     @started_at = @clock.call.floor
     @stopping = false
+    @rate_limited = false
+    @backoff = nil
   end
 
   # Discovers synchronously — so the caller can report an accurate room count
@@ -57,6 +60,10 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   # on a room's first fetch.
   def start
     discovered = rooms
+    # A refusal during this synchronous discovery already proves the budget
+    # is exhausted — let the first wait back off instead of retrying at the
+    # configured cadence.
+    extend_backoff if @rate_limited
     @thread = Thread.new { poll_loop }
     discovered
   end
@@ -75,7 +82,23 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   end
 
   def poll
-    rooms.each { |room| poll_room(room) } unless @stopping
+    unless @stopping
+      @rate_limited = false
+
+      begin
+        # One refusal is the account's shared budget saying no to everyone,
+        # so spending the rest of the tick's calls would only be refused
+        # too: stop at the first and let the backed-off next tick retry.
+        rooms.each do |room|
+          break if @rate_limited
+          poll_room(room)
+        end
+      ensure
+        # In an ensure so a tick a bug crashes still settles: it drew no
+        # refusal, so it resets, and the crash stays visible via poll_loop.
+        @rate_limited ? extend_backoff : reset_backoff
+      end
+    end
   end
 
   # Discovery is per project: a project whose listing fails keeps its stale
@@ -88,7 +111,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
 
   private
     def rooms_for(project)
-      refresh(project) if due_for_discovery?(project)
+      refresh(project) if due_for_discovery?(project) && !@rate_limited
       @rooms_by_project[project]
     end
 
@@ -113,6 +136,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
         Room.new(project: project, chat_id: chat["id"], title: chat["title"])
       end
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      note_rate_limit(error)
       log "could not list chats for project #{project}: #{error.message}"
       nil
     end
@@ -122,7 +146,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # not all coverage for the rest of the session.
     def poll_loop
       until @stopping
-        @wait.call(@interval)
+        @wait.call(@backoff || @interval)
 
         begin
           poll
@@ -145,6 +169,11 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       warn_of_possible_overflow(room, ordered, seen, first_fetch)
 
       ordered.each do |line|
+        # A corroboration the budget refused ends the room too: each further
+        # actionable line would spend more refused calls. Unprocessed lines
+        # stay unseen, so the backed-off next tick picks them up.
+        break if @rate_limited
+
         if seen.include?(line["id"])
           # already handled
         elsif posted_since_start?(line)
@@ -156,6 +185,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     rescue => error
       # Broad on purpose: one bad room (or a pipeline bug) must not kill the
       # poll thread or starve the other rooms.
+      note_rate_limit(error)
       log "chat poll failed for #{room.title.inspect} in project #{room.project}: #{error.message}"
     end
 
@@ -191,6 +221,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       seen.delete(line["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.chat_line_payload(line))
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       seen.delete(line["id"])
+      note_rate_limit(error)
       log "could not corroborate chat line #{line["id"]}: #{error.message}; retried on the next poll"
     end
 
@@ -212,6 +243,37 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       else
         ordered.none? { |line| seen.include?(line["id"]) }
       end
+    end
+
+    # The API budget is shared account-wide across every concurrent CLI
+    # process, so a rate-limited poll means the account is over budget, not
+    # that anything here is wrong — and re-asking on the regular cadence
+    # costs a failed call and a noisy log line per tick while crowding the
+    # neighbours. Ease off instead: each rate-limited tick doubles the
+    # effective sleep, up to MAX_BACKOFF, and the first tick that draws no
+    # rate-limit refusal — a success, or any other failure — restores the
+    # configured cadence. Logged when the delay changes, not on every
+    # backed-off tick.
+    def note_rate_limit(error)
+      @rate_limited ||= error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
+    end
+
+    # Backoff only ever lengthens the delay: doubling stops at the cap, and
+    # a configured interval at or above the cap never backs off at all —
+    # min against a smaller cap would speed a slow poller *up*.
+    def extend_backoff
+      current = @backoff || @interval
+      extended = [ current * 2, [ @interval, MAX_BACKOFF ].max ].min
+
+      if extended > current
+        @backoff = extended
+        log "rate limited; backing off chat polls to #{extended}s"
+      end
+    end
+
+    def reset_backoff
+      log "no longer rate limited; resuming #{@interval}s chat polls" if @backoff
+      @backoff = nil
     end
 
     def log(message)

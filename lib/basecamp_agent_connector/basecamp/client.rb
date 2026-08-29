@@ -3,7 +3,35 @@ require "json"
 class BasecampAgentConnector::Basecamp::Client
   # Basecamp answered, and the answer was no: not found, forbidden, invalid.
   # Asking again cannot change it.
-  class Error < StandardError; end
+  class Error < StandardError
+    def initialize(message = nil, envelope: nil)
+      super(message)
+      @envelope = envelope.to_h
+    end
+
+    # The failure envelope's machine-readable code — "not_found",
+    # "rate_limit", "api_error", ... — or nil when the command produced no
+    # envelope at all.
+    def code
+      @envelope["code"]
+    end
+
+    # bc3 refuses an over-budget account with 429, and the budget is shared
+    # across every CLI process on the account. The CLI's taxonomy reserves
+    # the code "rate_limit" for that refusal, but today's binary relays the
+    # API's own "rate limit exceeded" body as a generic api_error — so
+    # recognize either spelling (kept in step with TRANSIENT_API_ERROR,
+    # which classifies both as no-verdict). A caller that can defer should
+    # ease off rather than keep asking on its regular cadence; see the
+    # pollers' backoff.
+    def rate_limited?
+      self.class.rate_limited_envelope?(@envelope)
+    end
+
+    def self.rate_limited_envelope?(envelope)
+      envelope["code"] == "rate_limit" || envelope["error"].to_s.match?(/rate limit/i)
+    end
+  end
 
   # The CLI never got an answer out of Basecamp — on any of ATTEMPTS tries.
   # Asking again later may well succeed, so a caller that can defer (a webhook
@@ -39,8 +67,13 @@ class BasecampAgentConnector::Basecamp::Client
   # The envelope drops the SDK's Retryable flag, so these fixed messages are
   # all there is to key on until the CLI emits that flag — the intended end
   # state, after which this pattern goes.
+  # A rate limit is transient too, in either spelling (the dedicated code
+  # above, or bc3's "rate limit exceeded" body relayed as an api_error):
+  # "not now" is no verdict on the recording, and the account-wide budget
+  # rolls over in seconds — so a webhook defers to redelivery and a poller
+  # to its next (backed-off) tick, rather than recording a drop.
   TRANSIENT_CODES = %w[auth_required network rate_limit]
-  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable/i
+  TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable|rate limit/i
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp",
     wait: ->(seconds) { sleep seconds })
@@ -108,28 +141,44 @@ class BasecampAgentConnector::Basecamp::Client
     # Reads take the default, since re-asking is idempotent; a mutation
     # passes `attempts: 1`, because a lost answer is not a lost request.
     def json(*arguments, attempts: ATTEMPTS)
-      result = parsed = nil
+      result = parsed = refusal = nil
 
       attempts.times do |attempt|
         result = run(*arguments, "-j")
         parsed = parse(result.stdout)
+        # Rate-limit evidence survives the retries: under concurrent load
+        # the budget refusal and the keyring race co-occur, and a final
+        # attempt failing the other way must not erase a refusal an earlier
+        # one drew — the pollers pace themselves off it. A later verdict
+        # still stands unflagged below: an answered verdict proves the
+        # budget answered.
+        refusal ||= parsed if envelope?(parsed) && Error.rate_limited_envelope?(parsed)
 
         if result.success? && !parsed.nil?
           return unwrap(parsed)
         elsif !transient?(parsed)
-          raise Error, "`basecamp #{arguments.join(' ')}` #{outcome(result)}: #{detail(result)}"
+          raise failure(Error, arguments, result, parsed)
         elsif attempt < attempts - 1
           @wait.call(RETRY_DELAYS.fetch(attempt))
         end
       end
 
-      raise TransientError, "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{" on all #{attempts} attempts" if attempts > 1}: #{detail(result)}"
+      raise failure(TransientError, arguments, result, refusal || parsed, tried: attempts)
     end
 
     def parse(stdout)
       JSON.parse(stdout)
     rescue JSON::ParserError
       nil
+    end
+
+    # The refusal keeps its envelope (when the CLI produced one) so callers
+    # can key behavior off the machine-readable code rather than the prose —
+    # see Error#code and Error#rate_limited?.
+    def failure(kind, arguments, result, parsed, tried: 1)
+      attempts_note = " on all #{tried} attempts" if tried > 1
+      kind.new "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{attempts_note}: #{detail(result)}",
+        envelope: (parsed if envelope?(parsed))
     end
 
     # No envelope at all — the process died before it could answer, or its
