@@ -253,6 +253,36 @@ class BasecampClientTest < Minitest::Test
     assert_equal "api_error", error.code
   end
 
+  # Under concurrent load the budget refusal and the keyring race co-occur:
+  # an early attempt's rate-limit envelope must survive a final attempt that
+  # fails the other transient way, or the caller would pace as if no refusal
+  # happened.
+  def test_rate_limit_evidence_survives_mixed_transient_retries
+    runner = FakeCommandRunner.new
+    runner.stub "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), once: true
+    runner.stub "chat messages", exit_status: 3, stdout: error_envelope("auth_required", "Not authenticated"), times: 2
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      build_cli(runner).chat_lines(project: 222, chat: 333, limit: 50)
+    end
+
+    assert_predicate error, :rate_limited?
+  end
+
+  # A verdict on a later attempt proves the budget answered — it stands as
+  # itself, unflagged by the earlier refusal.
+  def test_a_verdict_after_a_rate_limited_attempt_stands_unflagged
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded"), once: true
+    runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found: 456")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { build_cli(runner).show("456") }
+
+    refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    refute_predicate error, :rate_limited?
+    assert_equal "not_found", error.code
+  end
+
   def test_a_non_rate_limit_failure_is_not_mistaken_for_one
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found: 456")

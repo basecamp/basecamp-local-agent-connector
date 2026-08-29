@@ -25,7 +25,11 @@ class BasecampAgentConnector::Basecamp::Client
     # ease off rather than keep asking on its regular cadence; see the
     # pollers' backoff.
     def rate_limited?
-      code == "rate_limit" || @envelope["error"].to_s.match?(/rate limit/i)
+      self.class.rate_limited_envelope?(@envelope)
+    end
+
+    def self.rate_limited_envelope?(envelope)
+      envelope["code"] == "rate_limit" || envelope["error"].to_s.match?(/rate limit/i)
     end
   end
 
@@ -137,11 +141,18 @@ class BasecampAgentConnector::Basecamp::Client
     # Reads take the default, since re-asking is idempotent; a mutation
     # passes `attempts: 1`, because a lost answer is not a lost request.
     def json(*arguments, attempts: ATTEMPTS)
-      result = parsed = nil
+      result = parsed = refusal = nil
 
       attempts.times do |attempt|
         result = run(*arguments, "-j")
         parsed = parse(result.stdout)
+        # Rate-limit evidence survives the retries: under concurrent load
+        # the budget refusal and the keyring race co-occur, and a final
+        # attempt failing the other way must not erase a refusal an earlier
+        # one drew — the pollers pace themselves off it. A later verdict
+        # still stands unflagged below: an answered verdict proves the
+        # budget answered.
+        refusal ||= parsed if envelope?(parsed) && Error.rate_limited_envelope?(parsed)
 
         if result.success? && !parsed.nil?
           return unwrap(parsed)
@@ -152,7 +163,7 @@ class BasecampAgentConnector::Basecamp::Client
         end
       end
 
-      raise failure(TransientError, arguments, result, parsed, tried: attempts)
+      raise failure(TransientError, arguments, result, refusal || parsed, tried: attempts)
     end
 
     def parse(stdout)
