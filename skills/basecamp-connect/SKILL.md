@@ -581,7 +581,14 @@ with these differences:
   The CLI resolves @mentions (`@Name`, or `[@Name](person:<creator.id>)` to
   pin by Person id); a reply containing one posts as rich text with its
   Markdown converted. A mention-free reply posts as plain text — Markdown
-  renders literally, so keep those replies plain prose. Keep replies
+  renders literally, so keep those replies plain prose. **Author the body as
+  plain prose or Markdown only — never raw HTML.** The CLI converts Markdown
+  and resolves mentions; it does not accept hand-written HTML, so tags like
+  `<p>`, `<strong>`, or `<a href>` post literally instead of formatting the
+  line (a `<strong>` headline lands as visible `<strong>…</strong>` text, not
+  bold). Write `**bold**`, `- bullets`, and bare URLs (which autolink on their
+  own); the `[@Name](person:<id>)` mention syntax above is the only
+  non-Markdown markup the CLI understands. Keep replies
   chat-sized; spill long results into a Basecamp doc or comment and link
   them. On failure, @mention the requester so it notifies:
   `[@Name](person:<creator.id>)`.
