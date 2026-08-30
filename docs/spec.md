@@ -15,8 +15,10 @@ The bridge has two halves:
    webhook, filters + verifies incoming events, and prints trusted events to
    STDOUT.
 2. **`/basecamp-connect` skill** — a Claude Code skill that runs the script, watches its
-   STDOUT, and dispatches each trusted event to an in-session background agent
-   with full Basecamp context attached.
+   STDOUT, acknowledges each **directive** event — a mention, an assignment, a
+   Campfire line — with an `On it!` boost as the agent within seconds of
+   receipt, and hands every trusted event to an in-session background agent
+   that gathers the Basecamp context and does the work.
 
 ## Why this shape
 
@@ -60,7 +62,8 @@ non-admin viewers** (`Person#can_see_email_address_of?` is self-or-admin), so
 a feed fetched as the (non-admin) agent shows every other author as
 `j••••@••••.•••` — there the Person id is the only usable key. The mention
 match looks for a mention attachment (`application/vnd.basecamp.mention`)
-naming the agent.
+whose SGID carries the agent's Person id — never the display name, which is
+not unique.
 
 ---
 
@@ -329,35 +332,110 @@ not just runtime glue.
 
 ### Behavior
 
+The skill's session thread — the **front thread** — is an orchestrator, not a
+worker: it watches, acknowledges, and dispatches. Everything that reads
+Basecamp beyond the event line, or touches a repo, belongs to the dispatched
+agent. The split exists because an ack that lives in the dispatched agent's
+list drifts whenever the front thread drifts into working the event itself,
+and a mention received in seconds but unacknowledged for half an hour is
+indistinguishable from a missed one (connector PR #17).
+
 1. **Launch the bridge** — run `bin/connect @Clawdito --project ...`
    and tail its STDOUT. The skill watches continuously until the user stops it
    (which triggers the teardown above).
-2. **Per trusted event** (one NDJSON line):
-   a. **Resolve working repo** — infer the local repo from the project name. Basecamp
+2. **Per trusted event** (one NDJSON line), the front thread routes by the line
+   itself. A line carrying `review_id`/`repo`/`state` and no `recording` is a
+   **GitHub review** (`--repo` runs; see [`pr-review-loop.md`](pr-review-loop.md)):
+   no boost, no bucket lookup — it is dispatched straight to the review loop in
+   the repo named by `repo`, and an `approved` review is dispatched as an
+   approval that may land the PR only when `reviewer` is the operator's GitHub
+   login; any other reviewer's approval is handled as `commented`. The skill
+   carries that gate because `GitHub::ReviewPipeline#actionable?` checks only
+   the action and the state today. A line carrying `recording` is a Basecamp
+   event; one whose `creator` is the agent is dropped before anything else.
+   `creator` is the only checkable key — the emitted `recording` carries no
+   author, and a `boost_created` line's `recording` is the agent's own work by
+   definition, which is not what this test reads. For every other Basecamp
+   event the front thread runs exactly this checklist:
+   a. **Acknowledge** — `basecamp boost create <recording.url> "On it!"
+      --profile <agent>` on receipt, before repo resolution and before
+      dispatch, so the ack lands within seconds regardless of what dispatch
+      does. It is the single ack for every directive trigger — mentions,
+      assignments, and Campfire lines (boost the line). Exactly two kinds of
+      event get **no** boost: a comment on a subscribed thread (a
+      `comment_created` whose content carries no mention attachment with the
+      agent's Person id) and a `boost_created` event. Retry the call only on
+      the two failures that occur before any request is sent —
+      `Not authenticated for profile:` and `token refresh failed:`, the
+      credential-store failure the CLI shows under concurrent invocations —
+      a few times with a short pause; any other failure may already have
+      landed the boost, so it is not retried. Whether the boost verifiably
+      landed is recorded for the handoff.
+   b. **Resolve working repo** — infer the local repo from the project name. Basecamp
       project names carry an app token (e.g. a `BC5 …` project → the Basecamp
       repo under `~/Work/<org>/<repo>`). A configurable mapping table backs the
       heuristic. **If the project can't be mapped to a repo, ask the user
       interactively** which repo to use (do not guess, do not silently fall
-      back).
+      back). An ack must never precede an indefinite silence: before stopping
+      to ask — or when the dispatch in *c* fails — the front thread posts one
+      **holding reply** as the agent that @mentions the requester, saying the
+      event is received but held and why. It is the only reply the front
+      thread ever posts, and only on directive triggers.
+   c. **Dispatch an in-session background agent** that owns the event
+      end-to-end, running in the resolved repo. The handoff carries the event
+      `kind`, the instruction as that kind defines it, the recording and
+      parent URLs, the agent profile, the requester (the event `creator`), and
+      whether the front thread's boost landed. The instruction per trigger:
+      - **mention** (comment, message, Campfire line) — the recording's **raw
+        HTML content with the agent mention removed** (the rest of the markup
+        — links, other mentions — kept intact);
+      - **assignment** (`*_assignment_changed`) — the recording itself; the
+        card/todo's `title`/`content` is the task, and there is no mention to
+        strip;
+      - **`boost_created`** — `details.boost.content` (the signal) plus the
+        boosted `recording`, which has no `content` in this representation;
+      - **subscribed-thread comment** — the comment as context on a followed
+        thread, not a directive.
+      Agents appear in the current Claude session. **No concurrency cap** —
+      every trusted event is dispatched immediately.
+   d. **Return to the monitor.** The front thread never reads the recording,
+      gathers context, investigates, runs repo commands, does the work, or
+      posts the reply.
+3. **The dispatched agent**, in order:
+   a. **Fallback boost** — only when the handoff says the front thread's boost
+      did not land, post the same `On it!` boost, without listing the
+      recording's boosts first. A front-thread call that Basecamp accepted
+      but reported as failed then yields a second `On it!`; that is accepted —
+      a rare duplicate reaction over a missing ack — because a check-first
+      listing can fail the same transient way and would have to decide which
+      earlier event an older `On it!` on the same recording belonged to. The
+      same two exceptions apply: subscribed-thread comments and
+      `boost_created` events are never boosted.
    b. **Gather context** — pull the surrounding Basecamp context with the
       `basecamp` CLI: the recording itself, its `parent` (card/message), the
       thread/comments, and the project. Basecamp is the context store; the event
       is the trigger + pointer.
-   c. **Dispatch an in-session background agent** — hand the instruction plus the
-      gathered context to a background agent running in the resolved repo. The
-      instruction is the recording's **raw HTML content with the agent mention
-      removed** (the rest of the markup — links, other mentions — kept intact).
-      Agents appear in the current Claude session. **No concurrency cap** — every
-      trusted event is dispatched immediately.
-   d. **Reply as the agent** — post results to the originating recording with
-      `basecamp comment <recording> "<body>" --profile <agent>` so the reply is
-      authored by the agent user:
+   c. **Do the work** a directive trigger asks for, posting one short interim
+      reply as the agent when it runs past roughly ten minutes (what it is
+      doing, where to follow — the PR link once it exists, marked in progress,
+      never done).
+   d. **Reply as the agent** on a directive trigger — post results to the
+      originating recording with `basecamp comment <recording> "<body>"
+      --profile <agent>` so the reply is authored by the agent user:
       - **Success** — a results comment where the mention was written.
       - **Failure** (agent errors / can't complete) — a short error summary
-        comment that **@mentions the operator (event creator)** so it surfaces as
-        a notification. You always learn when a dispatch failed.
+        comment that **@mentions the requester (event creator)** so it surfaces
+        as a notification. You always learn when a dispatch failed.
       Replying as the agent (a distinct user from the operator) is what stops the
       reply from re-triggering the connector.
+   e. **Non-directive events are read, not worked.** A subscribed-thread
+      comment and a `boost_created` signal are dispatched the same way but
+      default to silence: no interim reply, no results comment, no card moves.
+      The agent replies only when a response adds value — a question it can
+      answer on the followed thread, or a corrective boost (`redo`, `wrong`,
+      `👎`) that sends it back to the boosted work; an approving boost (`👍`,
+      `🔥`) is applause and gets nothing. Both policies are provisional until
+      real traffic tunes them.
 
 ---
 
@@ -531,19 +609,34 @@ Coverage the suite must include:
   its current `assignees` (the recording has no "who assigned" field, so the
   assigner identity rests on the operator-author check + the secret URL path,
   as with mentions). To receive them, the default subscribed types now include
-  `Todo` and `Kanban::Step` (`Kanban::Card` already covered cards). The dispatched
-  agent acknowledges by **boosting** the recording with `On it!` (the single ack
-  for both triggers — boosts work on todos and cards too), then works the
-  card/todo as the instruction.
+  `Todo` and `Kanban::Step` (`Kanban::Card` already covered cards). The
+  assignment is acknowledged by the same `On it!` boost as a mention (boosts
+  work on todos and cards too); the dispatched agent then works the card/todo
+  as the instruction.
+- Ack: the **front thread** boosts the recording `On it!` as the agent on
+  receipt — before repo resolution and dispatch — retrying only the two
+  pre-request credential failures (`Not authenticated for profile:`, `token
+  refresh failed:`). The dispatched agent boosts only as a fallback, when the
+  handoff says the front thread's boost did not land, and without listing
+  first: a rare duplicate reaction is accepted over a missing ack.
+  Subscribed-thread comments and `boost_created` events get no boost from
+  either (connector PR #17).
 - Reply: post results back **as the agent** (`basecamp comment --profile
-  <agent>`). On failure, post an error summary that @mentions the operator.
-- Dedup: in-memory, keyed on `event.id`; 200 once settled, 503 to ask for
-  redelivery.
+  <agent>`). On failure, post an error summary that @mentions the requester
+  (the event creator — under a broadened trust mode not necessarily the
+  operator).
+- Dedup: in-memory, keyed on `event.id`; 200 once settled (emitted, dropped,
+  or a duplicate), 503 only when Basecamp could not be asked — a transient CLI
+  failure that outlasts `Basecamp::Client`'s own retries — so bc3's delivery
+  job redelivers with backoff instead of settling a real mention as
+  uncorroborated (connector PR #18). A delivery is never answered before its
+  verdict.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
 - Triggers: both `*_created` and `*_content_changed`.
-- Mention match: a mention attachment (`application/vnd.basecamp.mention`) naming
-  the agent — not a plain-text token.
+- Mention match: a mention attachment (`application/vnd.basecamp.mention`)
+  whose SGID carries the agent's Person id — not a plain-text token, and not
+  the display name, which is not unique.
 - Instruction form: raw HTML content with the agent mention removed.
 - Scope: `--project` is required (BC3 has no global webhook); repeatable for
   several projects. One funnel + one server + one secret path; one webhook
