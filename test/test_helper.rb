@@ -206,8 +206,11 @@ module PayloadHelpers
   # The CLI's `-j` failure envelope, printed on stdout with a nonzero exit
   # (verified against production: `basecamp show <missing> -j` exits 2 with
   # {"ok": false, "error": "Resource not found: ...", "code": "not_found"}).
-  def error_envelope(code, error = code.tr("_", " "))
-    JSON.generate("ok" => false, "error" => error, "code" => code)
+  # A CLI that classifies its own failures adds a boolean `retryable` (pending
+  # in basecamp-cli); the default, without one, is the envelope of every
+  # release before that.
+  def error_envelope(code, error = code.tr("_", " "), **fields)
+    JSON.generate({ "ok" => false, "error" => error, "code" => code }.merge(fields.transform_keys(&:to_s)))
   end
 
   # Stubs a command to fail transiently on every attempt the client makes,

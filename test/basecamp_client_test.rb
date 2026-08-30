@@ -121,8 +121,8 @@ class BasecampClientTest < Minitest::Test
 
   # bc3 answering 5xx, or the CLI's own circuit breaker refusing to ask,
   # arrive as api_error too — each with a fixed message from the SDK or the
-  # CLI, since the envelope drops the SDK's Retryable flag. None is a
-  # verdict on the recording.
+  # CLI, which is all an envelope without `retryable` (an older CLI) has to
+  # key on. None is a verdict on the recording.
   def test_a_5xx_or_an_open_circuit_is_transient
     [
       "Gateway error (503)",
@@ -140,6 +140,75 @@ class BasecampClientTest < Minitest::Test
 
       assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, message
       assert_includes error.message, message
+    end
+  end
+
+  # A CLI that classifies its own failures says so in the envelope, and a
+  # positive word is taken on its own: a code and message the fallback list
+  # has never heard of is retried when the CLI says it is retryable.
+  def test_a_retryable_envelope_is_transient_whatever_its_code
+    [
+      error_envelope("timeout", "request timed out after 30s", retryable: true),
+      error_envelope("api_error", "upstream reset the connection", retryable: true)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      stub_transient_failure runner, "basecamp show", stdout: stdout, exit_status: 7
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError, stdout) do
+        build_cli(runner).show("https://example.org/recordings/456")
+      end
+
+      assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, stdout
+      assert_match(/failed on all 3 attempts/, error.message)
+    end
+  end
+
+  # `retryable: false` is where the CLI leaves the failures it never
+  # classified, and those include the ones the retry loop exists for: the
+  # keyring race's auth_required and token-refresh api_error (the CLI's
+  # ErrAuth and ErrAPI constructors set no Retryable) and bc3's 500 (the
+  # SDK classifies only 502–504). A false stamp on a listed code or message
+  # must not narrow the list, or the first CLI release that emits the field
+  # turns the race into a dropped event.
+  def test_a_false_retryable_stamp_does_not_narrow_the_fallback_list
+    [
+      error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found", retryable: false),
+      error_envelope("api_error", "token refresh failed: Post \"https://launchpad.localhost:3011/oauth/token\": connection refused", retryable: false),
+      error_envelope("api_error", "Server error (500)", retryable: false)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      stub_transient_failure runner, "basecamp show", stdout: stdout, exit_status: 3
+      delays = []
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError, stdout) do
+        build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+      end
+
+      assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/basecamp show/).length, stdout
+      assert_equal BasecampAgentConnector::Basecamp::Client::RETRY_DELAYS, delays, stdout
+      assert_match(/failed on all 3 attempts/, error.message)
+    end
+  end
+
+  # A false stamp on a code and message the list does not know stays a
+  # verdict — the same reading an older CLI's envelope gets, so this holds
+  # with or without the field.
+  def test_a_false_retryable_stamp_on_an_unlisted_code_is_a_verdict
+    [
+      error_envelope("not_found", "Resource not found: https://example.org/recordings/456.json", retryable: false),
+      error_envelope("api_error", "API error: 410 Gone", retryable: false)
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", exit_status: 2, stdout: stdout
+      delays = []
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error, stdout) do
+        build_cli(runner, wait: ->(seconds) { delays << seconds }).show("https://example.org/recordings/456")
+      end
+
+      refute_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error, stdout
+      assert_equal 1, runner.commands_matching(/basecamp show/).length, stdout
+      assert_empty delays, stdout
     end
   end
 
