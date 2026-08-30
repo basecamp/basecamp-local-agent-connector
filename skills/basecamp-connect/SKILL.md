@@ -348,18 +348,19 @@ requester sees the trigger *registered* before any slow work — a visible
   chat line; see *When the mention arrives in Campfire*). It matters most for
   **card/board work**, where a visible ack is how the requester knows the mention
   landed at all.
-- **A brief substantive reply** fits when a word or two already carries content
-  worth sending now — a quick confirmation, a clarifying question — with the
-  "received" riding along.
-- **Simply proceeding to the result** fits a directive whose reply will land
-  almost immediately: the result itself is the ack, and a boost bolted in front
-  of it is noise. Not for card/board work, and never license to work inline on
-  the front thread (the orchestrator rule above stands) — it just means not every
-  fast directive needs a separate ack.
+- **A brief reply can be the ack** when the worker will answer almost immediately
+  — a quick Campfire back-and-forth, or a directive it resolves in moments. That
+  substantive reply carries the "received," so a boost bolted in front of it is
+  noise: the front thread posts **nothing** and flags "no ack owed" in the
+  handoff (step c) so the worker doesn't add a fallback boost. **Not** for
+  card/board work — there the visible boost is how the requester sees the mention
+  land — and **never** license to work inline (the orchestrator rule above
+  stands): skipping means the front thread writes nothing and dispatches at once,
+  exactly as always.
 
-Whichever you pick, keep it fast and light — it's the front thread's only job
-before dispatch, so it lands within seconds regardless of what dispatch does.
-The boost form:
+Whichever you pick, keep it fast and light — the front thread's job is to ack (or
+knowingly skip) and dispatch, nothing more; it lands within seconds regardless of
+what dispatch does. The boost form:
 
 ```bash
 basecamp boost create <recording.url> "<ack>" --profile <agent>
@@ -465,12 +466,13 @@ everything it needs to finish **without the front thread**:
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
   not necessarily the operator;
-- whether the **front thread's boost landed** (step a), so the agent knows
-  whether the ack is still owed.
+- whether an **ack is still owed** (step a): the front thread's boost landed (not
+  owed), failed to land (owed — the worker fallback-boosts), or was deliberately
+  skipped because the reply is the ack (not owed).
 
 Instruct that background agent to, in order:
 
-1. **Boost only if the handoff says the front thread's boost did not land.**
+1. **Boost only if the handoff says an ack is still owed.**
    The ack boost is normally already on the recording; the dispatched agent's
    boost is a fallback for a front-thread call that failed, posted without
    first listing the recording's boosts:
@@ -537,7 +539,7 @@ recording itself is the task**. The front thread acks the recording on receipt
 exactly as for a mention — a boost with apt content is the usual ack, and boosts
 work on todos and cards too. The dispatched background agent should, in order:
 
-1. **Boost only if the handoff says the front thread's boost did not land** —
+1. **Boost only if the handoff says an ack is still owed** —
    the same fallback rule as for a mention: post without listing first; a rare
    duplicate is accepted over a missing ack.
 2. **Move the card out of Triage** — same rule as for mentions: if the assigned
