@@ -4,8 +4,9 @@ description: |
   Manage local Claude Code agents from Basecamp. Runs the connector bridge
   (bin/connect), watches its STDOUT for trusted events — authored by an authorized
   user (the operator alone, by default) and @mentioning a real Basecamp agent
-  user — acknowledges each with an `On it!` boost as the agent within seconds,
-  then hands it off to a background agent that gathers context, does the work,
+  user — acknowledges each as the agent within seconds (a quick boost with apt
+  content, or a reply that fits), then hands it off to a background agent that
+  gathers context, does the work,
   and replies as that agent user, so the watcher thread stays free to keep
   taking new mentions.
   Invoked without arguments it recalls the last-used agent and projects from
@@ -25,8 +26,9 @@ triggers:
 
 This skill turns a Basecamp comment/message/card into a local Claude Code task.
 You **@mention a real Basecamp agent user** (e.g. `@Clawdito do X`); the watcher
-on this machine boosts it `On it!` **as that agent user** within seconds, and a
-background agent picks it up, gathers the surrounding context from Basecamp,
+on this machine acknowledges it **as that agent user** within seconds — a quick
+boost or a fitting reply — and a background agent picks it up, gathers the
+surrounding context from Basecamp,
 acts on it, and replies **as that agent user**.
 
 The agent is identified by a **local `basecamp` CLI profile** of the same name
@@ -314,7 +316,8 @@ watching for new mentions, acknowledge each one, and dispatch it.
 For every other Basecamp event the front thread runs exactly this checklist, in
 this order, and nothing else:
 
-1. **Boost** — `basecamp boost create <recording.url> "On it!" --profile <agent>`
+1. **Acknowledge** — a fast, light signal of receipt, usually a boost with apt
+   content: `basecamp boost create <recording.url> "<ack>" --profile <agent>`
    (skipped only for subscribed-thread comments and `boost_created` events; both
    are told apart from the event line alone — see the discriminator under *a.*).
 2. **Resolve the repo** from `recording.bucket.name`.
@@ -332,12 +335,35 @@ from a missed mention. The boost in step 1 is the only Basecamp write the front
 thread makes per event — except the one *holding reply* in step b, posted only
 when the event cannot be handed off — and it lands before anything else happens.
 
-**a. Acknowledge with a boost** (front thread, immediately on receipt — before
-repo resolution, before dispatch). One CLI call, so the ack lands within seconds
-regardless of what dispatch does:
+**a. Acknowledge — fit the ack to the moment** (front thread, immediately on
+receipt — before repo resolution, before dispatch). What matters is that the
+requester sees the trigger *registered* before any slow work — a visible
+"received," not a rote token. How you signal it is a judgment call:
+
+- **A boost** is the lightweight default — one CLI call, lands within seconds,
+  shows on the recording as the agent. Give it content that *fits the moment* (a
+  short apt phrase, a fitting emoji), never a fixed string. This is the right ack
+  for most **directive** triggers — mentions and assignments alike (boosts work
+  on comments, messages, cards, and todos) — and for Campfire mentions (boost the
+  chat line; see *When the mention arrives in Campfire*). It matters most for
+  **card/board work**, where a visible ack is how the requester knows the mention
+  landed at all.
+- **A brief reply can be the ack** when the worker will answer almost immediately
+  — a quick Campfire back-and-forth, or a directive it resolves in moments. That
+  substantive reply carries the "received," so a boost bolted in front of it is
+  noise: the front thread posts **nothing** and flags "no ack owed" in the
+  handoff (step c) so the worker doesn't add a fallback boost. **Not** for
+  card/board work — there the visible boost is how the requester sees the mention
+  land — and **never** license to work inline (the orchestrator rule above
+  stands): skipping means the front thread writes nothing and dispatches at once,
+  exactly as always.
+
+Whichever you pick, keep it fast and light — the front thread's job is to ack (or
+knowingly skip) and dispatch, nothing more; it lands within seconds regardless of
+what dispatch does. The boost form:
 
 ```bash
-basecamp boost create <recording.url> "On it!" --profile <agent>
+basecamp boost create <recording.url> "<ack>" --profile <agent>
 ```
 
 Use the **URL form**: every emitted event carries `recording.url`, and the URL
@@ -346,10 +372,7 @@ already names the project. The bare-id form needs `--project
 resolution, which a background shell cannot answer.
 
 A boost is a lightweight reaction (≤16 chars) posted **as the agent**, so the
-trigger visibly registered. It is the ack for both **directive** triggers —
-mentions and assignments alike (boosts work on comments, messages, cards, and
-todos) — and for Campfire mentions (boost the chat line; see *When the mention
-arrives in Campfire*). Exactly two kinds of Basecamp event get **no** boost
+trigger visibly registered. Exactly two kinds of Basecamp event get **no** boost
 (see their sections below):
 
 - **subscribed-thread comments** — an event line whose `trigger.subscribed` is
@@ -387,7 +410,7 @@ shell call does both:
 ```bash
 landed=false
 for i in 1 2 3; do
-  if out=$(basecamp boost create <recording.url> "On it!" --profile <agent> 2>&1); then
+  if out=$(basecamp boost create <recording.url> "<ack>" --profile <agent> 2>&1); then
     landed=true; break
   fi
   echo "$out" | grep -qE 'Not authenticated for|token refresh failed' || break   # anything else: no retry
@@ -443,25 +466,26 @@ everything it needs to finish **without the front thread**:
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
   not necessarily the operator;
-- whether the **front thread's boost landed** (step a), so the agent knows
-  whether the ack is still owed.
+- whether an **ack is still owed** (step a): the front thread's boost landed (not
+  owed), failed to land (owed — the worker fallback-boosts), or was deliberately
+  skipped because the reply is the ack (not owed).
 
 Instruct that background agent to, in order:
 
-1. **Boost only if the handoff says the front thread's boost did not land.**
-   The `On it!` is normally already on the recording; the dispatched agent's
+1. **Boost only if the handoff says an ack is still owed.**
+   The ack boost is normally already on the recording; the dispatched agent's
    boost is a fallback for a front-thread call that failed, posted without
    first listing the recording's boosts:
    ```bash
-   basecamp boost create <recording.url> "On it!" --profile <agent>
+   basecamp boost create <recording.url> "<ack>" --profile <agent>
    ```
    A front-thread call that Basecamp accepted but reported as failed (a
    timeout reading the response, an envelope parse error) then produces a
-   second `On it!`. That is accepted: a boost is a reaction, a duplicate is
+   second ack boost. That is accepted: a boost is a reaction, a duplicate is
    harmless, and a missing ack is the failure this whole step exists to
    prevent. Checking first would be one more CLI call that can fail the same
    transient way, and it would have to decide which earlier event an older
-   `On it!` on the same recording belonged to — the price of "never a second
+   boost on the same recording belonged to — the price of "never a second
    boost" is a rulebook, not a guarantee. Same exceptions as the front thread:
    subscribed-thread comments and `boost_created` events are never boosted.
 2. **Gather context from Basecamp** — it is the context store; the event is just
@@ -511,12 +535,11 @@ There is **no concurrency cap**; dispatch every event as it arrives.
 
 If the event `kind` ends in `_assignment_changed`, the operator assigned the
 agent to the recording (a card/todo/step) — there's no mention to strip; **the
-recording itself is the task**. The front thread boosts the recording `On it!`
-on receipt exactly as for a mention — boosts work on todos and cards too, so a
-boost is the single ack for both triggers. The dispatched background agent
-should, in order:
+recording itself is the task**. The front thread acks the recording on receipt
+exactly as for a mention — a boost with apt content is the usual ack, and boosts
+work on todos and cards too. The dispatched background agent should, in order:
 
-1. **Boost only if the handoff says the front thread's boost did not land** —
+1. **Boost only if the handoff says an ack is still owed** —
    the same fallback rule as for a mention: post without listing first; a rare
    duplicate is accepted over a missing ack.
 2. **Move the card out of Triage** — same rule as for mentions: if the assigned
@@ -546,9 +569,10 @@ with these differences:
   basecamp chat line <recording.url> -j                                  # the line itself
   basecamp chat messages --project <bucket.id> --room <recording.parent.id> -n 25 -j   # the conversation
   ```
-- **Ack** — the front thread boosts the **line** on receipt (`basecamp boost
-  create <recording.url> "On it!" --profile <agent>`), same as any recording;
-  the dispatched agent boosts only as the fallback.
+- **Ack** — the front thread acks the **line** on receipt, usually a boost with
+  apt content (`basecamp boost create <recording.url> "<ack>" --profile
+  <agent>`), same as any recording; the dispatched agent boosts only as the
+  fallback.
 - **No card moves** — there is no board; skip the Triage step.
 - **Reply in the chat as the agent** — post to the same Campfire, not a comment:
   ```bash
@@ -583,7 +607,7 @@ thread*, not a directive:
 3. **No boost, no card moves, no interim reply** — this **overrides** the front
    thread's boost-first step above and the dispatched agent's ~10-minute
    interim-reply rule: a followed-thread comment is not an ack-worthy
-   assignment, so the front thread skips the `On it!` boost and the dispatched
+   assignment, so the front thread skips the ack boost and the dispatched
    agent doesn't add one either; skip the Triage move and the interim reply
    too unless the agent actually takes the thread on.
 
