@@ -515,7 +515,79 @@ class PipelineTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  # The emitted line carries the verifier's own verdict on why the event
+  # targets the agent, so the watcher never decodes mention markup itself.
+  def test_a_mention_emits_a_mentioned_trigger
+    pipeline(corroborating_runner).process(sample_payload)
+
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+  end
+
+  def test_a_comment_on_a_subscribed_recording_emits_a_subscribed_trigger
+    recording = sample_recording("content" => "<p>no mention, just an update</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("recording" => recording))
+
+    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
+  end
+
+  def test_an_assignment_emits_neither_trigger_verdict
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+
+    pipeline(runner).process(assignment_payload)
+
+    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
+  end
+
+  def test_mentioned_is_a_fact_about_the_content_whatever_the_kind
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording("content" => "<p>#{mention_html(person_id: 200)} owns this</p>"))
+
+    pipeline(runner).process(assignment_payload)
+
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+  end
+
+  def test_a_chat_line_mention_emits_a_mentioned_trigger
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line)
+
+    pipeline(runner).process(chat_line_payload)
+
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+  end
+
+  def test_a_boost_emits_neither_trigger_verdict
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    pipeline(runner).process(boost_payload)
+
+    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
+  end
+
+  def test_the_emitted_trigger_is_the_verifiers_verdict_not_a_claim_in_the_payload
+    # The POST claims agent_mentioned=true on a comment whose authoritative
+    # content mentions nobody; it emits only by subscription, and says so.
+    recording = sample_recording("content" => "<p>no mention</p>")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(recording)
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    pipeline(runner).process(sample_payload("agent_mentioned" => true, "recording" => recording))
+
+    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
+  end
+
   private
+    def emitted_trigger
+      JSON.parse(@output.string)["trigger"]
+    end
+
     def colleague
       { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com", "client" => false }
     end

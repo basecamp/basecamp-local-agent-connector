@@ -376,8 +376,21 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@…"},
  "recording":{"id":456,"type":"Comment","app_url":"…","url":"…",
    "content":"<p>… <bc-attachment content-type=\"application/vnd.basecamp.mention\">…Clawdito…</bc-attachment> fix X</p>",
-   "parent":{…},"bucket":{"id":222,"name":"BC5 Calendar"}}}
+   "parent":{…},"bucket":{"id":222,"name":"BC5 Calendar"}},
+ "trigger":{"mentioned":true,"subscribed":false}}
 ```
+
+`trigger` is the connector's own verdict on why the event targets the agent,
+settled on the re-fetched recording: `mentioned` when its content carries a
+mention attachment for the agent's Person id, `subscribed` when a
+`comment_created` fired because the agent subscribes to the commented-on
+recording. A `comment_created` is exactly one of the two. An assignment or a
+boost is a directive by `kind` alone: `subscribed` is `false` for both, and
+`mentioned` is a fact about the content (an assigned card whose description
+mentions the agent reads `true`; a boost is a reaction, not content, so the
+boost path settles no mention verdict and it always reads `false`). A watcher
+reads `trigger` to tell a directive from
+followed-thread activity instead of decoding the mention markup itself.
 
 **Teardown.** On `SIGINT`/`SIGTERM` it deletes **every** registered webhook
 (best-effort, reporting any it couldn’t) and unmounts its own funnel paths

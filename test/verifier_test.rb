@@ -124,6 +124,29 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands_matching(/subscriptions show/)
   end
 
+  def test_stamps_mentioned_from_the_authoritative_recording_not_the_claim
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    # the POST's content mentions nobody; the re-fetched recording does
+    verified = verifier(runner).verify(event(sample_payload("recording" => sample_recording("content" => "<p>no mention</p>"))))
+
+    refute_nil verified
+    assert verified.mentioned?
+  end
+
+  def test_does_not_stamp_mentioned_when_the_authoritative_recording_mentions_someone_else
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>#{mention_html(person_id: 999)}</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    verified = verifier(runner).verify(event(sample_payload))
+
+    refute_nil verified
+    refute verified.mentioned?
+    assert verified.subscribed?
+  end
+
   def test_does_not_stamp_subscribed_when_the_recording_is_not_a_comment
     # A forged comment_created pointing at a subscribed Message/Card: creator
     # corroborates, but the authoritative recording is not a Comment, so it is

@@ -37,6 +37,20 @@ class EventTest < Minitest::Test
     refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => "true")).subscribed?
   end
 
+  def test_mentioned_reflects_only_the_verifier_stamp
+    # the sample content mentions the agent, but the stamp is the verdict
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).mentioned?
+    assert BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).mentioned?
+    # strictly boolean true — a truthy stand-in must not read as mentioned
+    refute BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => "true")).mentioned?
+  end
+
+  def test_to_emitted_hash_carries_the_trigger_verdicts
+    assert_equal({ "mentioned" => false, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => true, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => false, "subscribed" => true }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).to_emitted_hash["trigger"])
+  end
+
   def test_boost_kind
     assert from_kind("boost_created").boost?
     refute from_kind("comment_created").boost?

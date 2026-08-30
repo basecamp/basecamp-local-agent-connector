@@ -186,8 +186,10 @@ mentions, assignments, subscriber lists, and boosts all carry (e.g. `51177542`).
 `basecamp me` reports the *global* identity id, a different number that matches
 nothing in an event; the connector resolves the Person id the same way
 (`Basecamp::Identity.account_person_id`). The front thread reads it once here
-and uses it for the mention discriminator under step 2a and for the dispatched
-agent's boost check.
+and uses it to strip the agent's own mention from the dispatched instruction
+(step 2c — never by name) and for the fallback mention discriminator under
+step 2a (only an older connector's event lines need it there — current ones
+carry the verdict as `trigger`).
 
 If it's missing or authed as the wrong user, set it up (interactive login as the
 agent/bot account):
@@ -256,7 +258,8 @@ Each STDOUT line is one trusted event as NDJSON:
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@..."},
  "recording":{"id":456,"type":"Comment","app_url":"...","url":"...",
    "content":"<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…@Clawdito…</bc-attachment> do X</p>",
-   "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}}}
+   "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}},
+ "trigger":{"mentioned":true,"subscribed":false}}
 ```
 
 `creator` is the **triggering author** — the person whose mention/assignment
@@ -264,9 +267,16 @@ drove this event. In the default operator-only mode that is always you; under a
 broadened trust mode (`--allow`, `--allow-domain`, `--allow-project`) it may be
 an authorized coworker instead. Treat `creator` as *the requester* — that is who
 to @mention on failure — not as "the operator." The mention of the agent lives
-in `recording.content` as a mention attachment. STDERR carries diagnostics
-(dropped/uncorroborated events, registration notices) — surface them but don't
-act on them.
+in `recording.content` as a mention attachment. `trigger` is the connector's
+verdict on **why** the event fired, settled on the re-fetched recording:
+`mentioned` (its content carries a mention attachment for the agent's Person
+id) or `subscribed` (a `comment_created` on a recording the agent follows, with
+no mention of it). A `comment_created` is exactly one of the two; an assignment
+or a boost is a directive by `kind` alone (`subscribed` is `false` for both;
+`mentioned` reports whether an assigned recording's content mentions the
+agent, and is always `false` on a boost — a reaction is not content). STDERR
+carries diagnostics (dropped/uncorroborated events, registration notices) —
+surface them but don't act on them.
 
 Keep watching until the user stops the skill (see Cleanup).
 
@@ -342,10 +352,16 @@ todos) — and for Campfire mentions (boost the chat line; see *When the mention
 arrives in Campfire*). Exactly two kinds of Basecamp event get **no** boost
 (see their sections below):
 
-- **subscribed-thread comments** — a `comment_created` whose `recording.content`
-  has no `<bc-attachment content-type="application/vnd.basecamp.mention">`
-  carrying **the agent's Person id**. The id is the **only** discriminator:
-  the attachment's embedded `content` markup names it as
+- **subscribed-thread comments** — an event line whose `trigger.subscribed` is
+  `true`. Read `trigger` **first**: it is the connector's own verdict, settled
+  on the re-fetched recording against the agent's Person id, so a line that
+  carries it needs no markup inspection at all (`trigger.mentioned` true means
+  a directive — boost it). Fall back to the markup match **only when the line
+  has no `trigger` key** — an older connector — and then it is a
+  `comment_created` whose `recording.content` has no `<bc-attachment
+  content-type="application/vnd.basecamp.mention">` carrying **the agent's
+  Person id**. There the id is the **only** discriminator: the attachment's
+  embedded `content` markup names it as
   `<bc-mention … gid="gid://bc3/Person/<id>">`, and the attachment's own
   `sgid` attribute encodes the same `gid://bc3/Person/<id>` (base64 in the
   segment before `--`, which is what the connector's own matcher decodes —
@@ -548,12 +564,14 @@ with these differences:
 
 ### When a comment lands on a thread the agent follows
 
-If the event `kind` is `comment_created` and `recording.content` carries **no
-mention attachment naming the agent** (the discriminator under step 2a — a
-mention of someone else, or a plain-text `@name`, does not count), the connector
-fired because the agent **subscribes** to the commented-on recording (a
-card/thread it participates in), not because it was addressed. Treat this as
-*activity on a followed thread*, not a directive:
+If the event line's `trigger.subscribed` is `true` — or, on an older
+connector's line with no `trigger` key, the `kind` is `comment_created` and
+`recording.content` carries **no mention attachment naming the agent** (the
+fallback discriminator under step 2a — a mention of someone else, or a
+plain-text `@name`, does not count) — the connector fired because the agent
+**subscribes** to the commented-on recording (a card/thread it participates
+in), not because it was addressed. Treat this as *activity on a followed
+thread*, not a directive:
 
 1. **Read for context** — the comment (`recording.content`) and, as needed, its
    parent (`recording.parent`) and neighbours. This is the same non-blocking

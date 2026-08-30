@@ -251,7 +251,10 @@ For each delivered event:
    and content. A forged POST (the funnel URL is public, Basecamp sends no
    signature) cannot survive this — if Basecamp doesn't corroborate the event, it
    is discarded. The payload's content field is never trusted directly; the
-   fetched content is authoritative. For a **comment on a subscribed recording**,
+   fetched content is authoritative. The mention match against the agent's
+   Person id is also settled on that fetched content and stamped onto the
+   authoritative event as `agent_mentioned`, which is what the emitted
+   `trigger.mentioned` reports. For a **comment on a subscribed recording**,
    verification additionally re-fetches the parent's subscribers
    (`basecamp subscriptions show`) and stamps the agent's membership onto the
    authoritative event, so the subscription that triggers is the live one
@@ -299,12 +302,36 @@ One JSON object per line (NDJSON), built from the **verified** recording:
     "content": "<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…Clawdito…</bc-attachment> please ...</p>",
     "parent": { "id": 789, "type": "Kanban::Card", "app_url": "..." },
     "bucket": { "id": 222, "name": "BC5 Calendar", "type": "Project" }
-  }
+  },
+  "trigger": { "mentioned": true, "subscribed": false }
 }
 ```
 
 `app_url` / `url` and `bucket` are the handles the downstream agent uses to pull
 full context and resolve the working repo.
+
+The top-level keys mirror the webhook envelope (`id` → `event_id`, `kind`,
+`created_at`, `creator`, `details`, `recording`); `trigger` is the one key the
+connector owns, carrying the verifier's verdicts on **why** the event targets
+the agent, both settled on the re-fetched recording rather than on the POST:
+
+- `mentioned` — the authoritative content carries a mention attachment for the
+  agent's Person id (the `agent_mentioned` stamp from verification step 3 —
+  the same match the pipeline's mention gate applies).
+- `subscribed` — a `comment_created` with no mention of the agent, on a
+  recording the live subscribers API confirms the agent subscribes to (the
+  `agent_subscribed` stamp from verification step 3).
+
+Every emitted line carries both booleans. A `comment_created` is exactly one
+of the two. An assignment or a boost is a directive by `kind` alone:
+`subscribed` is `false` for both, and `mentioned` stays a fact about the
+authoritative content — an assigned card whose description mentions the agent
+reads `true`. A boost is a reaction to the agent's own work, not content that
+could mention it: the boost path settles no mention verdict at all, so a boost
+reads `false` by construction, whatever its feed representation carries. The
+skill reads `trigger` to decide boost vs. no-boost and directive
+vs. followed-thread activity, so it never has to decode the mention SGID
+against the agent's Person id itself.
 
 A **boost** event (`"kind": "boost_created"`) is synthesized from the agent's
 received-boosts feed rather than a webhook: `creator` is the **booster**,

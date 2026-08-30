@@ -71,7 +71,14 @@ class BasecampAgentConnector::Basecamp::Verifier
       Array(recording["assignees"]).map { |assignee| assignee["id"] }
     end
 
+    # Both trigger verdicts are settled on the re-fetched recording — the same
+    # authoritative content the pipeline's `targets_agent?` re-check reads — so
+    # the stamps the watcher reads off the emitted line cannot disagree with
+    # the drop decision. The pipeline still runs `Event#mentions?` itself; the
+    # `agent_mentioned` stamp exists for the emitted line, not for the gate.
     def authoritative_event(event, recording)
+      mentioned = mentions_agent?(recording)
+
       BasecampAgentConnector::Basecamp::Event.from_payload \
         "id" => event.id,
         "kind" => event.kind,
@@ -79,7 +86,8 @@ class BasecampAgentConnector::Basecamp::Verifier
         "details" => event.details,
         "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
         "recording" => recording,
-        "agent_subscribed" => agent_subscribed?(event, recording)
+        "agent_mentioned" => mentioned,
+        "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned)
     end
 
     # A comment can trigger by subscription instead of by a mention: confirm,
@@ -96,10 +104,10 @@ class BasecampAgentConnector::Basecamp::Verifier
     # claimed `comment_created` kind: otherwise a forged POST naming that kind
     # but pointing at an existing subscribed Message/Card would corroborate on
     # creator and pass the subscriber check, emitting though no comment exists.
-    def agent_subscribed?(event, recording)
+    def agent_subscribed?(event, recording, mentioned:)
       event.subscribable_comment? && \
         recording["type"] == COMMENT_RECORDING_TYPE && \
-        !mentions_agent?(recording) && \
+        !mentioned && \
         agent_subscribes_to_parent?(recording)
     end
 
