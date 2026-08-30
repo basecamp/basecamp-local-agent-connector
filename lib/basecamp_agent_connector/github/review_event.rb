@@ -22,8 +22,12 @@ class BasecampAgentConnector::GitHub::ReviewEvent
   end
   alias_method :id, :review_id
 
+  # The webhook delivers `state` lowercase (`approved`); the REST API returns
+  # it uppercase (`APPROVED`). Both collapse to the documented lowercase form,
+  # so the gates and the emitted line read the same whichever source built
+  # the event.
   def review_state
-    review["state"]
+    review["state"]&.downcase
   end
 
   def review_body
@@ -64,6 +68,15 @@ class BasecampAgentConnector::GitHub::ReviewEvent
 
   def actionable_state?
     ACTIONABLE_STATES.include?(review_state)
+  end
+
+  def approved?
+    review_state == "approved"
+  end
+
+  # GitHub logins are case-insensitive.
+  def reviewed_by?(login)
+    !reviewer.nil? && !login.nil? && reviewer.casecmp?(login)
   end
 
   def to_emitted_hash

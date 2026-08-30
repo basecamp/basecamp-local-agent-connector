@@ -127,6 +127,21 @@ class ConnectorTest < Minitest::Test
     assert_equal 4567, options.port
   end
 
+  def test_parses_the_github_operator_login
+    assert_nil parse("--repo", "acme/a").gh_operator
+    assert_equal "octocat", parse("--repo", "acme/a", "--gh-operator", " octocat ").gh_operator
+    assert_equal "octocat", parse("--repo", "acme/a", "--gh-operator", "@octocat").gh_operator
+  end
+
+  def test_refuses_an_empty_github_operator_login
+    assert_raises ArgumentError do
+      parse "--repo", "acme/a", "--gh-operator", " "
+    end
+    assert_raises ArgumentError do
+      parse "--repo", "acme/a", "--gh-operator", "@"
+    end
+  end
+
   def test_parses_comma_separated_github_events
     options = BasecampAgentConnector::Connector.parse_options([ "--repo", "acme/a", "--events", "pull_request_review, issue_comment" ])
 
@@ -151,11 +166,7 @@ class ConnectorTest < Minitest::Test
   end
 
   def test_start_mounts_only_its_own_bridge_paths_on_the_shared_funnel
-    runner = FakeCommandRunner.new
-    runner.stub "tailscale funnel", exit_status: 0
-    runner.stub "tailscale status --json", stdout: JSON.generate("Self" => { "DNSName" => "desktop.example.ts.net." })
-    runner.stub "/hooks", stdout: '{"id":888}'
-    runner.stub "-X DELETE", exit_status: 0
+    runner = github_runner
 
     start_connector [ "--repo", "acme/a", "--port", "4567" ], runner
 
@@ -166,6 +177,40 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "tailscale", "funnel", "--bg", "--set-path", path, "http://127.0.0.1:4567#{path}" ], mounted.first
     assert_equal [ [ "tailscale", "funnel", "--set-path", path, "off" ] ], runner.commands_matching(/funnel --set-path/)
     assert_empty runner.commands_matching(/reset/)
+  end
+
+  def test_start_trusts_the_login_gh_is_signed_in_as_by_default
+    runner = github_runner
+
+    _out, err = start_connector [ "--repo", "acme/a", "--port", "4567" ], runner
+
+    assert_equal 1, runner.commands_matching(/\Agh api user\z/).length
+    assert_match(/^Trust: approvals from @octocat only/, err)
+  end
+
+  def test_start_trusts_the_given_github_operator_without_asking_gh
+    runner = github_runner
+
+    _out, err = start_connector [ "--repo", "acme/a", "--gh-operator", "marie", "--port", "4567" ], runner
+
+    assert_empty runner.commands_matching(/\Agh api user\z/)
+    assert_match(/^Trust: approvals from @marie only/, err)
+  end
+
+  def test_start_aborts_when_gh_is_signed_out_and_no_github_operator_is_given
+    runner = FakeCommandRunner.new
+    runner.stub "gh api user", exit_status: 4, stderr: "gh: not logged in"
+    connector = BasecampAgentConnector::Connector.new(parse("--repo", "acme/a", "--port", "4567"))
+    connector.instance_variable_set(:@command_runner, runner)
+
+    _out, err = capture_io do
+      assert_raises(SystemExit) { connector.start }
+    end
+
+    assert_match(/Could not resolve the operator's GitHub login: .*not logged in/, err)
+    assert_match(/--gh-operator LOGIN/, err)
+    assert_empty runner.commands_matching(%r{/hooks})
+    assert_empty runner.commands_matching(/\Atailscale/)
   end
 
   def test_start_skips_the_funnel_entirely_for_a_chat_only_run
@@ -185,6 +230,17 @@ class ConnectorTest < Minitest::Test
   private
     def parse(*argv)
       BasecampAgentConnector::Connector.parse_options(argv)
+    end
+
+    # Everything a `--repo` run shells out for, with `gh` signed in as octocat.
+    def github_runner
+      runner = FakeCommandRunner.new
+      runner.stub "tailscale funnel", exit_status: 0
+      runner.stub "tailscale status --json", stdout: JSON.generate("Self" => { "DNSName" => "desktop.example.ts.net." })
+      runner.stub "/hooks", stdout: '{"id":888}'
+      runner.stub "-X DELETE", exit_status: 0
+      runner.stub "gh api user", stdout: JSON.generate("login" => "octocat")
+      runner
     end
 
     def start_connector(argv, runner)

@@ -15,7 +15,7 @@ class BasecampAgentConnector::Connector
   DEFAULT_EVENTS = "pull_request_review"
   TRUST_MODES = %w[operator allowlist project domain]
 
-  Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :port,
+  Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
     :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll)
 
   def self.start(argv)
@@ -29,6 +29,7 @@ class BasecampAgentConnector::Connector
     projects = []
     repos = []
     operator = nil
+    gh_operator = nil
     types = DEFAULT_TYPES
     events = DEFAULT_EVENTS
     port = nil
@@ -41,12 +42,18 @@ class BasecampAgentConnector::Connector
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
-      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] " \
+      parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
+      parser.on("--gh-operator LOGIN", "GitHub login whose PR approvals are actionable (default: the login `gh` is authenticated as)") do |value|
+        login = value.strip.delete_prefix("@")
+        raise ArgumentError, "--gh-operator needs a GitHub login" if login.empty?
+
+        gh_operator = login
+      end
       parser.on("--trust MODE", TRUST_MODES, "Who may trigger the agent: #{TRUST_MODES.join(", ")} (default: operator only; " \
         "value flags below imply their mode)") do |value|
         raise ArgumentError, "--trust given twice with different modes (#{trust} then #{value})" if !trust.nil? && trust != value.to_sym
@@ -87,7 +94,8 @@ class BasecampAgentConnector::Connector
 
     trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
 
-    Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events), port: port,
+    Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
+      gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
       chat_poll: chat_poll, boost_poll: boost_poll)
   end
@@ -177,7 +185,7 @@ class BasecampAgentConnector::Connector
 
     def github_bridge
       BasecampAgentConnector::GitHub::Bridge.new \
-        repos: @options.repos, events: @options.events,
+        repos: @options.repos, events: @options.events, operator: resolve_github_operator,
         github_cli: github_cli, emitter: emitter
     end
 
@@ -202,6 +210,15 @@ class BasecampAgentConnector::Connector
 
     def operator_label
       @options.operator ? " (profile #{@options.operator})" : ""
+    end
+
+    # The operator's GitHub login gates PR approvals. This machine's `gh` is
+    # the operator's, so its authenticated login is the default; `--gh-operator`
+    # names another login without consulting `gh` at all.
+    def resolve_github_operator
+      @options.gh_operator || github_cli.authenticated_login
+    rescue BasecampAgentConnector::GitHub::Client::Error => error
+      abort "Could not resolve the operator's GitHub login: #{error.message}\nRun `gh auth login`, or pass --gh-operator LOGIN, and try again."
     end
 
     def warn_if_same_user(agent, operator)

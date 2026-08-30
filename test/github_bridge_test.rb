@@ -18,6 +18,16 @@ class GithubBridgeTest < Minitest::Test
     assert_includes created.first.join(" "), "events[]=pull_request_review"
   end
 
+  def test_register_logs_whose_approvals_are_trusted
+    runner = FakeCommandRunner.new
+    runner.stub "/hooks", stdout: '{"id":888}'
+    logs = StringIO.new
+
+    bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
+
+    assert_match(/^Trust: approvals from @octocat only; changes_requested and commented reviews from any reviewer$/, logs.string)
+  end
+
   def test_teardown_deletes_registered_webhooks
     runner = FakeCommandRunner.new
     runner.stub "/hooks -X POST", stdout: '{"id":888}'
@@ -31,12 +41,13 @@ class GithubBridgeTest < Minitest::Test
   end
 
   private
-    def bridge(runner, repos: [ "acme/a" ])
+    def bridge(runner, repos: [ "acme/a" ], logger: StringIO.new)
       BasecampAgentConnector::GitHub::Bridge.new \
         repos: repos,
         events: [ "pull_request_review" ],
+        operator: "octocat",
         github_cli: build_github_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: StringIO.new),
-        logger: StringIO.new
+        logger: logger
     end
 end

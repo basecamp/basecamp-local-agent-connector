@@ -11,6 +11,16 @@ class ReviewEventTest < Minitest::Test
     assert_equal "acme/widgets", event.repo
   end
 
+  # The webhook delivers `state` lowercase; the REST API returns it uppercase.
+  def test_reads_the_api_uppercase_state_as_the_documented_lowercase_form
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("state" => "APPROVED")))
+
+    assert_equal "approved", event.review_state
+    assert event.actionable_state?
+    assert event.approved?
+    assert_equal "approved", event.to_emitted_hash["state"]
+  end
+
   def test_dedup_id_is_the_review_id
     assert_equal 7001, BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload).id
   end
@@ -32,6 +42,20 @@ class ReviewEventTest < Minitest::Test
     event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("state" => "pending")))
 
     refute event.actionable_state?
+  end
+
+  def test_reviewed_by_matches_the_login_case_insensitively
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("user" => { "login" => "OctoCat" })))
+
+    assert event.reviewed_by?("octocat")
+    refute event.reviewed_by?("someone-else")
+    refute event.reviewed_by?(nil)
+  end
+
+  def test_reviewed_by_is_false_without_a_reviewer
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload("review" => review_hash("user" => nil)))
+
+    refute event.reviewed_by?("octocat")
   end
 
   def test_emitted_hash_carries_review_and_comments
