@@ -89,6 +89,8 @@ default and can be said in passing.
 /basecamp-connect @Clawdito — projects BC5.1, On Call, and 20361308
 /basecamp-connect use @Clawdito to watch https://3.basecamp.com/2914079/projects/41746046
 /basecamp-connect @Clawdito on Queenbee, with jorge as the operator
+/basecamp-connect @Clawdito on On Call, and let anyone on the project trigger it
+/basecamp-connect @Clawdito on BC5.1, and let marie@37signals.com trigger it too
 /basecamp-connect @Clawdito on BC5.1 plus PR reviews on basecamp/bc3
 /basecamp-connect @Clawdito on On Call, poll chat every 30s, skip boosts
 /basecamp-connect watch PR reviews on basecamp/bc3
@@ -117,10 +119,14 @@ A few things worth knowing about what you can ask for:
 - **Several projects, one connector.** One webhook per project, all multiplexed
   onto a single funnel path, so the same `@agent` watches every project you named
   at once. Add as many as you like.
-- **Only you can trigger it.** That's the default and it's the one to stay on —
-  the agent acts with your full machine authority, so widening the trust set
-  hands that authority to someone else. It *can* be widened; read
-  [Trust modes](#trust-modes) first, including the email-redaction limit.
+- **You alone can trigger it, unless you say otherwise.** The agent acts with
+  your full machine authority, so widening the trust set hands that authority to
+  more people — deliberate, never incidental. Four modes exist; ask for one in
+  the same sentence ("let anyone on the project trigger it", "let Marie trigger
+  it too"). **One caveat that decides which to pick:** unless you're a Basecamp
+  account admin, the API hands you colleagues' email addresses masked, so the
+  two email-keyed modes match nobody. Read [Trust modes](#trust-modes) before
+  relying on any of them.
 - **GitHub PR reviews ride the same server.** Ask for a repo ("plus PR reviews on
   basecamp/bc3") and review events arrive on the same funnel. Only **your**
   approvals (the login `gh` is signed in as) reach the agent as `approved`;
@@ -325,12 +331,34 @@ operator's full machine authority, so broadening trust means handing that
 authority to more people — the startup log prints the active mode and the
 concrete allowed set so it is never implicit.
 
-| Mode | Who triggers | CLI |
-|------|--------------|-----|
-| `operator` *(default)* | You only. No flags = exactly this. | — |
-| `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) |
-| `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default |
-| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` |
+| Mode | Who triggers | CLI | Keyed on |
+|------|--------------|-----|----------|
+| `operator` *(default)* | You only. No flags = exactly this. | — | your email **or** Person id |
+| `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's email |
+| `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default | the author's email |
+| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` | the author's Person id |
+
+**The `Keyed on` column decides whether a mode can fire at all.** Basecamp shows
+a person's real email address only to themselves and to account admins —
+`Person::Ability#can_see_email_address_of?` is `self == person || admin?`. Every
+trust decision is re-made on the recording the verifier re-fetches with *your*
+CLI profile, so unless you are an admin on that account, a colleague's address
+arrives masked:
+
+```
+$ basecamp show <a colleague's message> --json | jq .data.creator
+{ "id": 51659243, "name": "Rob Zolkos", "email_address": "r••••••••@•••.•••", "client": false }
+```
+
+`allowlist` compares that string against the email you listed and never matches.
+`domain` parses `•••.•••` out of it as the domain and never matches. Both fail
+closed and silently — the event is simply dropped as unauthorized, with no hint
+that a masked address is why. As an account admin you see real addresses and both
+modes work as written.
+
+`project` is keyed on the Person id, which every viewer can see, so it works
+regardless of admin status. It is also the loosest of the three — read the limit
+below before choosing it.
 
 Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can
