@@ -24,6 +24,27 @@ require "time"
 class BasecampAgentConnector::RunRegistry
   DEFAULT_DIRECTORY = File.expand_path("~/.config/basecamp-connect/runs")
 
+  # An entry names the funnel path its run owns, and that path is the shared
+  # secret standing between a forged payload and a dispatched agent. No other
+  # local user has any business reading one.
+  DIRECTORY_MODE = 0o700
+  ENTRY_MODE = 0o600
+
+  # The registry is the duplicate and ownership guarantee: a run that cannot be
+  # recorded has neither, so the failure is raised rather than logged.
+  class Error < StandardError; end
+
+  # Another live run of this agent already covers one of these projects or
+  # repos, so `reserve` recorded nothing.
+  class DuplicateRun < Error
+    attr_reader :runs
+
+    def initialize(runs)
+      @runs = runs
+      super("another connector is already running: #{runs.map(&:description).join("; ")}")
+    end
+  end
+
   # The process start time, in clock ticks since boot, from /proc/<pid>/stat
   # field 22. Recorded alongside the pid because a pid alone is ambiguous once
   # it is recycled, and reading a live run as dead is the expensive direction:
@@ -56,7 +77,7 @@ class BasecampAgentConnector::RunRegistry
 
     def description
       watching = [ projects.any? ? "#{projects.length} project(s)" : nil, repos.any? ? "#{repos.length} repo(s)" : nil ]
-      "pid #{pid}, @#{agent}, #{watching.compact.join(" + ")}, started #{started_at}"
+      [ "pid #{pid}", agent.nil? ? nil : "@#{agent}", watching.compact.join(" + "), "started #{started_at}" ].compact.join(", ")
     end
 
     private
@@ -69,9 +90,8 @@ class BasecampAgentConnector::RunRegistry
       end
   end
 
-  def initialize(directory: DEFAULT_DIRECTORY, logger: $stderr)
+  def initialize(directory: DEFAULT_DIRECTORY)
     @directory = directory
-    @logger = logger
   end
 
   def live
@@ -89,6 +109,29 @@ class BasecampAgentConnector::RunRegistry
     end
   end
 
+  # Refusing a duplicate and claiming this run are one indivisible step, under
+  # a lock no other process on this machine can hold at the same time. Checking
+  # and then recording separately is a race two connectors started together
+  # lose together: both read an empty registry, both record, and every event
+  # dispatches twice — the exact failure the registry exists to prevent.
+  #
+  # The paths are filled in by a later `record`, once the bridges that own them
+  # have been built; holding the lock across that would serialize every startup
+  # behind whatever a Basecamp identity lookup costs today.
+  #
+  # Returns the live runs of this agent that don't overlap: worth a warning,
+  # not a refusal.
+  def reserve(agent:, operator:, projects:, repos:, boosts:, allow_duplicate: false)
+    exclusively do
+      duplicates = duplicates_of(agent: agent, projects: projects, repos: repos)
+      raise DuplicateRun, duplicates unless duplicates.empty? || allow_duplicate
+
+      elsewhere = same_agent_elsewhere(agent: agent, projects: projects, repos: repos)
+      record agent: agent, operator: operator, projects: projects, repos: repos, paths: [], boosts: boosts
+      elsewhere
+    end
+  end
+
   # Runs of the same agent that overlap on a watched project or repo: two of
   # those means every event arrives twice.
   def duplicates_of(agent:, projects:, repos:)
@@ -102,19 +145,20 @@ class BasecampAgentConnector::RunRegistry
   # other hides a real duplicate — and the received-boosts feed is per-agent,
   # so two boost pollers on one agent double every boost regardless of
   # projects.
+  #
+  # A GitHub-only run has no agent, and two of those share nothing per-agent:
+  # no boost feed, no mentions. Neither is "the same agent" as the other.
   def same_agent_elsewhere(agent:, projects:, repos:)
+    return [] if agent.nil?
+
     same_agent(agent) - duplicates_of(agent: agent, projects: projects, repos: repos)
   end
 
   def record(agent:, operator:, projects:, repos:, paths:, boosts:)
-    FileUtils.mkdir_p @directory
-    File.write file_for(Process.pid), JSON.generate(
+    write file_for(Process.pid), JSON.generate(
       pid: Process.pid, process_start: self.class.process_start(Process.pid),
-      started_at: Time.now.utc.iso8601, agent: agent, operator: operator,
+      started_at: started_at, agent: agent, operator: operator,
       projects: projects, repos: repos, paths: paths, boosts: boosts)
-  rescue SystemCallError => error
-    # Bookkeeping must never take the connector down with it.
-    log "could not record this run in #{@directory}: #{error.message}"
   end
 
   def forget
@@ -146,6 +190,44 @@ class BasecampAgentConnector::RunRegistry
       nil
     end
 
+    # Reserving takes the lock; recording the paths afterwards rewrites this
+    # run's own file, which no other process writes.
+    def exclusively
+      prepare_directory
+      File.open(lock_file, File::RDWR | File::CREAT, ENTRY_MODE) do |lock|
+        lock.flock File::LOCK_EX
+
+        begin
+          yield
+        ensure
+          lock.flock File::LOCK_UN
+        end
+      end
+    rescue SystemCallError => error
+      raise Error, "could not lock the run registry in #{@directory}: #{error.message}"
+    end
+
+    # Written to a neighbouring temporary file and renamed into place: a
+    # concurrent reader sees the old entry or the new one, never half of one.
+    # The mode is set at creation rather than left to the umask, which on most
+    # machines would publish the funnel path to every local user.
+    def write(file, contents)
+      temporary = "#{file}.#{Process.pid}.tmp"
+      prepare_directory
+      File.open(temporary, File::WRONLY | File::CREAT | File::TRUNC, ENTRY_MODE) { |entry| entry.write contents }
+      File.rename temporary, file
+    rescue SystemCallError => error
+      remove temporary
+      raise Error, "could not record this run in #{@directory}: #{error.message}"
+    end
+
+    # An existing directory keeps whatever mode it was created with, which for
+    # anything an earlier build made is 0755.
+    def prepare_directory
+      FileUtils.mkdir_p @directory, mode: DIRECTORY_MODE
+      File.chmod DIRECTORY_MODE, @directory
+    end
+
     def remove(file)
       File.delete file
     rescue SystemCallError
@@ -156,7 +238,13 @@ class BasecampAgentConnector::RunRegistry
       File.join(@directory, "#{pid}.json")
     end
 
-    def log(message)
-      @logger.puts message
+    def lock_file
+      File.join(@directory, ".lock")
+    end
+
+    # The reservation and the later paths write are the same run, so the
+    # recorded start time is the first one.
+    def started_at
+      @started_at ||= Time.now.utc.iso8601
     end
 end

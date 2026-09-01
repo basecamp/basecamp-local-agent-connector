@@ -29,8 +29,11 @@ class BasecampAgentConnector::Connector
   # What is already running on this machine, and which funnel paths each run
   # owns. The one authoritative answer to "is this webhook a leftover?" — read
   # it before deleting any registration by hand.
+  #
+  # Strictly a read: a dead run's entry is the only record of the paths it
+  # owns, and the startup that sweeps those webhooks is the one entitled to
+  # discard it. Pruning here would leave that startup nothing to sweep with.
   def self.print_status(registry: BasecampAgentConnector::RunRegistry.new, command_runner: BasecampAgentConnector::CommandRunner.new)
-    registry.prune
     runs = registry.live
 
     if runs.empty?
@@ -206,8 +209,7 @@ class BasecampAgentConnector::Connector
     # otherwise read as live connectors and refuse this one, and the paths they
     # leave behind are exactly what the orphan sweep needs.
     orphan_paths = @registry.prune.flat_map(&:paths)
-    refuse_duplicate_run
-    warn_of_same_agent_elsewhere
+    reserve_run
 
     @bridges = build_bridges
     port = @options.port || free_port
@@ -318,14 +320,23 @@ class BasecampAgentConnector::Connector
     # Two connectors on one agent and one project is never what anyone wanted:
     # both register a webhook per project, so Basecamp delivers every event to
     # both, and both poll the same campfires — one mention, two dispatched
-    # agents, two replies. Refuse by default and name the other run, since the
-    # symptom (duplicated work) is far harder to read than this message.
-    def refuse_duplicate_run
-      duplicates = @registry.duplicates_of(agent: @options.agent, projects: @options.projects, repos: @options.repos)
-      return if duplicates.empty? || @options.allow_duplicate
+    # agents, two replies. Refusing and claiming happen together in the
+    # registry, so two connectors started in the same instant can't both pass
+    # the check.
+    def reserve_run
+      warn_of_same_agent_elsewhere @registry.reserve(
+        agent: @options.agent, operator: @options.operator,
+        projects: @options.projects, repos: @options.repos,
+        boosts: polling_boosts?, allow_duplicate: @options.allow_duplicate)
+    rescue BasecampAgentConnector::RunRegistry::DuplicateRun => error
+      abort duplicate_run_message(error.runs)
+    rescue BasecampAgentConnector::RunRegistry::Error => error
+      abort unrecordable_run_message(error)
+    end
 
-      abort <<~MESSAGE
-        Another connector is already watching @#{@options.agent} on something you asked for:
+    def duplicate_run_message(duplicates)
+      <<~MESSAGE
+        Another connector is already watching #{@options.agent ? "@#{@options.agent}" : "one of these repos"}:
         #{duplicates.map { |run| "  #{run.description}" }.join("\n")}
         Every event would dispatch twice. Stop it first (kill #{duplicates.map(&:pid).join(" ")}), watch
         different projects, or pass --allow-duplicate if you really mean to run both.
@@ -333,12 +344,21 @@ class BasecampAgentConnector::Connector
       MESSAGE
     end
 
+    # Nothing else provides what the record provides: without it the next
+    # startup cannot see this run, and every webhook registered below becomes
+    # a registration nobody can attribute — which is how eleven of them were
+    # deleted from under a live connector. Refuse to start instead.
+    def unrecordable_run_message(error)
+      "Could not claim this run: #{error.message}\n" \
+        "Starting anyway would leave webhooks nobody can attribute and duplicates nobody can detect. " \
+        "Fix that directory and retry."
+    end
+
     # Same agent, no overlap detected. Not fatal, but worth saying: the
     # received-boosts feed is per-agent, so two boost pollers double every
     # boost whatever the projects — and project tokens are compared as
     # written, so a name here and an id there hides a real overlap.
-    def warn_of_same_agent_elsewhere
-      others = @registry.same_agent_elsewhere(agent: @options.agent, projects: @options.projects, repos: @options.repos)
+    def warn_of_same_agent_elsewhere(others)
       return if others.empty?
 
       warn "Warning: @#{@options.agent} is already being watched by #{others.map(&:description).join("; ")}. " \
@@ -347,10 +367,20 @@ class BasecampAgentConnector::Connector
         "pass --no-boosts to one of them." if @options.boost_poll && others.any?(&:boosts)
     end
 
+    # Completes the reservation with the paths the bridges own, which is what
+    # a later sweep needs to tell this run's webhooks from litter.
     def record_run
       @registry.record agent: @options.agent, operator: @options.operator,
         projects: @options.projects, repos: @options.repos,
-        paths: @bridges.flat_map(&:paths), boosts: !@options.boost_poll.nil?
+        paths: @bridges.flat_map(&:paths), boosts: polling_boosts?
+    rescue BasecampAgentConnector::RunRegistry::Error => error
+      abort unrecordable_run_message(error)
+    end
+
+    # Only the Basecamp bridge polls boosts, and a GitHub-only run builds none
+    # whatever --boost-poll says.
+    def polling_boosts?
+      @options.projects.any? && !@options.boost_poll.nil?
     end
 
 
