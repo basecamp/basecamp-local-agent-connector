@@ -77,10 +77,11 @@ You need three things in place:
 
 ### Using it
 
-In Claude Code, run `/basecamp-connect` and say which agent and which projects.
-**There's no syntax to memorize** — the skill reads plain English. It needs two
-things from you: the **agent** (an `@profile`) and at least one **project**.
-Everything else has a sane default and can be said in passing.
+In Claude Code, run `/basecamp-connect` and say who should watch what.
+**There's no syntax to memorize** — the skill reads plain English. It needs an
+**agent** (an `@profile`) and at least one **project** — or, for a GitHub-only
+run, just a **repo**, with no agent and no project. Everything else has a sane
+default and can be said in passing.
 
 ```
 /basecamp-connect @Clawdito on BC5 Calendar
@@ -90,6 +91,7 @@ Everything else has a sane default and can be said in passing.
 /basecamp-connect @Clawdito on Queenbee, and let anyone at 37signals.com trigger it
 /basecamp-connect @Clawdito on BC5.1 plus PR reviews on basecamp/bc3
 /basecamp-connect @Clawdito on On Call, poll chat every 5s, skip boosts
+/basecamp-connect watch PR reviews on basecamp/bc3
 ```
 
 All of those work. The skill confirms what it understood before it starts
@@ -123,8 +125,9 @@ A few things worth knowing about what you can ask for:
   approvals (the login `gh` is signed in as) reach the agent as `approved`;
   someone else's approval is dropped, while their requested changes and comments
   still come through.
-- **You need an agent and at least one project** — or a repo, for a
-  GitHub-only run. That's the whole requirement.
+- **Two shapes are valid, and that's the whole requirement.** An agent and at
+  least one project, for watching Basecamp; or a repo on its own, for a
+  GitHub-only run — no agent, no project. You can also have both at once.
 
 ### Stopping (and why it matters)
 

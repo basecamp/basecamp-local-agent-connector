@@ -90,16 +90,18 @@ run `bin/setup` (see the repo README).
 ## Invocation
 
 **The arguments are natural language, not a grammar.** Read whatever the user
-wrote and pull out the agent, the projects, and any trust or polling wishes —
-`@Clawdito on BC5 Calendar`, `watch BC5.1 and On Call as @Clawdito`, `use
-@Clawdito on Queenbee and let anyone at 37signals.com trigger it` all mean what
-they say. Never make the user restate it as flags. The flags below are the
-**canonical form you translate into** before calling `bin/connect`, and they're
-also accepted verbatim when the user types them.
+wrote and pull out the agent, the projects, the repositories, and any trust or
+polling wishes — `@Clawdito on BC5 Calendar`, `watch BC5.1 and On Call as
+@Clawdito`, `use @Clawdito on Queenbee and let anyone at 37signals.com trigger
+it`, `watch reviews on basecamp/bc3` all mean what they say. Never make the user
+restate it as flags. The flags below are the **canonical form you translate
+into** before calling `bin/connect`, and they're also accepted verbatim when the
+user types them.
 
-Ask only for what's genuinely missing (an agent, or a project), and confirm the
-resolved connection before launching — the same confirmation the no-args path
-does.
+Ask only for what's genuinely missing: something to watch (a project or a repo),
+plus an agent whenever Basecamp projects are in play — a repo-only run needs
+neither an agent nor a project. Confirm the resolved connection before
+launching — the same confirmation the no-args path does.
 
 ```
 /basecamp-connect                                                     # reuse last connection (confirm first)
@@ -108,11 +110,13 @@ does.
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow marie@37signals.com  # + a named coworker
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow-domain 37signals.com # any 37signals author
+/basecamp-connect --repo basecamp/bc3                                 # GitHub-only, no agent
 ```
 
 `<agent>` is a real Basecamp user backed by a local CLI profile (the leading `@`
-is optional; it's lowercased to the profile name). `--project` is **required**
-(Basecamp has no global webhook) — pass a name, URL, or ID. The connector
+is optional; it's lowercased to the profile name). Every run needs at least one
+`--project` or `--repo`, and `--project` needs an `<agent>` (Basecamp has no
+global webhook) — pass a project as a name, URL, or ID. The connector
 **validates the agent profile exists locally at startup** and aborts with setup
 guidance if not.
 
@@ -182,8 +186,9 @@ The skill remembers the last successful connection in
   `--no-boosts` for a stored `null`) when present; missing fields (older
   stores) mean the defaults.
 
-Project ids are stored (not just names) because name lookup is exact-match;
-launching from the store passes ids.
+Project ids are stored (not just names) because a name is only resolved against
+the project list as it stands at launch — a rename, or a newly ambiguous name,
+would resolve elsewhere or not at all; launching from the store passes ids.
 
 ## Prerequisite: the agent must be a local profile authed as that user
 
