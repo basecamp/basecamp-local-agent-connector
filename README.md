@@ -1,7 +1,7 @@
 # Basecamp Agent Connector (experimental)
 
 > [!WARNING]
-> **Experimental.** This drives agents from Basecamp using the pieces that
+> <mark>**Experimental.**</mark> This drives agents from Basecamp using the pieces that
 > already exist: webhooks, the [`basecamp` CLI](https://basecamp.com/cli), a
 > funnel on your own machine. Proper first-class support is being built; expect
 > this to be replaced by it, not to grow into it.
