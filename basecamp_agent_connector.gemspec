@@ -4,7 +4,7 @@ Gem::Specification.new do |spec|
   spec.name = "basecamp_agent_connector"
   spec.version = BasecampAgentConnector::VERSION
   spec.authors = [ "Jorge Manrubia" ]
-  spec.summary = "Bridge Basecamp webhooks to local Claude Code agents"
+  spec.summary = "Bridge Basecamp webhooks to local coding agents"
   spec.description = "Exposes a local webhook endpoint via Tailscale Funnel, registers it as a " \
     "Basecamp webhook, and emits trusted, self-authored, trigger-matched events for a local agent to act on."
   spec.homepage = "https://github.com/basecamp/basecamp-local-agent-connector"
