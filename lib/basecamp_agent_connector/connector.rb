@@ -230,11 +230,16 @@ class BasecampAgentConnector::Connector
   end
 
   def start
+    # Runs that died without tearing down are read first — and left on disk.
+    # Their entries name the webhooks they abandoned, which the sweep below
+    # needs, and which nothing else on this machine could attribute.
+    abandoned = @registry.abandoned
     reserve_run
 
     @bridges = build_bridges
     port = @options.port || free_port
     record_run
+    sweep_orphans abandoned
 
     # Chat-only watching has no inbound paths, so it needs no funnel at all —
     # Tailscale isn't required unless something actually receives webhooks.
@@ -244,14 +249,7 @@ class BasecampAgentConnector::Connector
         @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
         @tunnel.start
       end
-    # Runs that died without tearing down are pruned only now, once every
-    # startup refusal is behind us: their files are the sole record of the
-    # paths they owned, and registration is what sweeps those. Pruned any
-    # earlier, a refused start would take that record with it and leave the
-    # webhooks unattributable for good. Liveness, not the file, is what the
-    # duplicate check reads, so a dead entry never refuses anyone.
-    orphan_paths = @registry.prune.flat_map(&:paths)
-    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths) }
+    @bridges.each { |bridge| bridge.register(base_url: base_url) }
     start_funnel_monitor if @tunnel
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
@@ -263,10 +261,23 @@ class BasecampAgentConnector::Connector
 
   private
     def build_bridges
-      bridges = []
-      bridges << basecamp_bridge if @options.projects.any?
-      bridges << github_bridge if @options.repos.any?
-      bridges
+      @basecamp_bridge = basecamp_bridge if @options.projects.any?
+      @github_bridge = github_bridge if @options.repos.any?
+      [ @basecamp_bridge, @github_bridge ].compact
+    end
+
+    # Reaps what the dead left behind, then forgets only the runs whose every
+    # project and repo this startup could account for. A run watching projects
+    # this one doesn't — or repos, when no GitHub bridge is built — keeps its
+    # entry, because that entry is the sole record of whose those webhooks are.
+    # Discarding it on the way past is what turned a dead run's registrations
+    # into permanent litter.
+    def sweep_orphans(abandoned)
+      return if abandoned.empty?
+
+      projects = @basecamp_bridge&.sweep_orphans(abandoned) || []
+      repos = @github_bridge&.sweep_orphans(abandoned) || []
+      @registry.discard abandoned.select { |run| run.swept_by?(projects: projects, repos: repos) }
     end
 
     def basecamp_bridge

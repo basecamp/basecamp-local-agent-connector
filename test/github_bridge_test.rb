@@ -18,6 +18,30 @@ class GithubBridgeTest < Minitest::Test
     assert_includes created.first.join(" "), "events[]=pull_request_review"
   end
 
+  def test_sweeping_reaps_hooks_on_the_repos_the_dead_run_watched
+    runner = FakeCommandRunner.new
+    runner.stub "-X DELETE", exit_status: 0
+    runner.stub "repos/acme/z/hooks", stdout: JSON.generate([ [ { "id" => 999, "config" => { "url" => "https://host.ts.net/gh/dead" } } ] ])
+    runner.stub "repos/acme/a/hooks", stdout: "[[]]"
+
+    swept = nil
+    capture_io { swept = bridge(runner, repos: [ "acme/a" ]).sweep_orphans([ dead_run(repos: [ "acme/z" ], paths: [ "/gh/dead" ]) ]) }
+
+    assert_equal [ "acme/a", "acme/z" ], swept
+    assert_equal [ [ "gh", "api", "-X", "DELETE", "repos/acme/z/hooks/999" ] ], runner.commands_matching(/DELETE/)
+  end
+
+  def test_a_repo_that_cannot_be_listed_is_not_swept
+    runner = FakeCommandRunner.new
+    runner.stub "repos/acme/z/hooks", exit_status: 1, stderr: "404 Not Found"
+    runner.stub "repos/acme/a/hooks", stdout: "[[]]"
+
+    swept = nil
+    capture_io { swept = bridge(runner, repos: [ "acme/a" ]).sweep_orphans([ dead_run(repos: [ "acme/z" ], paths: [ "/gh/dead" ]) ]) }
+
+    assert_equal [ "acme/a" ], swept
+  end
+
   def test_register_logs_whose_approvals_are_trusted
     runner = FakeCommandRunner.new
     runner.stub "/hooks", stdout: '{"id":888}'
