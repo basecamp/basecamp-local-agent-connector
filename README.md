@@ -1,5 +1,6 @@
 # basecamp-local-agent-connector
 
+> [!WARNING]
 > **Experimental.** This drives agents from Basecamp using the pieces that
 > already exist: webhooks, the [`basecamp` CLI](https://basecamp.com/cli), a
 > funnel on your own machine. Proper first-class support is being built; expect
