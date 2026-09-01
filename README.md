@@ -90,6 +90,7 @@ default and can be said in passing.
 /basecamp-connect use @Clawdito to watch https://3.basecamp.com/2914079/projects/41746046
 /basecamp-connect @Clawdito on Queenbee, with jorge as the operator
 /basecamp-connect @Clawdito on BC5.1 plus PR reviews on basecamp/bc3
+/basecamp-connect @Clawdito on On Call, poll chat every 5s, skip boosts
 /basecamp-connect watch PR reviews on basecamp/bc3
 ```
 
