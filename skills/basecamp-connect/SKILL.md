@@ -525,11 +525,54 @@ Instruct that background agent to, in order:
      notification for whoever asked — the operator in the default mode, or the
      authorized coworker who triggered it under a broadened mode.
    - **Never put the agent mention in a reply body.**
+   - **Write it as rich text** — see *Write replies as rich text* below.
 
 Because the background agent gathers its own context and posts its own reply, the
 front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
+
+### Write replies as rich text
+
+Comment and message bodies are rich text, so use it. The `basecamp` CLI runs the
+body through a Markdown converter on the way in: `## Headings` become headings,
+`**bold**` becomes bold, `- bullets` become a list, `> quoted` becomes a
+blockquote, and fenced blocks become code blocks. Diffs, commands, and error
+output belong in a fenced block, not inline in a sentence. A wall of
+undifferentiated prose in a rich-text field is a wasted field.
+
+Lead with the answer in the first line. Headings and detail go under it —
+whoever reads only the notification preview should still know where it landed.
+
+**Links carry a title, not a URL.** Write
+`[Skip the ack boost when the reply is immediate](https://github.com/basecamp/bc3/pull/1234)`,
+never a bare `https://github.com/basecamp/bc3/pull/1234`. Bare URLs don't
+autolink in comments — they post as plain text — and even when a URL does link,
+it tells the reader nothing about what's behind it. Same for Basecamp links:
+name the card, the message, the doc.
+
+**Anything in another app gets its full URL.** `#1234`, `PR 1234`, `SENTRY-4F`
+and `abc123f` are shorthand that only resolves inside the app they came from — in a
+Basecamp comment they're dead text a reader has to go hunt down. Write
+`[#1234 Skip the ack boost](https://github.com/basecamp/bc3/pull/1234)`, so the
+reference reads the way it does on GitHub *and* opens there in one click. Same
+for issues, commits, runs, Sentry events, and dashboards.
+
+**Use tables when the content is a grid.** GFM pipe tables convert to real
+Basecamp tables, column alignment (`|---:|`) included, and Markdown works inside
+the cells — code spans, bold, titled links. A file-by-file summary, a
+before/after benchmark, a matrix of cases: table. (Tables need `basecamp` v0.8.0
+or newer — older builds post the pipes literally.)
+
+Keep them simple, one line per cell. Merged cells, captions, images in cells and
+multi-line cells all render, but the CLI's in-place TUI editors refuse to open
+content shaped that way — it can't round-trip through a pipe table. A prose list
+beats a table for two items; don't reach for a grid that isn't one.
+
+**No hand-written HTML.** Write the Markdown and let the CLI convert it. Raw
+tags are escaped and land as visible `<strong>…</strong>` text. The
+`[@Name](person:<id>)` mention syntax is the only non-Markdown markup the CLI
+understands.
 
 ### When the agent is assigned a card/todo
 
@@ -581,8 +624,10 @@ with these differences:
   The CLI resolves @mentions (`@Name`, or `[@Name](person:<creator.id>)` to
   pin by Person id); a reply containing one posts as rich text with its
   Markdown converted — so format those with Markdown (`**bold**`, `- bullets`,
-  and bare URLs, which autolink on their own). A mention-free reply posts as
-  plain text — Markdown renders literally, so keep those replies plain prose.
+  and `[titled links](url)` rather than bare URLs, which don't autolink once
+  the line is rich text). Chat is small: bold, bullets and titled links, no
+  headings. A mention-free reply posts as plain text — Markdown renders
+  literally, so keep those replies plain prose, bare URL and all.
   **Never hand-write HTML in either case.** The CLI converts Markdown and
   resolves mentions; it does not accept raw HTML, so tags like `<p>`,
   `<strong>`, or `<a href>` are wrong in the Markdown path (write the Markdown
@@ -712,8 +757,9 @@ green** — getting CI green is part of finishing the task, not a follow-up:
 4. **Green remotely** — `gh pr checks <n> --watch --fail-fast`; if a check fails,
    fix it, push, and re-watch. Loop until every check is green (remote can fail
    what local passed).
-5. **Only now reply "done"** on Basecamp, with the PR link. Never communicate
-   success on a red or unchecked branch. (The ~10-minute **interim reply** from
+5. **Only now reply "done"** on Basecamp, with the PR linked by its title —
+   `[Skip the ack boost when the reply is immediate](<pr url>)`, not a bare URL.
+   Never communicate success on a red or unchecked branch. (The ~10-minute **interim reply** from
    the dispatched agent's step 4 in *For each trusted event* still applies and
    may link the PR early — it says "in progress, follow it here," never
    "done.") If you cannot get it green after a reasonable effort, reply with
