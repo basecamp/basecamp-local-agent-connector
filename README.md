@@ -1,5 +1,10 @@
 # basecamp-local-agent-connector
 
+> **Experimental.** This drives agents from Basecamp using the pieces that
+> already exist: webhooks, the `basecamp` CLI, a funnel on your own machine.
+> Proper first-class support is being built; expect this to be replaced by it,
+> not to grow into it.
+
 Drive local Claude Code agents from Basecamp. **@mention an agent user** (e.g.
 `@Clawdito fix the calendar bug`) in any Basecamp comment, message, or card — and
 a Claude agent on **your** machine picks it up, gathers the surrounding context
