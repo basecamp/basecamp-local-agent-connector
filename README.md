@@ -102,9 +102,6 @@ default and can be said in passing.
 /basecamp-connect watch PR reviews on basecamp/bc3
 ```
 
-All of those work. The skill confirms what it understood before it starts
-anything, so a loose phrasing costs you a sentence, not a wrong connection.
-
 > [!TIP]
 > **You only have to say it once.** Every successful connection is stored in
 > `~/.config/basecamp-connect/last.json` — agent, projects, trust, and polling —
