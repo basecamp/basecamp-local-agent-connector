@@ -547,7 +547,25 @@ Instruct that background agent to, in order:
    ```
    If there's no Triage-like or no In-progress-like column, skip this silently —
    never invent columns.
-4. **Do the requested work** in the repo. **Reply latency:** the boost says
+4. **Do the requested work** in the repo.
+
+   **Several items means several agents.** When one request covers independent
+   work — six cards, a todo list, four unrelated bugs — spawn a subagent per
+   item instead of grinding through them in series, **five at a time**, waiting
+   for a slot before starting the sixth. The user's word overrides the number
+   and the default both ways ("one at a time", "run all ten"). This cap is on
+   the work inside a single event; it is unrelated to event dispatch, which has
+   no cap at all.
+
+   Two things stay serial, because parallelism costs more than it saves there:
+   items that depend on each other, and items touching the same files — a merge
+   conflict is slower than the run it saved. Each subagent gets its own
+   worktree when it will commit.
+
+   One reply at the end, covering every item, not one reply per subagent. Say
+   which items failed if any did.
+
+   **Reply latency:** the boost says
    "received"; it does not say "still working." If the work will take more than
    **~10 minutes**, post a short **interim reply** as the agent on the
    originating recording (in the Campfire, for a chat trigger) — one or two
