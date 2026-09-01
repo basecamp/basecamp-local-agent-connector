@@ -36,7 +36,34 @@ You never leave Basecamp. The agent runs locally, as you, with your tools.
 
 You need three things in place:
 
-1. **The skill** — install it into Claude Code:
+1. **The runtime** — clone the repo and install dependencies:
+
+   ```bash
+   git clone https://github.com/basecamp/basecamp-local-agent-connector
+   cd basecamp-local-agent-connector
+   bin/setup        # bundle install + checks for the `basecamp` and `tailscale` CLIs
+   ```
+
+   You also need [Tailscale](https://tailscale.com) with **Funnel enabled** for
+   your tailnet (Basecamp has to reach your machine over the public internet) and
+   Ruby 3.4+.
+
+2. **An agent user + its local profile.** The agent is a *real Basecamp user*
+   (e.g. a bot account named “Clawdito”) that you can @mention. The connector
+   talks to Basecamp through the [`basecamp` CLI](https://basecamp.com/cli),
+   which supports named **profiles** — and the agent name you pass must match a
+   local profile authenticated **as that agent user**:
+
+   ```bash
+   basecamp auth login --profile clawdito   # log in as the Clawdito account
+   basecamp me --profile clawdito           # verify it's Clawdito, not you
+   ```
+
+   Your own login is the default profile (the **operator** — the only person
+   allowed to trigger the agent). The agent and the operator **must be different
+   Basecamp users**, otherwise the agent’s own replies would trigger it again.
+
+3. **The skill** — install it into Claude Code:
 
    ```bash
    npx skills add basecamp/basecamp-local-agent-connector       # this project only
@@ -53,33 +80,6 @@ You need three things in place:
    ```bash
    npx skills update -g    # or without -g for a project-level install
    ```
-
-2. **The runtime** — clone the repo and install dependencies:
-
-   ```bash
-   git clone https://github.com/basecamp/basecamp-local-agent-connector
-   cd basecamp-local-agent-connector
-   bin/setup        # bundle install + checks for the `basecamp` and `tailscale` CLIs
-   ```
-
-   You also need [Tailscale](https://tailscale.com) with **Funnel enabled** for
-   your tailnet (Basecamp has to reach your machine over the public internet) and
-   Ruby 3.4+.
-
-3. **An agent user + its local profile.** The agent is a *real Basecamp user*
-   (e.g. a bot account named “Clawdito”) that you can @mention. The connector
-   talks to Basecamp through the [`basecamp` CLI](https://basecamp.com/cli),
-   which supports named **profiles** — and the agent name you pass must match a
-   local profile authenticated **as that agent user**:
-
-   ```bash
-   basecamp auth login --profile clawdito   # log in as the Clawdito account
-   basecamp me --profile clawdito           # verify it's Clawdito, not you
-   ```
-
-   Your own login is the default profile (the **operator** — the only person
-   allowed to trigger the agent). The agent and the operator **must be different
-   Basecamp users**, otherwise the agent’s own replies would trigger it again.
 
 ### Using it
 
