@@ -123,7 +123,13 @@ guidance if not.
 **Who may trigger** defaults to the operator alone. Broaden it deliberately with
 the trust flags — `--allow <email>`, `--allow-domain <domain>`, `--allow-project`,
 or explicit `--trust <mode>` — and pass them straight through to `bin/connect`;
-the bridge enforces them and logs the active set. See the connector README's
+the bridge enforces them and logs the active set. **`--allow` and `--allow-domain`
+only work when the operator is a Basecamp account admin**: both key on the
+author's email, and Basecamp masks other people's addresses from non-admins
+(`r••••••••@•••.•••`), so the comparison silently matches nobody and every event
+is dropped as unauthorized. `--allow-project` keys on the Person id instead and
+works either way. When a user asks for email-based trust, say which of the two
+they're in rather than letting them find out from an agent that never answers. See the connector README's
 "Trust modes" for the full semantics and the agent-self / assignments-operator-only
 safeguards.
 
