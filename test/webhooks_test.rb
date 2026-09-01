@@ -70,6 +70,40 @@ class WebhooksTest < Minitest::Test
     assert_match(/failed to delete webhook 555/, logs.string)
   end
 
+  def test_deletes_only_the_webhooks_whose_path_a_dead_run_recorded
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks list", stdout: envelope([
+      { "id" => 111, "payload_url" => "https://host.ts.net/bc5/dead" },
+      { "id" => 222, "payload_url" => "https://host.ts.net/bc5/alive" },
+      { "id" => 333, "payload_url" => "https://host.ts.net/hook/someone-elses-build" } ])
+    runner.stub "webhooks delete", stdout: envelope({})
+
+    webhooks(runner).delete_orphans(projects: [ 7 ], paths: [ "/bc5/dead" ])
+
+    deletions = runner.commands_matching(/webhooks delete/)
+    assert_equal 1, deletions.length
+    assert_includes deletions.first, "111"
+  end
+
+  def test_sweeps_nothing_when_no_dead_run_left_a_path
+    runner = FakeCommandRunner.new
+
+    webhooks(runner).delete_orphans(projects: [ 7 ], paths: [])
+
+    assert_empty runner.commands
+  end
+
+  def test_a_listing_failure_leaves_the_project_alone
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks list", exit_status: 1, stderr: "nope"
+    logs = StringIO.new
+
+    webhooks(runner, logs).delete_orphans(projects: [ 7 ], paths: [ "/bc5/dead" ])
+
+    assert_empty runner.commands_matching(/webhooks delete/)
+    assert_match(/could not list webhooks for project 7/, logs.string)
+  end
+
   private
     def webhooks(runner, logs = StringIO.new)
       BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })

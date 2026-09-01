@@ -23,7 +23,29 @@ class BasecampAgentConnector::GitHub::Webhooks
     end
   end
 
+  # The Basecamp side's orphan sweep, for repos: reap hooks pointing at a path
+  # a dead run of ours recorded, and touch nothing else.
+  def delete_orphans(repos:, paths:)
+    return if paths.empty?
+
+    repos.each do |repo|
+      orphans_in(repo, paths).each do |id|
+        log "deleting webhook #{id} on repo #{repo} left by an exited connector"
+        delete Registration.new(repo: repo, id: id)
+      end
+    end
+  end
+
   private
+    def orphans_in(repo, paths)
+      @github_cli.webhooks(repo: repo).filter_map do |hook|
+        hook["id"] if paths.any? { |path| hook.dig("config", "url").to_s.end_with?(path) }
+      end
+    rescue BasecampAgentConnector::GitHub::Client::Error => error
+      log "could not list webhooks for repo #{repo}: #{error.message}"
+      []
+    end
+
     def register(repo:, url:, secret:, events:)
       hook = create_with_retries(repo: repo, url: url, secret: secret, events: events)
       @registrations << Registration.new(repo: repo, id: hook.fetch("id"))

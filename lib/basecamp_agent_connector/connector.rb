@@ -16,12 +16,73 @@ class BasecampAgentConnector::Connector
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll)
+    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :allow_duplicate)
 
   def self.start(argv)
+    return print_status if argv.include?("--status")
+
     new(parse_options(argv)).start
   rescue ArgumentError => error
     abort error.message
+  end
+
+  # What is already running on this machine, and which funnel paths each run
+  # owns. The one authoritative answer to "is this webhook a leftover?" — read
+  # it before deleting any registration by hand.
+  def self.print_status(registry: BasecampAgentConnector::RunRegistry.new, command_runner: BasecampAgentConnector::CommandRunner.new)
+    registry.prune
+    runs = registry.live
+
+    if runs.empty?
+      puts "No connector recorded as running on this machine."
+    else
+      puts "#{runs.length} connector(s) running on this machine:"
+      runs.each do |run|
+        puts "  #{run.description}"
+        puts "    projects: #{run.projects.join(', ')}" if run.projects.any?
+        puts "    repos:    #{run.repos.join(', ')}" if run.repos.any?
+        puts "    paths:    #{run.paths.any? ? run.paths.join(', ') : "(none — chat-only, no webhooks)"}"
+        puts "    boosts:   #{run.boosts ? "polling" : "off"}"
+      end
+      puts "A webhook whose payload_url ends in one of those paths belongs to a LIVE run. Don't delete it."
+    end
+
+    report_unrecorded_processes(runs, command_runner)
+  end
+
+  # The registry only knows runs that started with it. A connector launched by
+  # an older build — or by another user — records nothing, so it would read as
+  # "nothing running" while holding live webhooks nobody can attribute. That is
+  # precisely how a running connector once lost eleven of its registrations to a
+  # cleanup, so the process table gets consulted too and any pid the registry
+  # doesn't cover is called out rather than passed over in silence.
+  def self.report_unrecorded_processes(runs, command_runner)
+    pids = running_connector_pids(command_runner) - runs.map(&:pid) - [ Process.pid ]
+    return if pids.empty?
+
+    puts
+    puts "#{pids.length} connector process(es) running but NOT recorded: #{pids.join(', ')}."
+    puts "Their funnel paths are unknown, so their webhooks cannot be attributed — do not delete a"
+    puts "registration you cannot account for. Inspect with: ps -fp #{pids.join(',')}"
+  end
+
+  def self.running_connector_pids(command_runner)
+    result = command_runner.run("pgrep", "-f", "bin/connect")
+    result.stdout.split.map(&:to_i).reject(&:zero?).select { |pid| watching_process?(pid) }
+  rescue SystemCallError, Errno::ENOENT
+    []
+  end
+
+  # `pgrep -f` matches the whole command line, so it also catches the shell that
+  # launched a connector (bin/connect buried inside its `-c` string) and this
+  # very `--status` run. A real watcher has `bin/connect` as an argument of its
+  # own and no `--status` among them. An unreadable cmdline errs toward
+  # reporting: an unattributable connector is worth one false positive.
+  def self.watching_process?(pid)
+    arguments = File.read("/proc/#{pid}/cmdline").split("\u0000")
+    arguments.any? { |argument| argument.end_with?("bin/connect") } && !arguments.include?("--status")
+  rescue SystemCallError
+    true
   end
 
   def self.parse_options(argv)
@@ -38,6 +99,7 @@ class BasecampAgentConnector::Connector
     allowed_domains = []
     allow_project = false
     allow_assignments = false
+    allow_duplicate = false
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
 
@@ -82,6 +144,9 @@ class BasecampAgentConnector::Connector
         boost_poll = value
       end
       parser.on("--no-boosts", "Don't poll the agent's received-boosts feed") { boost_poll = nil }
+      parser.on("--allow-duplicate", "Start even though another connector is already watching this agent " \
+        "on these projects (default: refuse — every event would dispatch twice)") { allow_duplicate = true }
+      parser.on("--status", "List the connectors running on this machine and the funnel paths they own, then exit") { }
       parser.on("--events EVENTS", "Comma-separated GitHub webhook events") { |value| events = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
     end.parse!(arguments)
@@ -97,7 +162,7 @@ class BasecampAgentConnector::Connector
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
-      chat_poll: chat_poll, boost_poll: boost_poll)
+      chat_poll: chat_poll, boost_poll: boost_poll, allow_duplicate: allow_duplicate)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -131,13 +196,22 @@ class BasecampAgentConnector::Connector
     events.split(",").map(&:strip)
   end
 
-  def initialize(options)
+  def initialize(options, registry: BasecampAgentConnector::RunRegistry.new)
     @options = options
+    @registry = registry
   end
 
   def start
+    # Runs that died without tearing down are pruned first: their files would
+    # otherwise read as live connectors and refuse this one, and the paths they
+    # leave behind are exactly what the orphan sweep needs.
+    orphan_paths = @registry.prune.flat_map(&:paths)
+    refuse_duplicate_run
+    warn_of_same_agent_elsewhere
+
     @bridges = build_bridges
     port = @options.port || free_port
+    record_run
 
     # Chat-only watching has no inbound paths, so it needs no funnel at all —
     # Tailscale isn't required unless something actually receives webhooks.
@@ -147,7 +221,7 @@ class BasecampAgentConnector::Connector
         @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
         @tunnel.start
       end
-    @bridges.each { |bridge| bridge.register(base_url: base_url) }
+    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths) }
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
     install_signal_handlers
@@ -238,7 +312,47 @@ class BasecampAgentConnector::Connector
       @server&.stop
       @bridges&.each(&:teardown)
       @tunnel&.stop
+      @registry.forget
     end
+
+    # Two connectors on one agent and one project is never what anyone wanted:
+    # both register a webhook per project, so Basecamp delivers every event to
+    # both, and both poll the same campfires — one mention, two dispatched
+    # agents, two replies. Refuse by default and name the other run, since the
+    # symptom (duplicated work) is far harder to read than this message.
+    def refuse_duplicate_run
+      duplicates = @registry.duplicates_of(agent: @options.agent, projects: @options.projects, repos: @options.repos)
+      return if duplicates.empty? || @options.allow_duplicate
+
+      abort <<~MESSAGE
+        Another connector is already watching @#{@options.agent} on something you asked for:
+        #{duplicates.map { |run| "  #{run.description}" }.join("\n")}
+        Every event would dispatch twice. Stop it first (kill #{duplicates.map(&:pid).join(" ")}), watch
+        different projects, or pass --allow-duplicate if you really mean to run both.
+        `bin/connect --status` lists every run and the funnel paths it owns.
+      MESSAGE
+    end
+
+    # Same agent, no overlap detected. Not fatal, but worth saying: the
+    # received-boosts feed is per-agent, so two boost pollers double every
+    # boost whatever the projects — and project tokens are compared as
+    # written, so a name here and an id there hides a real overlap.
+    def warn_of_same_agent_elsewhere
+      others = @registry.same_agent_elsewhere(agent: @options.agent, projects: @options.projects, repos: @options.repos)
+      return if others.empty?
+
+      warn "Warning: @#{@options.agent} is already being watched by #{others.map(&:description).join("; ")}. " \
+        "No project overlap detected, but project names and ids don't compare, so check `bin/connect --status`."
+      warn "Both runs poll the same received-boosts feed, so every boost dispatches twice — " \
+        "pass --no-boosts to one of them." if @options.boost_poll && others.any?(&:boosts)
+    end
+
+    def record_run
+      @registry.record agent: @options.agent, operator: @options.operator,
+        projects: @options.projects, repos: @options.repos,
+        paths: @bridges.flat_map(&:paths), boosts: !@options.boost_poll.nil?
+    end
+
 
     def free_port
       socket = TCPServer.new("127.0.0.1", 0)

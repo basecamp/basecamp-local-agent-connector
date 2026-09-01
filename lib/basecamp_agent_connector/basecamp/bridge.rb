@@ -40,7 +40,13 @@ class BasecampAgentConnector::Basecamp::Bridge
     "/bc5/#{@secret}" if @webhook_types.any?
   end
 
-  def register(base_url:)
+  # Paths this bridge owns, for the run registry to record. Same list the
+  # server mounts; a chat-only bridge owns none.
+  def paths
+    [ path ].compact
+  end
+
+  def register(base_url:, orphan_paths: [])
     # Chat first: webhook registration opens deliveries toward a server that
     # isn't listening yet, so don't widen that window by discovering chats
     # after it. The poller emits nothing until its thread's first interval
@@ -52,6 +58,11 @@ class BasecampAgentConnector::Basecamp::Bridge
     end
 
     if @webhook_types.any?
+      # Before adding ours, reap the registrations a dead run of ours left
+      # pointing at a path nothing serves any more. Only paths the registry
+      # attributed to an exited run reach here.
+      @webhooks.delete_orphans(projects: @projects, paths: orphan_paths)
+
       url = "#{base_url}#{path}"
       @webhooks.register_all(projects: @projects, url: url, types: @webhook_types.join(","))
       log "Listening for mentions of @#{agent_name} on #{@projects.length} project(s) at #{url}"
