@@ -77,30 +77,54 @@ You need three things in place:
 
 ### Using it
 
-From Claude Code:
+In Claude Code, run `/basecamp-connect` and say which agent and which projects.
+**There's no syntax to memorize** — the skill reads plain English. It needs two
+things from you: the **agent** (an `@profile`) and at least one **project**.
+Everything else has a sane default and can be said in passing.
 
 ```
-/basecamp-connect @Clawdito --project "BC5 Calendar"
+/basecamp-connect @Clawdito on BC5 Calendar
+/basecamp-connect watch BC5.1 and On Call as @Clawdito
+/basecamp-connect @Clawdito — projects BC5.1, On Call, and 20361308
+/basecamp-connect use @Clawdito to watch https://3.basecamp.com/2914079/projects/41746046
+/basecamp-connect @Clawdito on Queenbee, and let anyone at 37signals.com trigger it
+/basecamp-connect @Clawdito on BC5.1 plus PR reviews on basecamp/bc3
+/basecamp-connect @Clawdito on On Call, poll chat every 5s, skip boosts
 ```
 
-That starts watching the named project(s). Now go to Basecamp and @mention
-`@Clawdito` in a comment/message/card with what you want done. Each time you do,
-the agent runs and replies.
+All of those work. The skill confirms what it understood before it starts
+anything, so a loose phrasing costs you a sentence, not a wrong connection.
 
-**Watch several projects at once** — repeat `--project` (name, URL, or ID).
-A single connector run registers one webhook per project and multiplexes them all
-onto one funnel path, so the same `@agent` watches every listed project simultaneously:
+The flag form still works too, if you prefer typing it that way —
+`/basecamp-connect @Clawdito --project "BC5 Calendar" --project "On Call"` — and
+it's what gets handed to `bin/connect` underneath either way. Skip it: say what
+you want.
 
-```
-/basecamp-connect @Clawdito --project "BC5.1" --project "On Call" --project 20361308
-```
+Then go to Basecamp and @mention `@Clawdito` in a comment, message, or card with
+what you want done. Each time you do, the agent runs and replies.
 
-- `--project` takes a **name, URL, or ID** — the CLI resolves it.
-- Watch GitHub PR reviews too, over the **same** server: add `--repo <owner>/<repo>`
-  (repeatable). You need at least one `--project` or `--repo`; `--project` also
-  needs an `@agent`. Only **your** approvals (the login `gh` is signed in as, or
-  `--gh-operator <login>`) reach the agent as `approved`; anyone else's approval
-  is dropped, while their requested changes and comments still come through.
+**Invoked bare, `/basecamp-connect` reuses your last connection** — agent,
+projects, trust, and polling, from `~/.config/basecamp-connect/last.json`. It
+shows you those and asks before reconnecting, so the usual second session is
+just `/basecamp-connect` and a yes.
+
+A few things worth knowing about what you can ask for:
+
+- **A project can be a name, a URL, or an ID.** Any of the three resolves; a
+  partial name is fine if it's unambiguous.
+- **Several projects, one connector.** One webhook per project, all multiplexed
+  onto a single funnel path, so the same `@agent` watches every project you named
+  at once. Add as many as you like.
+- **Who's allowed to trigger it defaults to you alone.** Broaden it in the same
+  sentence — "let Marie trigger it too," "anyone at 37signals.com," "anyone on
+  the project" — see [Trust modes](#trust-modes) for what each one really means.
+- **GitHub PR reviews ride the same server.** Ask for a repo ("plus PR reviews on
+  basecamp/bc3") and review events arrive on the same funnel. Only **your**
+  approvals (the login `gh` is signed in as) reach the agent as `approved`;
+  someone else's approval is dropped, while their requested changes and comments
+  still come through.
+- **You need an agent and at least one project** — or a repo, for a
+  GitHub-only run. That's the whole requirement.
 
 ### Stopping (and why it matters)
 

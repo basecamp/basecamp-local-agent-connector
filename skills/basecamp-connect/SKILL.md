@@ -89,6 +89,18 @@ run `bin/setup` (see the repo README).
 
 ## Invocation
 
+**The arguments are natural language, not a grammar.** Read whatever the user
+wrote and pull out the agent, the projects, and any trust or polling wishes —
+`@Clawdito on BC5 Calendar`, `watch BC5.1 and On Call as @Clawdito`, `use
+@Clawdito on Queenbee and let anyone at 37signals.com trigger it` all mean what
+they say. Never make the user restate it as flags. The flags below are the
+**canonical form you translate into** before calling `bin/connect`, and they're
+also accepted verbatim when the user types them.
+
+Ask only for what's genuinely missing (an agent, or a project), and confirm the
+resolved connection before launching — the same confirmation the no-args path
+does.
+
 ```
 /basecamp-connect                                                     # reuse last connection (confirm first)
 /basecamp-connect @Clawdito --project "BC5 Calendar"                 # one project
