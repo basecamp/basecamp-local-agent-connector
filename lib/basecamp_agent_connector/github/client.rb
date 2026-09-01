@@ -27,9 +27,11 @@ class BasecampAgentConnector::GitHub::Client
   end
 
   # Every hook on the repo, whoever owns it — read so a startup sweep can
-  # recognize the ones a dead run of ours left behind.
+  # recognize the ones a dead run of ours left behind. Paginated, because a
+  # hook on page two is exactly as orphaned as one on page one; `--slurp`
+  # wraps the pages in an outer array, which is what gets flattened away.
   def webhooks(repo:)
-    Array json("api", "repos/#{repo}/hooks")
+    Array(json("api", "--paginate", "--slurp", "repos/#{repo}/hooks")).flatten
   end
 
   # The login `gh` is authenticated as.
