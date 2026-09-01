@@ -46,7 +46,15 @@ class BasecampAgentConnector::Basecamp::Bridge
     [ path ].compact
   end
 
-  def register(base_url:, orphan_paths: [])
+  # Reaps the registrations abandoned runs left pointing at paths nothing
+  # serves any more — on the projects *those* runs watched, not just the ones
+  # this run does. A dead run's webhooks sit where it was watching, which this
+  # run need not be. Returns the projects it could account for.
+  def sweep_orphans(runs)
+    @webhooks.delete_orphans(projects: @projects | runs.flat_map(&:projects), paths: runs.flat_map(&:paths))
+  end
+
+  def register(base_url:)
     # Chat first: webhook registration opens deliveries toward a server that
     # isn't listening yet, so don't widen that window by discovering chats
     # after it. The poller emits nothing until its thread's first interval
@@ -58,11 +66,6 @@ class BasecampAgentConnector::Basecamp::Bridge
     end
 
     if @webhook_types.any?
-      # Before adding ours, reap the registrations a dead run of ours left
-      # pointing at a path nothing serves any more. Only paths the registry
-      # attributed to an exited run reach here.
-      @webhooks.delete_orphans(projects: @projects, paths: orphan_paths)
-
       url = "#{base_url}#{path}"
       @webhooks.register_all(projects: @projects, url: url, types: @webhook_types.join(","))
       log "Listening for mentions of @#{agent_name} on #{@projects.length} project(s) at #{url}"

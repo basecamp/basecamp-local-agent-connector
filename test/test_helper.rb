@@ -224,6 +224,14 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner, wait: wait)
   end
 
+  # A run the registry read as no longer running: what a startup's orphan
+  # sweep is handed, and the only record of which webhooks were that run's.
+  def dead_run(projects: [], repos: [], paths: [ "/bc5/dead" ], pid: 4_194_303)
+    BasecampAgentConnector::RunRegistry::Run.from_json(
+      "pid" => pid, "started_at" => "2026-09-01T00:00:00Z", "agent" => "clawdito", "operator" => "jorge",
+      "projects" => projects, "repos" => repos, "paths" => paths)
+  end
+
   def build_github_cli(command_runner)
     BasecampAgentConnector::GitHub::Client.new(command_runner: command_runner)
   end

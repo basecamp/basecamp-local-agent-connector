@@ -22,6 +22,18 @@ class GithubClientTest < Minitest::Test
     assert build_github_cli(runner).delete_webhook(repo: "acme/widgets", id: 888)
   end
 
+  # The hooks endpoint pages at 30, and a hook on page two is exactly as
+  # orphaned as one on page one.
+  def test_webhooks_reads_every_page_of_hooks
+    runner = FakeCommandRunner.new
+    runner.stub "repos/acme/widgets/hooks", stdout: JSON.generate([ [ { "id" => 1 } ], [ { "id" => 2 } ] ])
+
+    hooks = build_github_cli(runner).webhooks(repo: "acme/widgets")
+
+    assert_equal [ 1, 2 ], hooks.map { |hook| hook["id"] }
+    assert_equal [ [ "gh", "api", "--paginate", "--slurp", "repos/acme/widgets/hooks" ] ], runner.commands
+  end
+
   def test_authenticated_login_reads_the_login_gh_is_signed_in_as
     runner = FakeCommandRunner.new
     runner.stub "api user", stdout: JSON.generate("login" => "octocat", "id" => 1)
