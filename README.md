@@ -105,6 +105,13 @@ default and can be said in passing.
 All of those work. The skill confirms what it understood before it starts
 anything, so a loose phrasing costs you a sentence, not a wrong connection.
 
+> [!TIP]
+> **You only have to say it once.** Every successful connection is stored in
+> `~/.config/basecamp-connect/last.json` — agent, projects, trust, and polling —
+> so invoking `/basecamp-connect` with nothing after it picks those up. It shows
+> you what it remembered and asks before reconnecting, so the usual second
+> session is just `/basecamp-connect` and a yes.
+
 The flag form still works too, if you prefer typing it that way —
 `/basecamp-connect @Clawdito --project "BC5 Calendar" --project "On Call"` — and
 it's what gets handed to `bin/connect` underneath either way. Skip it: say what
@@ -112,11 +119,6 @@ you want.
 
 Then go to Basecamp and @mention `@Clawdito` in a comment, message, or card with
 what you want done. Each time you do, the agent runs and replies.
-
-**Invoked bare, `/basecamp-connect` reuses your last connection** — agent,
-projects, trust, and polling, from `~/.config/basecamp-connect/last.json`. It
-shows you those and asks before reconnecting, so the usual second session is
-just `/basecamp-connect` and a yes.
 
 A few things worth knowing about what you can ask for:
 
