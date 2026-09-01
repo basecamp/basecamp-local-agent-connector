@@ -1,4 +1,4 @@
-# basecamp-local-agent-connector
+# Basecamp Agent Connector (experimental)
 
 > [!WARNING]
 > **Experimental.** This drives agents from Basecamp using the pieces that
