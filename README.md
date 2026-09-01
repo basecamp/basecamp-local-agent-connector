@@ -1,9 +1,9 @@
 # basecamp-local-agent-connector
 
 > **Experimental.** This drives agents from Basecamp using the pieces that
-> already exist: webhooks, the `basecamp` CLI, a funnel on your own machine.
-> Proper first-class support is being built; expect this to be replaced by it,
-> not to grow into it.
+> already exist: webhooks, the [`basecamp` CLI](https://basecamp.com/cli), a
+> funnel on your own machine. Proper first-class support is being built; expect
+> this to be replaced by it, not to grow into it.
 
 Drive local Claude Code agents from Basecamp. **@mention an agent user** (e.g.
 `@Clawdito fix the calendar bug`) in any Basecamp comment, message, or card — and
@@ -67,7 +67,7 @@ You need three things in place:
 
 3. **An agent user + its local profile.** The agent is a *real Basecamp user*
    (e.g. a bot account named “Clawdito”) that you can @mention. The connector
-   talks to Basecamp through the [`basecamp` CLI](https://github.com/basecamp),
+   talks to Basecamp through the [`basecamp` CLI](https://basecamp.com/cli),
    which supports named **profiles** — and the agent name you pass must match a
    local profile authenticated **as that agent user**:
 
