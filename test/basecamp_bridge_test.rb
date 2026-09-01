@@ -17,6 +17,37 @@ class BasecampBridgeTest < Minitest::Test
     assert_includes created.first.join(" "), "https://host.ts.net#{bridge.path}"
   end
 
+  # A dead run's webhooks sit on the projects *it* watched, which this run need
+  # not watch at all. Sweeping only this run's projects leaves them registered
+  # for good.
+  def test_sweeping_reaps_orphans_on_the_projects_the_dead_run_watched
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks delete", stdout: envelope({})
+    runner.stub "list --project Z", stdout: envelope([ { "id" => 111, "payload_url" => "https://host.ts.net/bc5/dead" } ])
+    runner.stub "list --project A", stdout: envelope([])
+
+    swept = nil
+    capture_io { swept = bridge(runner, projects: [ "A" ]).sweep_orphans([ dead_run(projects: [ "Z" ], paths: [ "/bc5/dead" ]) ]) }
+
+    assert_equal [ "A", "Z" ], swept
+    deletions = runner.commands_matching(/webhooks delete/)
+    assert_equal 1, deletions.length
+    assert_includes deletions.first, "111"
+  end
+
+  # Nothing there could be attributed, so the project is not swept and the run
+  # that owned it keeps its record.
+  def test_a_project_that_cannot_be_listed_is_not_swept
+    runner = FakeCommandRunner.new
+    runner.stub "list --project Z", exit_status: 1, stderr: "nope"
+    runner.stub "list --project A", stdout: envelope([])
+
+    swept = nil
+    capture_io { swept = bridge(runner, projects: [ "A" ]).sweep_orphans([ dead_run(projects: [ "Z" ], paths: [ "/bc5/dead" ]) ]) }
+
+    assert_equal [ "A" ], swept
+  end
+
   def test_teardown_deletes_registered_webhooks
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)

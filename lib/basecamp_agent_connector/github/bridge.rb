@@ -32,9 +32,13 @@ class BasecampAgentConnector::GitHub::Bridge
     [ path ].compact
   end
 
-  def register(base_url:, orphan_paths: [])
-    @webhooks.delete_orphans(repos: @repos, paths: orphan_paths)
+  # Reaps the hooks abandoned runs left behind, on the repos those runs
+  # watched as well as this one's. Returns the repos it could account for.
+  def sweep_orphans(runs)
+    @webhooks.delete_orphans(repos: @repos | runs.flat_map(&:repos), paths: runs.flat_map(&:paths))
+  end
 
+  def register(base_url:)
     endpoint = "#{base_url}#{path}"
     @webhooks.register_all(repos: @repos, url: endpoint, secret: @hmac_secret, events: @events)
     log "Listening for #{@events.join(', ')} on #{@repos.length} repo(s) at #{endpoint}"

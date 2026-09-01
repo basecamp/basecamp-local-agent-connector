@@ -872,9 +872,10 @@ A webhook whose `payload_url` ends in a path that listing names is **live** —
 leave it. `--status` also reports any running `bin/connect` process the registry
 can't account for (an older build recorded nothing): treat those pids as live
 connectors whose webhooks are **unattributable**, and delete none of them. A path belonging to a run that has exited is an orphan, and the **next
-`bin/connect` start sweeps those automatically**: it prunes the dead run's entry
-from `~/.config/basecamp-connect/runs/` and deletes the webhooks pointing at the
-paths that run recorded. So the normal answer to a leftover is "start the
+`bin/connect` start sweeps those automatically**: it deletes the webhooks
+pointing at the paths that run recorded — on the projects and repos that run
+watched, not just the ones you are starting — and forgets its entry in
+`~/.config/basecamp-connect/runs/` once every one of them is accounted for. So the normal answer to a leftover is "start the
 connector again," not a manual delete.
 
 Delete by hand only what `--status` proves is unowned, with `basecamp webhooks

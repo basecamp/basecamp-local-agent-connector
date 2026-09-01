@@ -168,8 +168,10 @@ account for is now called out by pid, with its paths marked unknown.
 
 Genuine orphans clean themselves up. A run killed with `SIGKILL` never tears
 down, so its entry stays behind with the paths it owned — and the next
-`bin/connect` start prunes the entry and deletes exactly those webhooks. A path
-nobody recorded is never touched.
+`bin/connect` start deletes exactly those webhooks, on the projects and repos
+*that* run watched rather than only the ones you are starting now, and forgets
+the entry once every one of them is accounted for. A path nobody recorded is
+never touched.
 
 ### Stopping (and why it matters)
 

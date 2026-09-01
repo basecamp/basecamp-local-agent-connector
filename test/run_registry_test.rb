@@ -29,25 +29,64 @@ class RunRegistryTest < Minitest::Test
   end
 
   # The SIGKILL case: no teardown ran, so the file and its paths are all that
-  # says those webhooks were ever ours.
-  def test_pruning_removes_dead_runs_and_returns_what_they_owned
+  # says those webhooks were ever ours — which is why reading them does not
+  # delete them.
+  def test_abandoned_runs_are_reported_and_left_on_disk
     in_registry do |registry, directory|
       write_run directory, pid: dead_pid, agent: "clawdito", paths: [ "/bc5/orphan" ]
       registry.record(**run_attributes)
 
-      pruned = registry.prune
+      abandoned = registry.abandoned
 
-      assert_equal [ "/bc5/orphan" ], pruned.flat_map(&:paths)
+      assert_equal [ "/bc5/orphan" ], abandoned.flat_map(&:paths)
+      assert_path_exists File.join(directory, "#{dead_pid}.json")
       assert_equal [ Process.pid ], registry.live.map(&:pid)
-      assert_equal 1, Dir.glob(File.join(directory, "*.json")).length
     end
   end
 
-  def test_a_live_run_is_never_pruned
+  def test_discarding_removes_the_entry_of_a_swept_run
+    in_registry do |registry, directory|
+      write_run directory, pid: dead_pid, agent: "clawdito", paths: [ "/bc5/orphan" ]
+
+      registry.discard registry.abandoned
+
+      refute_path_exists File.join(directory, "#{dead_pid}.json")
+    end
+  end
+
+  # Scopes nothing swept keep the entry: the webhooks are still there, and the
+  # entry is the only thing that could ever say they were ours.
+  def test_a_run_is_swept_only_when_every_project_and_repo_it_watched_was
+    run = BasecampAgentConnector::RunRegistry::Run.from_json(
+      "pid" => dead_pid, "projects" => [ "Queenbee" ], "repos" => [ "basecamp/bc3" ], "paths" => [ "/bc5/orphan" ])
+
+    assert run.swept_by?(projects: [ "Queenbee", "BC5.1" ], repos: [ "basecamp/bc3" ])
+    refute run.swept_by?(projects: [ "Queenbee" ], repos: [])
+    refute run.swept_by?(projects: [], repos: [ "basecamp/bc3" ])
+  end
+
+  # A pid is recyclable, and the gap between reading the abandoned runs and
+  # discarding them spans a whole startup. Deleting by pathname would unclaim
+  # the live connector that reserved under that pid in the meantime, and a
+  # third startup would then reserve beside it.
+  def test_discarding_leaves_the_entry_a_recycled_pid_has_since_reserved
+    in_registry do |registry, directory|
+      write_run directory, pid: Process.pid, agent: "clawdito", process_start: "0"
+      abandoned = registry.abandoned
+
+      registry.reserve(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+      registry.discard abandoned
+
+      assert_equal [ Process.pid ], registry.live.map(&:pid)
+      assert_equal "chef", registry.live.first.agent
+    end
+  end
+
+  def test_a_live_run_is_never_abandoned
     in_registry do |registry|
       registry.record(**run_attributes)
 
-      assert_empty registry.prune
+      assert_empty registry.abandoned
       assert_equal [ Process.pid ], registry.live.map(&:pid)
     end
   end
@@ -169,7 +208,7 @@ class RunRegistryTest < Minitest::Test
       File.write File.join(directory, "999999.json"), "{not json"
 
       assert_empty registry.live
-      assert_empty registry.prune
+      assert_empty registry.abandoned
       assert_path_exists File.join(directory, "999999.json")
     end
   end
@@ -234,9 +273,11 @@ class RunRegistryTest < Minitest::Test
       { agent: agent, operator: "jorge", projects: projects, repos: repos, paths: paths, boosts: boosts }
     end
 
-    def write_run(directory, pid:, agent:, projects: [ "Queenbee" ], repos: [], paths: [])
+    # `process_start` disagreeing with the live one is what proves a pid was
+    # recycled; omitting it leaves the bare pid probe as the answer.
+    def write_run(directory, pid:, agent:, projects: [ "Queenbee" ], repos: [], paths: [], process_start: nil)
       File.write File.join(directory, "#{pid}.json"), JSON.generate(
-        pid: pid, started_at: "2026-09-01T00:00:00Z", agent: agent, operator: "jorge",
+        pid: pid, process_start: process_start, started_at: "2026-09-01T00:00:00Z", agent: agent, operator: "jorge",
         projects: projects, repos: repos, paths: paths, boosts: true)
     end
 

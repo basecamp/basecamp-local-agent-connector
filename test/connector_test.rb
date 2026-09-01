@@ -166,6 +166,21 @@ class ConnectorTest < Minitest::Test
     def stop; end
   end
 
+  # Stands in for a bridge that has swept the scopes it was given, and reports
+  # which ones it could account for.
+  class FakeBridge
+    attr_reader :swept
+
+    def initialize(scopes)
+      @scopes = scopes
+    end
+
+    def sweep_orphans(runs)
+      @swept = runs
+      @scopes
+    end
+  end
+
   def test_start_mounts_only_its_own_bridge_paths_on_the_shared_funnel
     runner = github_runner
 
@@ -352,13 +367,54 @@ class ConnectorTest < Minitest::Test
   # startup is what sweeps them. Status must leave it alone.
   def test_status_leaves_a_dead_run_for_the_next_startup_to_sweep
     with_registry do |registry, directory|
-      File.write File.join(directory, "4194303.json"), JSON.generate(
-        pid: 4_194_303, started_at: "2026-09-01T00:00:00Z", agent: "clawdito", operator: "jorge",
-        projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/orphan" ], boosts: true)
+      write_dead_run directory
 
       capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: no_processes) }
 
-      assert_equal [ "/bc5/orphan" ], registry.prune.flat_map(&:paths)
+      assert_equal [ "/bc5/orphan" ], registry.abandoned.flat_map(&:paths)
+    end
+  end
+
+  # The failure this prevents, seen in practice: a dead run watched projects
+  # this one doesn't, so its webhooks are nowhere this run would look — and
+  # discarding its entry on the way past leaves them unattributable forever.
+  def test_the_sweep_covers_the_scopes_the_dead_run_watched_not_just_this_run_s
+    with_registry do |registry, directory|
+      write_dead_run directory, projects: [ "On Call" ], repos: [ "acme/z" ]
+      connector = connector(registry, "@clawdito", "--project", "Queenbee")
+      bridge = FakeBridge.new([ "Queenbee", "On Call" ])
+      connector.instance_variable_set :@basecamp_bridge, bridge
+
+      connector.send(:sweep_orphans, registry.abandoned)
+
+      assert_equal [ [ "On Call" ] ], bridge.swept.map(&:projects)
+    end
+  end
+
+  def test_a_dead_runs_entry_survives_a_startup_that_cannot_sweep_all_of_it
+    with_registry do |registry, directory|
+      write_dead_run directory, projects: [ "On Call" ], repos: [ "acme/z" ]
+      connector = connector(registry, "@clawdito", "--project", "Queenbee")
+      connector.instance_variable_set :@basecamp_bridge, FakeBridge.new([ "Queenbee", "On Call" ])
+
+      connector.send(:sweep_orphans, registry.abandoned)
+
+      assert_equal 1, registry.abandoned.length
+      assert_path_exists File.join(directory, "4194303.json")
+    end
+  end
+
+  def test_a_dead_runs_entry_is_discarded_once_every_scope_it_watched_is_swept
+    with_registry do |registry, directory|
+      write_dead_run directory, projects: [ "On Call" ], repos: [ "acme/z" ]
+      connector = connector(registry, "@clawdito", "--project", "Queenbee", "--repo", "acme/a")
+      connector.instance_variable_set :@basecamp_bridge, FakeBridge.new([ "Queenbee", "On Call" ])
+      connector.instance_variable_set :@github_bridge, FakeBridge.new([ "acme/a", "acme/z" ])
+
+      connector.send(:sweep_orphans, registry.abandoned)
+
+      assert_empty registry.abandoned
+      refute_path_exists File.join(directory, "4194303.json")
     end
   end
 
@@ -401,6 +457,12 @@ class ConnectorTest < Minitest::Test
       Dir.mktmpdir do |directory|
         yield BasecampAgentConnector::RunRegistry.new(directory: directory), directory
       end
+    end
+
+    def write_dead_run(directory, projects: [ "Queenbee" ], repos: [])
+      File.write File.join(directory, "4194303.json"), JSON.generate(
+        pid: 4_194_303, started_at: "2026-09-01T00:00:00Z", agent: "clawdito", operator: "jorge",
+        projects: projects, repos: repos, paths: [ "/bc5/orphan" ], boosts: true)
     end
 
     def connector(registry, *arguments)

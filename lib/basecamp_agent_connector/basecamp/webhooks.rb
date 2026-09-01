@@ -28,25 +28,36 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # ownership is a fact rather than a guess. A path nobody recorded is nobody's
   # business here: it may belong to a live connector, another machine, or an
   # older build, and deleting one of those silently makes it deaf.
+  #
+  # Returns the projects it could account for. A project whose registrations
+  # would not list, or whose orphan would not delete, is not one of them: the
+  # webhook is still there, so the record of whose it was has to stay too.
   def delete_orphans(projects:, paths:)
-    return if paths.empty?
+    return projects if paths.empty?
 
-    projects.each do |project|
-      orphans_in(project, paths).each do |id|
-        log "deleting webhook #{id} on project #{project} left by an exited connector"
-        delete Registration.new(project: project, id: id)
-      end
-    end
+    projects.select { |project| sweep(project, paths) }
   end
 
   private
+    def sweep(project, paths)
+      orphans = orphans_in(project, paths)
+      return false if orphans.nil?
+
+      orphans.map { |id| delete_orphan(project, id) }.all?
+    end
+
+    def delete_orphan(project, id)
+      log "deleting webhook #{id} on project #{project} left by an exited connector"
+      delete Registration.new(project: project, id: id)
+    end
+
     def orphans_in(project, paths)
       @basecamp_cli.webhooks(project: project).filter_map do |webhook|
         webhook["id"] if paths.any? { |path| webhook["payload_url"].to_s.end_with?(path) }
       end
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "could not list webhooks for project #{project}: #{error.message}"
-      []
+      nil
     end
 
     def register(project:, url:, types:)
@@ -70,11 +81,13 @@ class BasecampAgentConnector::Basecamp::Webhooks
     end
 
     def delete(registration)
-      unless @basecamp_cli.delete_webhook(id: registration.id, project: registration.project)
-        log "failed to delete webhook #{registration.id} for project #{registration.project}"
-      end
+      return true if @basecamp_cli.delete_webhook(id: registration.id, project: registration.project)
+
+      log "failed to delete webhook #{registration.id} for project #{registration.project}"
+      false
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "failed to delete webhook #{registration.id} for project #{registration.project}: #{error.message}"
+      false
     end
 
     def log(message)

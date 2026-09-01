@@ -80,6 +80,14 @@ class BasecampAgentConnector::RunRegistry
       [ "pid #{pid}", agent.nil? ? nil : "@#{agent}", watching.compact.join(" + "), "started #{started_at}" ].compact.join(", ")
     end
 
+    # Every project and repo this run watched has been accounted for, so its
+    # entry has no work left to do. Anything it watched that nothing swept
+    # keeps the entry alive: the entry is the only thing that could ever
+    # attribute a webhook still sitting there.
+    def swept_by?(projects:, repos:)
+      (self.projects - projects).empty? && (self.repos - repos).empty?
+    end
+
     private
       # Only a recorded start time that disagrees with the live one proves the
       # pid was recycled. Either side missing (no /proc, an older entry) leaves
@@ -98,14 +106,27 @@ class BasecampAgentConnector::RunRegistry
     entries.map(&:last).select(&:alive?)
   end
 
-  # Deletes the files of runs that are no longer running and returns those
-  # runs, so the caller can reap what they left behind.
-  def prune
-    entries.filter_map do |file, run|
-      next if run.alive?
+  # Runs that are no longer running, left exactly where they are. Their
+  # entries name the webhooks they abandoned, and until something has swept
+  # those, deleting the entry destroys the only record that they were ever
+  # ours — which is how eleven registrations became unattributable litter.
+  def abandoned
+    entries.map(&:last).reject(&:alive?)
+  end
 
-      remove(file)
-      run
+  # Forgets abandoned runs whose webhooks have been reaped. Under the lock,
+  # and only where the file still holds that exact run: pids are recycled, so
+  # between the scan and here a new connector may have reserved under the same
+  # pid, and deleting that entry would unclaim a live connector — after which
+  # a third startup would happily reserve beside it.
+  def discard(runs)
+    return if runs.empty?
+
+    exclusively do
+      runs.each do |run|
+        file = file_for(run.pid)
+        remove file if read(file)&.last == run
+      end
     end
   end
 

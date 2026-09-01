@@ -88,20 +88,37 @@ class WebhooksTest < Minitest::Test
   def test_sweeps_nothing_when_no_dead_run_left_a_path
     runner = FakeCommandRunner.new
 
-    webhooks(runner).delete_orphans(projects: [ 7 ], paths: [])
+    swept = webhooks(runner).delete_orphans(projects: [ 7 ], paths: [])
 
     assert_empty runner.commands
+    assert_equal [ 7 ], swept
   end
 
-  def test_a_listing_failure_leaves_the_project_alone
+  # Nothing there could be listed, so nothing there is accounted for, and the
+  # run whose webhooks those might be keeps its record.
+  def test_a_listing_failure_leaves_the_project_alone_and_unswept
     runner = FakeCommandRunner.new
     runner.stub "webhooks list", exit_status: 1, stderr: "nope"
     logs = StringIO.new
 
-    webhooks(runner, logs).delete_orphans(projects: [ 7 ], paths: [ "/bc5/dead" ])
+    swept = webhooks(runner, logs).delete_orphans(projects: [ 7 ], paths: [ "/bc5/dead" ])
 
     assert_empty runner.commands_matching(/webhooks delete/)
+    assert_empty swept
     assert_match(/could not list webhooks for project 7/, logs.string)
+  end
+
+  # The orphan is still registered, so the ownership record still has work to do.
+  def test_an_orphan_that_will_not_delete_leaves_the_project_unswept
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks list", stdout: envelope([ { "id" => 111, "payload_url" => "https://host.ts.net/bc5/dead" } ])
+    runner.stub "webhooks delete", exit_status: 1, stderr: "nope"
+    logs = StringIO.new
+
+    swept = webhooks(runner, logs).delete_orphans(projects: [ 7 ], paths: [ "/bc5/dead" ])
+
+    assert_empty swept
+    assert_match(/failed to delete webhook 111/, logs.string)
   end
 
   private
