@@ -19,7 +19,7 @@ context it needs.
 
 ---
 
-## For the end user
+## Usage
 
 ### What it feels like
 
