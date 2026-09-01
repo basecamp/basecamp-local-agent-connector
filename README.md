@@ -1,8 +1,14 @@
 # basecamp-local-agent-connector
 
-Drive local Claude Code agents from Basecamp. **@mention an agent user** (e.g.
+> [!WARNING]
+> **Experimental.** This drives agents from Basecamp using the pieces that
+> already exist: webhooks, the [`basecamp` CLI](https://basecamp.com/cli), a
+> funnel on your own machine. Proper first-class support is being built; expect
+> this to be replaced by it, not to grow into it.
+
+Drive local coding agents from Basecamp. **@mention an agent user** (e.g.
 `@Clawdito fix the calendar bug`) in any Basecamp comment, message, or card — and
-a Claude agent on **your** machine picks it up, gathers the surrounding context
+an agent on **your** machine picks it up, gathers the surrounding context
 from Basecamp, does the work in the right repo, and **replies as that agent
 user**, right where you asked.
 
@@ -62,7 +68,7 @@ You need three things in place:
 
 3. **An agent user + its local profile.** The agent is a *real Basecamp user*
    (e.g. a bot account named “Clawdito”) that you can @mention. The connector
-   talks to Basecamp through the [`basecamp` CLI](https://github.com/basecamp),
+   talks to Basecamp through the [`basecamp` CLI](https://basecamp.com/cli),
    which supports named **profiles** — and the agent name you pass must match a
    local profile authenticated **as that agent user**:
 
@@ -197,7 +203,7 @@ automatically. In Claude Code, ending the skill does this; from a terminal, pres
                           /basecamp-connect  (the driver, a Claude skill)
                                      • boosts the recording `On it!` as the agent (the ack)
                                      • resolves the local repo from the project
-                                     • dispatches a background Claude agent in that repo
+                                     • dispatches a background agent in that repo
                                        (which gathers context via the `basecamp` CLI)
                                      • replies on the card as the agent (--profile)
 ```
@@ -214,6 +220,12 @@ Two halves, deliberately separated:
 
 The bridge is dumb-and-safe; the driver is smart-and-contextual. You can run
 `bin/connect` on its own to see exactly what would be dispatched.
+
+**The bridge doesn't know or care what reads it.** It writes one trusted event
+per line to STDOUT and stops there, so any agent that can run a process and read
+its output can be the driver — the `basecamp` CLI does the replying, and it takes
+a `--profile`, not an agent. The driver shipped here is a Claude Code skill
+because that's what it was built against, not because the protocol needs one.
 
 ---
 

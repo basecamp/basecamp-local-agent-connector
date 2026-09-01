@@ -2,10 +2,10 @@
 
 ## Purpose
 
-Manage local Claude Code agents from Basecamp. This project bridges Basecamp
-webhooks to local Claude agents: you write a comment / message / card in
+Manage local coding agents from Basecamp. This project bridges Basecamp
+webhooks to local agents: you write a comment / message / card in
 Basecamp that @mentions a real agent user (e.g. `@Clawdito`), and a background
-Claude agent running on your machine picks it up, gathers context from Basecamp,
+agent running on your machine picks it up, gathers context from Basecamp,
 acts on it, and replies as that agent user.
 
 The bridge has two halves:
@@ -24,7 +24,7 @@ The bridge has two halves:
 
 Basecamp is an excellent place to *capture context* — a comment lives inside a
 card, inside a project, with a creator, a thread, and linked recordings. Rather
-than re-typing context into Claude, you write where the work already lives and
+than re-typing context into an agent, you write where the work already lives and
 let the agent pull the surrounding context from Basecamp. The webhook payload is
 treated as a *notification + pointer*, not as a source of truth (see Security).
 

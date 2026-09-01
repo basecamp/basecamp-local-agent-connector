@@ -3,7 +3,7 @@
 ## Purpose
 
 The connector in this repo proved the idea: you @mention an agent user in
-Basecamp, a Claude agent on your machine picks it up, works with full Basecamp
+Basecamp, an agent on your machine picks it up, works with full Basecamp
 context, and replies in place. It works — but every piece of it is a
 workaround for something Basecamp doesn't provide. This document proposes what
 Basecamp (BC5) should build so the approach is native, with all of today's
