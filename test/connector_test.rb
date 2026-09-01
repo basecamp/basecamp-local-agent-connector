@@ -1,4 +1,5 @@
 require "test_helper"
+require "tmpdir"
 
 class ConnectorTest < Minitest::Test
   def test_parses_basecamp_only_with_defaults
@@ -227,7 +228,143 @@ class ConnectorTest < Minitest::Test
     assert_match(/Polling 0 Campfire\(s\)/, err)
   end
 
+  def test_parses_the_duplicate_opt_in
+    refute parse("@clawdito", "--project", "A").allow_duplicate
+    assert parse("@clawdito", "--project", "A", "--allow-duplicate").allow_duplicate
+  end
+
+  # The failure this prevents: two connectors on one agent and project, so
+  # Basecamp delivers every event to both and the agent answers twice.
+  def test_refuses_to_start_beside_a_live_run_on_the_same_agent_and_project
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/live" ], boosts: true)
+      connector = connector(registry, "@clawdito", "--project", "Queenbee")
+
+      error = assert_raises SystemExit do
+        capture_stderr { connector.send(:refuse_duplicate_run) }
+      end
+
+      refute_equal 0, error.status
+    end
+  end
+
+  def test_allow_duplicate_starts_anyway
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+      connector = connector(registry, "@clawdito", "--project", "Queenbee", "--allow-duplicate")
+
+      connector.send(:refuse_duplicate_run)
+    end
+  end
+
+  def test_a_live_run_on_another_agent_is_not_a_duplicate
+    with_registry do |registry|
+      registry.record(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+
+      connector(registry, "@clawdito", "--project", "Queenbee").send(:refuse_duplicate_run)
+    end
+  end
+
+  # Same agent, no overlap: legal, but the received-boosts feed is per-agent,
+  # so both runs would dispatch every boost.
+  def test_warns_when_the_same_agent_runs_elsewhere_with_boosts_on
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+
+      warnings = capture_stderr do
+        connector(registry, "@clawdito", "--project", "BC5.1").send(:warn_of_same_agent_elsewhere)
+      end
+
+      assert_match(/already being watched/, warnings)
+      assert_match(/--no-boosts/, warnings)
+    end
+  end
+
+  def test_status_names_the_paths_a_live_run_owns
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [ "basecamp/bc3" ],
+        paths: [ "/bc5/abc", "/gh/def" ], boosts: false)
+
+      output = capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry) }
+
+      assert_match(/1 connector\(s\) running/, output)
+      assert_match(%r{/bc5/abc, /gh/def}, output)
+      assert_match(/belongs to a LIVE run/, output)
+    end
+  end
+
+  def test_status_with_nothing_running
+    with_registry do |registry|
+      output = capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: no_processes) }
+
+      assert_match(/No connector recorded as running/, output)
+    end
+  end
+
+  # The transition case, and the one that caused the damage: a connector from
+  # an older build records nothing, so silence here would read as "nothing
+  # running" while its webhooks sit unattributable in Basecamp.
+  def test_status_calls_out_a_running_connector_the_registry_does_not_know
+    with_registry do |registry|
+      output = capture_stdout do
+        BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: processes(4_194_302))
+      end
+
+      assert_match(/NOT recorded: 4194302/, output)
+      assert_match(/cannot be attributed/, output)
+    end
+  end
+
+  def test_status_does_not_report_a_recorded_run_as_unrecorded
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+
+      output = capture_stdout do
+        BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: processes(Process.pid))
+      end
+
+      refute_match(/NOT recorded/, output)
+    end
+  end
+
   private
+    def with_registry
+      Dir.mktmpdir do |directory|
+        yield BasecampAgentConnector::RunRegistry.new(directory: directory, logger: StringIO.new)
+      end
+    end
+
+    def connector(registry, *arguments)
+      BasecampAgentConnector::Connector.new(parse(*arguments), registry: registry)
+    end
+
+    def no_processes
+      processes
+    end
+
+    # A pid with no /proc entry: `watching_process?` errs toward reporting it,
+    # which is the behavior under test.
+    def processes(*pids)
+      runner = FakeCommandRunner.new
+      runner.stub "pgrep", stdout: pids.join("\n")
+      runner
+    end
+
+    def capture_stderr
+      original, $stderr = $stderr, StringIO.new
+      yield
+      $stderr.string
+    ensure
+      $stderr = original
+    end
+
+    def capture_stdout
+      original, $stdout = $stdout, StringIO.new
+      yield
+      $stdout.string
+    ensure
+      $stdout = original
+    end
     def parse(*argv)
       BasecampAgentConnector::Connector.parse_options(argv)
     end

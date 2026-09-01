@@ -239,7 +239,21 @@ wake you per event. You therefore need **two** steps: run the connector in the
 background, then arm a persistent monitor on its output so each new event
 notifies you automatically — with no user prompting in between.
 
-**a. Run the connector in the background** and note the output-file path the
+**a. Check what is already running, then start.** A second connector on the
+same agent and project makes Basecamp deliver every event twice, so ask first:
+
+```bash
+cd ~/Work/basecamp/basecamp-local-agent-connector && bin/connect --status
+```
+
+That lists every connector running on this machine, what it watches, and the
+funnel paths it owns. If one already covers what the user asked for, **say so
+and stop** — don't start a second. `bin/connect` refuses the duplicate on its
+own, and its message names the other run's pid; read that as the answer, not as
+an error to work around. `--allow-duplicate` exists but is the user's call, never
+yours.
+
+Then run the connector in the background and note the output-file path the
 harness reports (you need it for the monitor):
 
 ```bash
@@ -835,11 +849,35 @@ tailscale funnel status                            # expect no /bc5/… or /gh/�
 ```
 
 If the process was killed un-gracefully (e.g. `SIGKILL`) and teardown didn't run,
-delete the leftover webhook(s) manually with `basecamp webhooks delete <id>
---project "<project>"` and unmount each leftover path with `tailscale funnel
---set-path /bc5/<secret> off`. Never run `tailscale funnel reset` — it tears
-down every path on this host's funnel, including ones other tools mounted. Never
-leave a registered webhook or a mounted path behind.
+it leaves webhooks behind. **Never delete a webhook you cannot attribute.** A
+registration you don't recognize may belong to a *live* connector — another
+session's, an older build's (those use `/hook/<secret>`, not `/bc5/<secret>`),
+or another machine's — and deleting one makes that connector silently deaf to
+Basecamp while it goes on polling chat. This has actually happened: eleven of a
+running connector's webhooks were deleted as presumed orphans.
+
+So attribute first:
+
+```bash
+bin/connect --status   # every live run, and the funnel paths each one owns
+```
+
+A webhook whose `payload_url` ends in a path that listing names is **live** —
+leave it. `--status` also reports any running `bin/connect` process the registry
+can't account for (an older build recorded nothing): treat those pids as live
+connectors whose webhooks are **unattributable**, and delete none of them. A path belonging to a run that has exited is an orphan, and the **next
+`bin/connect` start sweeps those automatically**: it prunes the dead run's entry
+from `~/.config/basecamp-connect/runs/` and deletes the webhooks pointing at the
+paths that run recorded. So the normal answer to a leftover is "start the
+connector again," not a manual delete.
+
+Delete by hand only what `--status` proves is unowned, with `basecamp webhooks
+delete <id> --project "<project>"`, and unmount each leftover path with
+`tailscale funnel --set-path /bc5/<secret> off`. If a webhook's path appears in
+no live run *and* in no registry entry, it predates the registry or came from
+elsewhere — **ask the user before deleting it**. Never run `tailscale funnel
+reset` — it tears down every path on this host's funnel, including ones other
+tools mounted.
 
 ## Notes
 

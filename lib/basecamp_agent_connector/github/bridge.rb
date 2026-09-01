@@ -27,7 +27,14 @@ class BasecampAgentConnector::GitHub::Bridge
     "/gh/#{@path_secret}"
   end
 
-  def register(base_url:)
+  # Paths this bridge owns, for the run registry to record.
+  def paths
+    [ path ].compact
+  end
+
+  def register(base_url:, orphan_paths: [])
+    @webhooks.delete_orphans(repos: @repos, paths: orphan_paths)
+
     endpoint = "#{base_url}#{path}"
     @webhooks.register_all(repos: @repos, url: endpoint, secret: @hmac_secret, events: @events)
     log "Listening for #{@events.join(', ')} on #{@repos.length} repo(s) at #{endpoint}"

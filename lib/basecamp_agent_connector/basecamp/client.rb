@@ -146,6 +146,13 @@ class BasecampAgentConnector::Basecamp::Client
     run("webhooks", "delete", id.to_s, "--project", project.to_s).success?
   end
 
+  # Every webhook registered on the project, whoever owns it. Read so a startup
+  # sweep can recognize the ones a dead run of ours left behind — and leave
+  # every other registration alone.
+  def webhooks(project:)
+    Array json("webhooks", "list", "--project", project.to_s)
+  end
+
   private
     # A command either answers (its envelope is handed back), is refused
     # (Error, at once — Basecamp's verdict doesn't improve with repetition),

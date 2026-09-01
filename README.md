@@ -130,6 +130,41 @@ A few things worth knowing about what you can ask for:
   least one project, for watching Basecamp; or a repo on its own, for a
   GitHub-only run — no agent, no project. You can also have both at once.
 
+### More than one connector
+
+Two connectors on the same agent and project is always a mistake: Basecamp
+delivers each event to both, so one mention dispatches two agents and gets two
+replies. `bin/connect` now refuses to start beside a live run that overlaps,
+names the other run's pid, and exits. `--allow-duplicate` overrides it if you
+really mean to.
+
+Each run records itself in `~/.config/basecamp-connect/runs/<pid>.json` — what it
+watches, and the funnel paths it owns — and removes that file at teardown. So
+you can always ask what's running:
+
+```bash
+bin/connect --status
+```
+
+That is also the answer to *"is this leftover webhook safe to delete?"* — a
+question that used to be a guess, and once cost a running connector eleven of
+its webhooks. If a registration's `payload_url` ends in a path `--status` names,
+it belongs to a live run. **Don't delete a webhook you can't attribute:** it may
+be another session's, another machine's, or an older build's (those register
+under `/hook/<secret>` rather than `/bc5/<secret>`), and deleting one leaves that
+connector silently deaf to Basecamp while it goes on polling chat.
+
+`--status` also consults the process table, because the registry only knows runs
+that started with it. A connector from an older build records nothing, so it
+would otherwise read as "nothing running" while holding live webhooks — which is
+exactly how the damage happened. Any `bin/connect` process the registry can't
+account for is now called out by pid, with its paths marked unknown.
+
+Genuine orphans clean themselves up. A run killed with `SIGKILL` never tears
+down, so its entry stays behind with the paths it owned — and the next
+`bin/connect` start prunes the entry and deletes exactly those webhooks. A path
+nobody recorded is never touched.
+
 ### Stopping (and why it matters)
 
 While running, the connector exposes a **public URL** (via Tailscale Funnel) and

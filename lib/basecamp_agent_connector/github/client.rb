@@ -26,6 +26,12 @@ class BasecampAgentConnector::GitHub::Client
     run("api", "-X", "DELETE", "repos/#{repo}/hooks/#{id}").success?
   end
 
+  # Every hook on the repo, whoever owns it — read so a startup sweep can
+  # recognize the ones a dead run of ours left behind.
+  def webhooks(repo:)
+    Array json("api", "repos/#{repo}/hooks")
+  end
+
   # The login `gh` is authenticated as.
   def authenticated_login
     json("api", "user").fetch("login")
