@@ -202,10 +202,6 @@ class BasecampAgentConnector::Connector
   end
 
   def start
-    # Runs that died without tearing down are pruned first: their files would
-    # otherwise read as live connectors and refuse this one, and the paths they
-    # leave behind are exactly what the orphan sweep needs.
-    orphan_paths = @registry.prune.flat_map(&:paths)
     refuse_duplicate_run
     warn_of_same_agent_elsewhere
 
@@ -221,6 +217,13 @@ class BasecampAgentConnector::Connector
         @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
         @tunnel.start
       end
+    # Runs that died without tearing down are pruned only now, once every
+    # startup refusal is behind us: their files are the sole record of the
+    # paths they owned, and registration is what sweeps those. Pruned any
+    # earlier, a refused start would take that record with it and leave the
+    # webhooks unattributable for good. Liveness, not the file, is what the
+    # duplicate check reads, so a dead entry never refuses anyone.
+    orphan_paths = @registry.prune.flat_map(&:paths)
     @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths) }
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
@@ -241,7 +244,7 @@ class BasecampAgentConnector::Connector
     def basecamp_bridge
       operator = resolve_operator
       agent = resolve_agent
-      warn_if_same_user(agent, operator)
+      refuse_same_user(agent, operator)
 
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer(operator, agent), agent: agent,
@@ -295,10 +298,26 @@ class BasecampAgentConnector::Connector
       abort "Could not resolve the operator's GitHub login: #{error.message}\nRun `gh auth login`, or pass --gh-operator LOGIN, and try again."
     end
 
-    def warn_if_same_user(agent, operator)
+    # The agent's own identity never authorizes, so an operator who *is* the
+    # agent can trigger nothing — and every corroborating fetch would run as
+    # the agent. The usual way in is BASECAMP_PROFILE pinned to the agent's
+    # profile with no --operator, since the CLI resolves an unflagged call
+    # through that variable before the default profile.
+    def refuse_same_user(agent, operator)
       if agent.same_user_as?(operator)
-        warn "Warning: agent '#{agent.profile}' and the operator are the same Basecamp user (#{agent.email}). " \
-          "The agent's own identity never authorizes, so nothing will trigger — authenticate the agent profile as a distinct bot user."
+        abort "Agent '#{agent.profile}' and the operator#{operator_label} are the same Basecamp user (#{agent.email || agent.id}). " \
+          "The agent's own identity never authorizes, so nothing could trigger. #{same_user_remedy}"
+      end
+    end
+
+    def same_user_remedy
+      pinned = ENV["BASECAMP_PROFILE"]
+      if @options.operator.nil? && !pinned.to_s.empty?
+        "BASECAMP_PROFILE=#{pinned} is set and --operator is not, so the operator — and every call made on the operator's " \
+          "behalf — resolved through that profile. Unset it (env -u BASECAMP_PROFILE bin/connect …), " \
+          "or pass --operator <your profile>, which pins those calls to that profile instead."
+      else
+        "Authenticate the agent profile as a distinct bot user, or pass --operator <your profile>."
       end
     end
 
@@ -365,8 +384,13 @@ class BasecampAgentConnector::Connector
       @command_runner ||= BasecampAgentConnector::CommandRunner.new
     end
 
+    # Every call not made as the agent is made as the operator, so the
+    # operator profile is the client's default: --operator then governs the
+    # corroborating fetches and webhook registrations too, not just whose
+    # identity authorizes, and a BASECAMP_PROFILE in the environment cannot
+    # quietly substitute another principal for them.
     def basecamp_cli
-      @basecamp_cli ||= BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner)
+      @basecamp_cli ||= BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner, profile: @options.operator)
     end
 
     def github_cli

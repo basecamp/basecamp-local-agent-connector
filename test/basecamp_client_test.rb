@@ -17,6 +17,32 @@ class BasecampClientTest < Minitest::Test
     assert_includes runner.commands.last.join(" "), "--profile clawdito"
   end
 
+  # The CLI resolves BASECAMP_PROFILE ahead of its configured default, so a
+  # command with no --profile runs as whatever the environment pins; the
+  # client's default profile makes the operator explicit on each of them.
+  def test_unflagged_commands_run_under_the_default_profile
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([])
+    runner.stub "webhooks delete", exit_status: 0
+
+    cli = BasecampAgentConnector::Basecamp::Client.new(command_runner: runner, profile: "jorge", wait: ->(_seconds) { })
+    cli.chats(project: 222)
+    cli.delete_webhook(id: 555, project: 222)
+
+    assert_equal 2, runner.commands.length
+    runner.commands.each { |command| assert_includes command.join(" "), "--profile jorge" }
+  end
+
+  def test_an_explicit_profile_is_not_overridden_by_the_default
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: envelope("id" => 200)
+
+    BasecampAgentConnector::Basecamp::Client.new(command_runner: runner, profile: "jorge", wait: ->(_seconds) { }).me(profile: "clawdito")
+
+    assert_equal 1, runner.commands.last.count("--profile")
+    assert_includes runner.commands.last.join(" "), "--profile clawdito"
+  end
+
   def test_malformed_json_from_a_successful_command_is_a_transient_error
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit'

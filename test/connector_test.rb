@@ -228,6 +228,72 @@ class ConnectorTest < Minitest::Test
     assert_match(/Polling 0 Campfire\(s\)/, err)
   end
 
+  # The failure this prevents: `BASECAMP_PROFILE` pinned to the agent's profile
+  # and no --operator, so the unflagged `basecamp me` answers as the agent and
+  # the connector runs with nobody able to trigger it.
+  def test_start_refuses_an_operator_who_is_the_agent
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+    runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+
+    _out, err = with_env("BASECAMP_PROFILE" => "clawdito") do
+      start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner, expect_exit: true
+    end
+
+    assert_match(/same Basecamp user \(clawdito@example.com\)/, err)
+    assert_match(/BASECAMP_PROFILE=clawdito is set and --operator is not/, err)
+    assert_empty runner.commands_matching(/chat list/)
+  end
+
+  # No email on either side: the match is on the identity id, and the id is
+  # what the message can name.
+  def test_start_refuses_an_operator_who_is_the_agent_without_blaming_the_environment
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 28142355 } })
+    runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+
+    _out, err = with_env("BASECAMP_PROFILE" => nil) do
+      start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "clawdito" ], runner, expect_exit: true
+    end
+
+    assert_match(/operator \(profile clawdito\) are the same Basecamp user \(28142355\)/, err)
+    assert_match(/distinct bot user/, err)
+    refute_match(/BASECAMP_PROFILE/, err)
+  end
+
+  # A run killed without teardown leaves its file as the only record of the
+  # paths it owned; a start that is refused must not be the one to consume it.
+  def test_a_refused_start_leaves_dead_run_records_for_the_next_one_to_sweep
+    with_registry do |registry, directory|
+      orphan = File.join(directory, "4194303.json")
+      File.write orphan, JSON.generate(pid: 4_194_303, started_at: "2026-09-01T00:00:00Z", agent: "clawdito", operator: "jorge",
+        projects: [ "123" ], repos: [], paths: [ "/bc5/orphan" ], boosts: true)
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com" } })
+      runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+
+      with_env("BASECAMP_PROFILE" => nil) do
+        start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "clawdito" ], runner, registry: registry, expect_exit: true
+      end
+
+      assert_path_exists orphan
+    end
+  end
+
+  def test_start_makes_every_operator_side_call_under_the_operator_profile
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+    runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "jorge@example.com", "first_name" => "Jorge" } })
+    runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "chat list", stdout: "[]"
+
+    start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "jorge", "--port", "4567" ], runner
+
+    assert_equal 1, runner.commands_matching(/\Abasecamp me --profile jorge -j\z/).length
+    assert_equal 1, runner.commands_matching(/chat list/).length
+    assert_match(/--profile jorge/, runner.commands_matching(/chat list/).first.join(" "))
+  end
+
   def test_parses_the_duplicate_opt_in
     refute parse("@clawdito", "--project", "A").allow_duplicate
     assert parse("@clawdito", "--project", "A", "--allow-duplicate").allow_duplicate
@@ -330,7 +396,7 @@ class ConnectorTest < Minitest::Test
   private
     def with_registry
       Dir.mktmpdir do |directory|
-        yield BasecampAgentConnector::RunRegistry.new(directory: directory, logger: StringIO.new)
+        yield BasecampAgentConnector::RunRegistry.new(directory: directory, logger: StringIO.new), directory
       end
     end
 
@@ -380,10 +446,26 @@ class ConnectorTest < Minitest::Test
       runner
     end
 
-    def start_connector(argv, runner)
-      connector = BasecampAgentConnector::Connector.new(BasecampAgentConnector::Connector.parse_options(argv))
+    def start_connector(argv, runner, registry: BasecampAgentConnector::RunRegistry.new, expect_exit: false)
+      connector = BasecampAgentConnector::Connector.new(BasecampAgentConnector::Connector.parse_options(argv), registry: registry)
       connector.instance_variable_set(:@command_runner, runner)
 
-      BasecampAgentConnector::Server.stub(:new, FakeServer.new) { capture_io { connector.start } }
+      BasecampAgentConnector::Server.stub(:new, FakeServer.new) do
+        capture_io do
+          if expect_exit
+            refute_equal 0, assert_raises(SystemExit) { connector.start }.status
+          else
+            connector.start
+          end
+        end
+      end
+    end
+
+    def with_env(variables)
+      saved = variables.to_h { |name, _value| [ name, ENV[name] ] }
+      variables.each { |name, value| ENV[name] = value }
+      yield
+    ensure
+      saved.each { |name, value| ENV[name] = value }
     end
 end

@@ -280,8 +280,8 @@ What `bin/connect` has in place, at a glance:
   explicit guard on email and Person id), so replies posted as the agent can't
   re-trigger the connector even under `domain`/`project` trust where the agent
   shares the domain or is a project member; in operator mode they also simply
-  fail the author check. Startup warns if the agent and operator resolve to the
-  same user.
+  fail the author check. Startup refuses to run if the agent and operator
+  resolve to the same user.
 - **Ephemeral exposure** — the funnel and per-project webhooks exist only while
   the process runs and are torn down on exit.
 
@@ -331,9 +331,12 @@ operator. The agent's own identity **never authorizes, in any mode** — an
 explicit guard, matched by email and Person id, refuses agent-authored events
 before any mode is consulted. So even under `--trust domain` (where the agent's
 email may share the domain) or `--trust project` (where the agent is a member),
-its own replies can never re-trigger the connector. (`bin/connect` warns at
-startup if the agent and operator resolve to the same Basecamp user — a
-configuration in which nothing can trigger.)
+its own replies can never re-trigger the connector. (`bin/connect` refuses to
+start if the agent and operator resolve to the same Basecamp user — a
+configuration in which nothing can trigger. The usual cause is `BASECAMP_PROFILE`
+pinned to the agent's profile with no `--operator`: the CLI resolves an
+unflagged call through that variable before the default profile, so the
+operator becomes the agent.)
 
 ### Trust modes
 
@@ -418,7 +421,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 |-----------------|---------|---------|
 | `@AGENT` | Agent user / local `basecamp` profile to watch for and reply as. Leading `@` optional; lowercased to the profile name. **Required**, validated at startup. | — |
 | `--project` | Basecamp project name, URL, or ID. **Required**, repeatable. | — |
-| `--operator` | Profile whose user is allowed to trigger. | CLI default profile |
+| `--operator` | Profile whose user is allowed to trigger. Also the profile every call not made as the agent runs under — corroborating fetches, chat polling, webhook registration. | CLI default profile |
 | `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
@@ -533,6 +536,9 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   --profile <agent>`).
 - **Operator** — the user allowed to trigger; defaults to the CLI default
   profile, override with `--operator <profile>`. Must differ from the agent.
+  Every call not made as the agent is made under this profile, so
+  `--operator` also decides whose credentials corroborate events and register
+  webhooks — a `BASECAMP_PROFILE` in the environment does not.
 - **Trust mode** — who beyond the operator may trigger; defaults to nobody.
   See [Trust modes](#trust-modes).
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)

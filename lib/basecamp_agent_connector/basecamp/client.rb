@@ -88,10 +88,14 @@ class BasecampAgentConnector::Basecamp::Client
   TRANSIENT_CODES = %w[auth_required network rate_limit]
   TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable|rate limit/i
 
+  # `profile` is the default for every command that doesn't name one: the
+  # CLI otherwise resolves BASECAMP_PROFILE ahead of its configured default,
+  # so an unflagged call runs as whatever the environment happens to pin.
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: "basecamp",
-    wait: ->(seconds) { sleep seconds })
+    profile: nil, wait: ->(seconds) { sleep seconds })
     @command_runner = command_runner
     @executable = executable
+    @profile = profile
     @wait = wait
   end
 
@@ -254,6 +258,7 @@ class BasecampAgentConnector::Basecamp::Client
     end
 
     def run(*arguments)
+      arguments += [ "--profile", @profile ] unless @profile.nil? || arguments.include?("--profile")
       @command_runner.run(@executable, *arguments)
     end
 end
