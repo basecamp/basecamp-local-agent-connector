@@ -48,6 +48,30 @@ class IdentityTest < Minitest::Test
     end
   end
 
+  # A connector that resolves without a Person id runs and never matches a
+  # mention, an assignment, or a subscription: refused at startup instead.
+  def test_refuses_a_person_without_an_id
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: identity_envelope("id" => 123)
+    runner.stub "people show me", stdout: envelope("name" => "Clawdito")
+
+    error = assert_raises BasecampAgentConnector::Basecamp::Client::Error do
+      BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: build_cli(runner), profile: "clawdito")
+    end
+
+    assert_match(/people show me --profile clawdito.*no account Person id/, error.message)
+  end
+
+  def test_refuses_a_person_answer_with_no_data
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me", stdout: identity_envelope("id" => 123)
+    runner.stub "people show me", stdout: empty_envelope
+
+    assert_raises BasecampAgentConnector::Basecamp::Client::Error do
+      BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: build_cli(runner))
+    end
+  end
+
   private
     def identity_envelope(identity)
       envelope("identity" => identity)
