@@ -7,9 +7,21 @@ class BasecampAgentConnector::Basecamp::Verifier
   # recording re-drafted since the event, and either way it stays private.
   DRAFTED_STATUS = "drafted"
 
-  def initialize(basecamp_cli:, agent:)
+  # `corroborate_as` is the CLI profile every corroborating read runs under:
+  # nil for the CLI default (the operator's), or the agent's own profile. The
+  # choice decides two things at once. Reach: a recording only the agent can
+  # read (a project the machine owner is not in, where a rostered colleague
+  # mentioned the agent) corroborates under the agent's profile and is
+  # silently uncorroborated under the operator's. Visibility: bc3 shows other
+  # users' email addresses only to admins, so under a non-admin profile the
+  # corroborated creator arrives with a masked address and only Person-id
+  # keyed trust (`--allow-person`, `project`) can authorize. The received-
+  # boosts feed is always read as the agent, whatever this says — it is the
+  # agent's own feed.
+  def initialize(basecamp_cli:, agent:, corroborate_as: nil)
     @basecamp_cli = basecamp_cli
     @agent = agent
+    @corroborate_as = corroborate_as
   end
 
   def verify(event)
@@ -42,9 +54,9 @@ class BasecampAgentConnector::Basecamp::Verifier
       return nil if locator.nil?
 
       if event.chat_kind?
-        @basecamp_cli.chat_line(locator)
+        @basecamp_cli.chat_line(locator, profile: @corroborate_as)
       else
-        @basecamp_cli.show(locator)
+        @basecamp_cli.show(locator, profile: @corroborate_as)
       end
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
@@ -147,7 +159,7 @@ class BasecampAgentConnector::Basecamp::Verifier
     end
 
     def subscriber_ids(locator)
-      Array(@basecamp_cli.subscription(locator)["subscribers"]).map { |subscriber| subscriber["id"] }
+      Array(@basecamp_cli.subscription(locator, profile: @corroborate_as)["subscribers"]).map { |subscriber| subscriber["id"] }
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
     rescue BasecampAgentConnector::Basecamp::Client::Error

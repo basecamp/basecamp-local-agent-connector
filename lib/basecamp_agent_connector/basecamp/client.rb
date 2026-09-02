@@ -111,8 +111,12 @@ class BasecampAgentConnector::Basecamp::Client
     run("auth", "refresh", *profile_flag(profile)).success?
   end
 
-  def show(url_or_id)
-    json "show", url_or_id
+  # Reads that corroborate an event take the profile to read as: the operator's
+  # by default (the CLI default profile), or the agent's own under
+  # `--corroborate-as agent`, so what the connector can see is exactly what the
+  # agent user can see.
+  def show(url_or_id, profile: nil)
+    json "show", url_or_id, *profile_flag(profile)
   end
 
   def chats(project:)
@@ -123,12 +127,26 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s)
   end
 
-  def chat_line(url_or_id)
-    json "chat", "line", url_or_id
+  def chat_line(url_or_id, profile: nil)
+    json "chat", "line", url_or_id, *profile_flag(profile)
   end
 
-  def subscription(url_or_id)
-    json "subscriptions", "show", url_or_id
+  def subscription(url_or_id, profile: nil)
+    json "subscriptions", "show", url_or_id, *profile_flag(profile)
+  end
+
+  # A person on the account, as the profile's user sees them (`people show`
+  # takes an id, or "me"). The roster check a dispatcher runs before acting for
+  # a requester: does this Person still exist here, and are they a client?
+  def person_by_id(id, profile: nil)
+    json "people", "show", id.to_s, *profile_flag(profile)
+  end
+
+  # Posts a comment on a recording as the profile's user. One attempt, like
+  # the other mutations: a lost answer is not a lost request, and a repeated
+  # post would double the comment.
+  def comment(url_or_id, content, profile: nil)
+    json "comment", url_or_id, content, *profile_flag(profile), attempts: 1
   end
 
   # The boosts the profile's user has received (bc3's `/my/boosts.json` — the

@@ -253,9 +253,41 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  def test_corroborates_under_the_operators_default_profile_unless_told_otherwise
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    verifier(runner).verify(event(sample_payload))
+
+    assert_equal [ [ "basecamp", "show", sample_recording["url"], "-j" ] ], runner.commands
+  end
+
+  # Every corroborating read — the recording, a chat line, the subscribers
+  # lookup — runs as the agent, so the connector sees exactly what the agent
+  # user can see. The boosts feed is the agent's own already.
+  def test_corroborates_as_the_agent_when_asked
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
+
+    verified = verifier(runner, corroborate_as: "clawdito").verify(event(sample_payload))
+
+    assert verified.subscribed?
+    assert_equal 2, runner.commands.length
+    assert runner.commands.all? { |command| command.include?("--profile") && command.include?("clawdito") }, runner.commands.inspect
+  end
+
+  def test_corroborates_a_chat_line_as_the_agent_when_asked
+    runner = FakeCommandRunner.new
+    runner.stub "chat line", stdout: envelope(chat_line)
+
+    refute_nil verifier(runner, corroborate_as: "clawdito").verify(event(chat_line_payload))
+    assert_equal 1, runner.commands_matching(/\Abasecamp chat line .* --profile clawdito/).length
+  end
+
   private
-    def verifier(runner)
-      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)
+    def verifier(runner, corroborate_as: nil)
+      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity, corroborate_as: corroborate_as)
     end
 
     def event(payload)

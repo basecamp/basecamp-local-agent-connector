@@ -431,6 +431,51 @@ class PipelineTest < Minitest::Test
     assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
   end
 
+  def test_the_emitted_line_names_the_rule_that_admitted_the_author
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]))
+      .process(sample_payload("creator" => colleague))
+
+    emitted = JSON.parse(@output.string)
+    assert_equal "allowlist:person", emitted["authorized_by"]
+    assert_equal({ "person_id" => 300, "name" => "Marie" }, emitted["requester"])
+  end
+
+  def test_the_operators_own_event_is_stamped_operator
+    pipeline(corroborating_runner).process(sample_payload)
+
+    assert_equal "operator", JSON.parse(@output.string)["authorized_by"]
+  end
+
+  # The agent's profile is not an admin, so the corroborated creator arrives
+  # with a masked email. Person-keyed trust still admits; email-keyed cannot.
+  def test_a_person_listed_by_id_is_admitted_when_corroborated_as_the_agent
+    runner = FakeCommandRunner.new
+    masked = colleague.merge("email_address" => "m••••@•••••••.•••")
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => masked))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]), corroborate_as: "clawdito")
+      .process(sample_payload("creator" => colleague))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "allowlist:person", JSON.parse(@output.string)["authorized_by"]
+    assert_equal 1, runner.commands_matching(/\Abasecamp show .* --profile clawdito/).length
+  end
+
+  def test_a_person_listed_by_email_is_dropped_when_corroborated_as_the_agent
+    runner = FakeCommandRunner.new
+    masked = colleague.merge("email_address" => "m••••@•••••••.•••")
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => masked))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]), corroborate_as: "clawdito")
+      .process(sample_payload("creator" => colleague))
+
+    assert_empty @output.string
+    assert_match(/not authorized/, @logs.string)
+  end
+
   def test_allowlist_ignores_an_author_not_on_the_list
     runner = FakeCommandRunner.new
 
@@ -666,11 +711,11 @@ class PipelineTest < Minitest::Test
       runner
     end
 
-    def pipeline(runner, authorizer: authorizer(), webhook: false)
+    def pipeline(runner, authorizer: authorizer(), webhook: false, corroborate_as: nil)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
-        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent, corroborate_as: corroborate_as),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: webhook,
         logger: @logs

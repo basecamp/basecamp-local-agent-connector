@@ -223,18 +223,43 @@ class BasecampAgentConnector::Basecamp::Event
     @payload["agent_boosted"] == true
   end
 
-  # The top-level keys mirror the webhook envelope; `trigger` is the one
-  # connector-owned key, carrying the Verifier's verdicts on why this event
-  # targets the agent. Without it a watcher can tell a mention from a
-  # followed-thread comment only by decoding the mention markup itself against
-  # the agent's Person id. Assignments and boosts already announce themselves
-  # by `kind`, so these two are the verdicts a watcher cannot derive.
+  # The rule that admitted this event's author, stamped by the pipeline once
+  # the authoritative event passed the authorizer (Authorizer#authorization).
+  # Nil on an event nobody has stamped yet.
+  def authorized_by
+    @payload["authorized_by"]
+  end
+
+  # A copy of this event carrying the pipeline's authorization verdict.
+  def with_authorization(rule)
+    self.class.from_payload(@payload.merge("authorized_by" => rule))
+  end
+
+  # The requester as a downstream dispatcher needs it: the account Person id
+  # that keys every trust and roster decision, plus the display name. Same
+  # facts as `creator`, named for what they are — the author of the request,
+  # who under a broadened trust mode is not the operator.
+  def requester
+    { "person_id" => creator_id, "name" => creator["name"] }
+  end
+
+  # The top-level keys mirror the webhook envelope; `trigger`, `authorized_by`
+  # and `requester` are the connector-owned keys. `trigger` carries the
+  # Verifier's verdicts on why this event targets the agent: without it a
+  # watcher can tell a mention from a followed-thread comment only by decoding
+  # the mention markup itself against the agent's Person id. Assignments and
+  # boosts already announce themselves by `kind`, so these two are the
+  # verdicts a watcher cannot derive. `authorized_by` names the trust rule
+  # that admitted the author, and `requester` restates the author by the key
+  # a dispatcher resolves identity on.
   def to_emitted_hash
     {
       "event_id" => id,
       "kind" => kind,
       "created_at" => created_at,
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
+      "requester" => requester,
+      "authorized_by" => authorized_by,
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
       "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed? }

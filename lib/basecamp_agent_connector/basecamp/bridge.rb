@@ -26,9 +26,11 @@ class BasecampAgentConnector::Basecamp::Bridge
     chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
     boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
     webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL,
-    delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK)
+    delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK,
+    corroborate_as: nil)
     @authorizer = authorizer
     @agent = agent
+    @corroborate_as = corroborate_as
     @projects = projects
     @webhook_types, @chat_types = partition_types(types)
     @basecamp_cli = basecamp_cli
@@ -98,7 +100,7 @@ class BasecampAgentConnector::Basecamp::Bridge
       log "Polling @#{agent_name}'s received-boosts feed every #{@boost_poll_interval}s (boosts have no webhooks)"
     end
 
-    log "Trust: #{@authorizer.description}"
+    log "Trust: #{@authorizer.description}; corroborated as #{@corroborate_as ? "the agent (@#{@corroborate_as})" : "the operator"}"
   end
 
   # Each delivery is verified on the request thread and answered with its
@@ -224,7 +226,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     end
 
     def verifier
-      @verifier ||= BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent)
+      @verifier ||= BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent, corroborate_as: @corroborate_as)
     end
 
     def agent_name

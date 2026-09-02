@@ -312,6 +312,8 @@ One JSON object per line (NDJSON), built from the **verified** recording:
   "kind": "comment_created",
   "created_at": "2026-06-28T12:00:00Z",
   "creator": { "id": 123, "name": "Clawdito", "email_address": "clawdito@37signals.com" },
+  "requester": { "person_id": 123, "name": "Clawdito" },
+  "authorized_by": "operator",
   "recording": {
     "id": 456,
     "type": "Comment",
@@ -393,11 +395,11 @@ indistinguishable from a missed one (connector PR #17).
    itself. A line carrying `review_id`/`repo`/`state` and no `recording` is a
    **GitHub review** (`--repo` runs; see [`pr-review-loop.md`](pr-review-loop.md)):
    no boost, no bucket lookup — it is dispatched straight to the review loop in
-   the repo named by `repo`, and an `approved` review is dispatched as an
-   approval that may land the PR only when `reviewer` is the operator's GitHub
-   login; any other reviewer's approval is handled as `commented`. The skill
-   carries that gate because `GitHub::ReviewPipeline#actionable?` checks only
-   the action and the state today. A line carrying `recording` is a Basecamp
+   the repo named by `repo`. An `approved` review reaches the stream only when
+   its corroborated reviewer is the operator's GitHub login —
+   `GitHub::ReviewPipeline#authorized?` drops every other approval before
+   emission — so an emitted approval is an approval the agent may act on;
+   `changes_requested` and `commented` pass from any reviewer. A line carrying `recording` is a Basecamp
    event; one whose `creator` is the agent is dropped before anything else.
    `creator` is the only checkable key — the emitted `recording` carries no
    author, and a `boost_created` line's `recording` is the agent's own work by

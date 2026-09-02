@@ -195,16 +195,17 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # booster and content taken from that fetch.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
+      authorization = @authorizer.authorization(verified) unless verified.nil?
 
       if verified.nil?
         forget(event)
         log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
-      elsif !@authorizer.authorizes?(verified)
+      elsif authorization.nil?
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)
         log "dropped event #{event.id}: authoritative recording does not target the agent"
       else
-        @emitter.emit(verified)
+        @emitter.emit(verified.with_authorization(authorization))
       end
 
       !verified.nil?

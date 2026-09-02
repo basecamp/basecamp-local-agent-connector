@@ -76,12 +76,23 @@ class BasecampAgentConnector::RunRegistry
     nil
   end
 
-  Run = Data.define(:pid, :process_start, :started_at, :agent, :operator, :projects, :repos, :paths, :boosts) do
+  Run = Data.define(:pid, :process_start, :started_at, :agent, :operator, :projects, :repos, :paths, :boosts, :trust) do
     def self.from_json(json)
       new(pid: json["pid"], process_start: json["process_start"], started_at: json["started_at"],
         agent: json["agent"], operator: json["operator"],
         projects: Array(json["projects"]), repos: Array(json["repos"]), paths: Array(json["paths"]),
-        boosts: json["boosts"] != false)
+        boosts: json["boosts"] != false, trust: json["trust"].is_a?(Hash) ? json["trust"] : {})
+    end
+
+    # Person ids this run admits beyond the operator, by explicit listing.
+    def allowed_person_ids
+      Array(trust["person_ids"]).map(&:to_i)
+    end
+
+    def trust_description
+      mode = trust["mode"] || "operator"
+      people = allowed_person_ids
+      "#{mode}#{" (+ Person #{people.join(", ")})" if people.any?}"
     end
 
     def alive?
@@ -194,11 +205,11 @@ class BasecampAgentConnector::RunRegistry
     same_agent(agent) - duplicates_of(agent: agent, projects: projects, repos: repos)
   end
 
-  def record(agent:, operator:, projects:, repos:, paths:, boosts:)
+  def record(agent:, operator:, projects:, repos:, paths:, boosts:, trust: {})
     write file_for(Process.pid), JSON.generate(
       pid: Process.pid, process_start: self.class.process_start(Process.pid),
       started_at: started_at, agent: agent, operator: operator,
-      projects: projects, repos: repos, paths: paths, boosts: boosts)
+      projects: projects, repos: repos, paths: paths, boosts: boosts, trust: trust)
   end
 
   def forget

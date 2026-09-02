@@ -326,6 +326,8 @@ Each STDOUT line is one trusted event as NDJSON:
 ```json
 {"event_id":99001,"kind":"comment_created","created_at":"...",
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@..."},
+ "requester":{"person_id":100,"name":"Jorge Manrubia"},
+ "authorized_by":"operator",
  "recording":{"id":456,"type":"Comment","app_url":"...","url":"...",
    "content":"<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…@Clawdito…</bc-attachment> do X</p>",
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}},
@@ -334,9 +336,13 @@ Each STDOUT line is one trusted event as NDJSON:
 
 `creator` is the **triggering author** — the person whose mention/assignment
 drove this event. In the default operator-only mode that is always you; under a
-broadened trust mode (`--allow`, `--allow-domain`, `--allow-project`) it may be
-an authorized coworker instead. Treat `creator` as *the requester* — that is who
-to @mention on failure — not as "the operator." The mention of the agent lives
+broadened trust mode (`--allow`, `--allow-person`, `--allow-domain`,
+`--allow-project`) it may be an authorized coworker instead. Treat `creator` as
+*the requester* — that is who to @mention on failure — not as "the operator."
+`requester` restates the author by account Person id, the key every identity
+decision downstream resolves on, and `authorized_by` names the trust rule that
+admitted them (`operator`, `allowlist:person`, …); a worker acting *as* the
+requester keys on `requester.person_id`, never on a name. The mention of the agent lives
 in `recording.content` as a mention attachment. `trigger` is the connector's
 verdict on **why** the event fired, settled on the re-fetched recording:
 `mentioned` (its content carries a mention attachment for the agent's Person
@@ -864,9 +870,11 @@ Some instructions are "open a PR for X." For these the background agent follows 
 stricter lifecycle and **must not report the work done until the branch is
 green** — getting CI green is part of finishing the task, not a follow-up:
 
-1. **Work in a fresh worktree off `main`** — `git worktree add -b <branch> <path>
-   main` in the resolved repo, so the task is isolated and `main` stays clean. Do
-   all the work there.
+1. **Work in a fresh worktree off the default branch** — `git worktree add -b
+   <branch> <path> origin/HEAD` in the resolved repo (the default branch is
+   `main` in some repos and `master` in others, e.g. bc3 and haystack; `origin/HEAD`
+   names it without guessing), so the task is isolated and the default branch
+   stays clean. Do all the work there.
 2. **Green locally first** — run `bin/ci` in the worktree and iterate until it
    passes. Never push red.
 3. **Push and open the PR.**

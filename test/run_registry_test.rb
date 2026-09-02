@@ -270,6 +270,28 @@ class RunRegistryTest < Minitest::Test
     end
   end
 
+  def test_records_and_reads_back_the_trust_set
+    in_registry do |registry|
+      registry.record(**run_attributes, trust: { "mode" => "allowlist", "person_ids" => [ 300 ], "corroborate_as" => "agent" })
+
+      run = registry.live.first
+      assert_equal [ 300 ], run.allowed_person_ids
+      assert_equal "allowlist (+ Person 300)", run.trust_description
+    end
+  end
+
+  # An entry written by a build before trust was recorded reads as
+  # operator-only, which is what such a build enforced.
+  def test_an_entry_without_a_trust_record_reads_as_operator_only
+    in_registry do |registry, directory|
+      write_run directory, pid: Process.pid, agent: "clawdito"
+
+      run = registry.live.first
+      assert_empty run.allowed_person_ids
+      assert_equal "operator", run.trust_description
+    end
+  end
+
   private
     def in_registry
       Dir.mktmpdir do |directory|

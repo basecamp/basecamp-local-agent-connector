@@ -33,6 +33,41 @@ class AuthorizerTest < Minitest::Test
     refute allowlist.authorizes?(mention_by(AGENT))
   end
 
+  # A Person id is visible to every viewer, so it matches where a masked email
+  # (a colleague's address as a non-admin profile sees it) cannot.
+  def test_allowlist_authorizes_listed_person_ids_even_when_the_email_is_masked
+    allowlist = authorizer(trust: :allowlist, person_ids: [ 300 ])
+
+    assert allowlist.authorizes?(mention_by(COLLEAGUE.merge("email_address" => "m••••@•••••••.•••")))
+    assert allowlist.authorizes?(mention_by("id" => 300))
+    refute allowlist.authorizes?(mention_by(STRANGER))
+    refute allowlist.authorizes?(mention_by({}))
+  end
+
+  def test_allowlist_never_authorizes_the_agent_by_person_id
+    allowlist = authorizer(trust: :allowlist, person_ids: [ 200 ])
+
+    refute allowlist.authorizes?(mention_by(AGENT))
+  end
+
+  def test_authorization_names_the_rule_that_admitted_the_author
+    allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ], person_ids: [ 400 ])
+
+    assert_equal "operator", allowlist.authorization(mention_by(OPERATOR))
+    assert_equal "allowlist:email", allowlist.authorization(mention_by(COLLEAGUE))
+    assert_equal "allowlist:person", allowlist.authorization(mention_by(STRANGER))
+    assert_nil allowlist.authorization(mention_by("id" => 500, "email_address" => "other@example.com"))
+    assert_nil allowlist.authorization(mention_by(AGENT))
+    assert_equal "project", authorizer(trust: :project).authorization(mention_by(COLLEAGUE))
+    assert_equal "domain", authorizer(trust: :domain, domains: [ "example.com" ]).authorization(mention_by(COLLEAGUE))
+  end
+
+  def test_a_person_listed_by_id_and_by_email_is_admitted_by_the_person_rule
+    allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ], person_ids: [ 300 ])
+
+    assert_equal "allowlist:person", allowlist.authorization(mention_by(COLLEAGUE))
+  end
+
   def test_project_mode_authorizes_any_corroborated_author
     project = authorizer(trust: :project)
 
@@ -102,10 +137,11 @@ class AuthorizerTest < Minitest::Test
   end
 
   def test_assignments_stay_operator_only_in_broadened_modes
-    allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ])
+    allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ], person_ids: [ 300 ])
 
     assert allowlist.authorizes?(assignment_by(OPERATOR))
     refute allowlist.authorizes?(assignment_by(COLLEAGUE))
+    assert_nil allowlist.authorization(assignment_by(COLLEAGUE))
   end
 
   def test_assignments_open_to_authorized_authors_only_by_explicit_opt_in
@@ -120,6 +156,8 @@ class AuthorizerTest < Minitest::Test
     assert_equal "operator only (operator@example.com); assignments: operator only", authorizer.description
     assert_equal "allowlist — operator (operator@example.com) + marie@example.com; assignments: operator only",
       authorizer(trust: :allowlist, emails: [ "marie@example.com" ]).description
+    assert_equal "allowlist — operator (operator@example.com) + marie@example.com, Person 300; assignments: operator only",
+      authorizer(trust: :allowlist, emails: [ "marie@example.com" ], person_ids: [ 300 ]).description
     assert_equal "any corroborated project member (clients excluded); assignments: operator only",
       authorizer(trust: :project).description
     assert_equal "any @37signals.com author; assignments: any authorized author",
