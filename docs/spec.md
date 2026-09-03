@@ -141,7 +141,7 @@ behavior in Component 2. Discovery follows the standard Claude Code mechanism
 ### Invocation
 
 ```
-bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types>] [--boost-poll <seconds>|--no-boosts] [--port <port>]
+bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types>] [--boost-poll <seconds>|--no-boosts] [--webhook-check <seconds>] [--port <port>]
 ```
 
 - `@AGENT` — the agent user / local profile name (e.g. `@Clawdito` or
@@ -164,6 +164,10 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
   Recording and creates no Event in bc3), so the bridge polls the **agent's own
   received-boosts feed** (`/my/boosts.json`) for them on this interval (default
   60s); `--no-boosts` disables the boost trigger.
+- `--webhook-check` — how often (default 300s) each registered webhook is
+  re-read and reactivated if bc3 deactivated it (which it does, silently,
+  after 10 failed deliveries — `Webhook::DeliveryJob`), and the run's funnel
+  paths remounted if the funnel lost them.
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence

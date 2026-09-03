@@ -32,7 +32,10 @@ class BasecampAgentConnector::GitHub::Bridge
     [ path ].compact
   end
 
-  def register(base_url:, orphan_paths: [])
+  # `tunnel` is accepted for parity with the Basecamp bridge and unused:
+  # GitHub never deactivates a hook on its own, so there is nothing to
+  # keep alive here.
+  def register(base_url:, orphan_paths: [], tunnel: nil)
     @webhooks.delete_orphans(repos: @repos, paths: orphan_paths)
 
     endpoint = "#{base_url}#{path}"

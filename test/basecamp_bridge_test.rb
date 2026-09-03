@@ -132,7 +132,7 @@ class BasecampBridgeTest < Minitest::Test
 
     assert_empty output.string
     assert_match(/could not corroborate event 99001: `basecamp show .*` failed on all 3 attempts.*; answered 503 so Basecamp redelivers/, logs.string)
-    assert_match(/deactivates the webhook after 10 failed deliveries.*basecamp auth status --profile clawdito.*restart/, logs.string)
+    assert_match(/deactivates the webhook after 10 failed deliveries.*basecamp auth status --profile clawdito.*reactivates the webhook/, logs.string)
     refute_match(/not corroborated/, logs.string)
   end
 
@@ -219,6 +219,52 @@ class BasecampBridgeTest < Minitest::Test
     refute_match(/received-boosts feed/, logs.string)
   end
 
+  def test_register_starts_the_webhook_monitor_and_logs_after_the_readiness_line
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, webhook_check_interval: 300)
+
+    bridge.register(base_url: "https://host.ts.net")
+
+    listening = logs.string.index("Listening for mentions")
+    checking = logs.string.index("Re-checking those webhooks every 300s")
+    refute_nil checking
+    assert_operator listening, :<, checking
+    # The first check is an interval away, so registration is settled before
+    # anything re-reads it.
+    assert_empty runner.commands_matching(/webhooks show/)
+  ensure
+    bridge.teardown
+  end
+
+  def test_a_nil_webhook_check_interval_disables_the_monitor
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, webhook_check_interval: nil)
+
+    bridge.register(base_url: "https://host.ts.net")
+    bridge.teardown
+
+    refute_match(/Re-checking/, logs.string)
+  end
+
+  # No registrations, nothing to keep alive.
+  def test_a_chat_only_bridge_starts_no_webhook_monitor
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    logs = StringIO.new
+    bridge = bridge(runner, types: "Chat::Line", logger: logs, webhook_check_interval: 300)
+
+    bridge.register(base_url: "https://host.ts.net")
+    bridge.teardown
+
+    refute_match(/Re-checking/, logs.string)
+  end
+
   def test_handler_refuses_boost_kind_webhook_payloads
     runner = FakeCommandRunner.new
     output = StringIO.new
@@ -238,7 +284,7 @@ class BasecampBridgeTest < Minitest::Test
     end
 
     def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new,
-      boost_poll_interval: nil)
+      boost_poll_interval: nil, webhook_check_interval: nil)
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer,
         agent: agent_identity,
@@ -247,6 +293,7 @@ class BasecampBridgeTest < Minitest::Test
         basecamp_cli: build_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: output),
         logger: logger,
-        boost_poll_interval: boost_poll_interval
+        boost_poll_interval: boost_poll_interval,
+        webhook_check_interval: webhook_check_interval
     end
 end

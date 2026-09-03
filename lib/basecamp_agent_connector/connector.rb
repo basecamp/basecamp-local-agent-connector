@@ -16,7 +16,8 @@ class BasecampAgentConnector::Connector
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :allow_duplicate)
+    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
+    :allow_duplicate)
 
   def self.start(argv)
     return print_status if argv.include?("--status")
@@ -102,11 +103,13 @@ class BasecampAgentConnector::Connector
     allow_duplicate = false
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
+    webhook_check = BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
-        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] [--events EVENTS] [--port PORT]"
+        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
+        "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
@@ -144,6 +147,13 @@ class BasecampAgentConnector::Connector
         boost_poll = value
       end
       parser.on("--no-boosts", "Don't poll the agent's received-boosts feed") { boost_poll = nil }
+      parser.on("--webhook-check SECONDS", Integer, "How often to re-check that each registered webhook is still active " \
+        "and its funnel path still mounted, restoring either (default: " \
+        "#{BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL}s; Basecamp deactivates a webhook after 10 failed deliveries)") do |value|
+        raise ArgumentError, "--webhook-check must be a positive number of seconds" unless value.positive?
+
+        webhook_check = value
+      end
       parser.on("--allow-duplicate", "Start even though another connector is already watching this agent " \
         "on these projects (default: refuse — every event would dispatch twice)") { allow_duplicate = true }
       parser.on("--status", "List the connectors running on this machine and the funnel paths they own, then exit") { }
@@ -162,7 +172,7 @@ class BasecampAgentConnector::Connector
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
-      chat_poll: chat_poll, boost_poll: boost_poll, allow_duplicate: allow_duplicate)
+      chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -221,7 +231,7 @@ class BasecampAgentConnector::Connector
         @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
         @tunnel.start
       end
-    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths) }
+    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths, tunnel: @tunnel) }
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
     install_signal_handlers
@@ -247,6 +257,7 @@ class BasecampAgentConnector::Connector
         authorizer: authorizer(operator, agent), agent: agent,
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
+        webhook_check_interval: @options.webhook_check,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 

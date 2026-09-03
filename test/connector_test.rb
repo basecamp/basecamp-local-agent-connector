@@ -79,6 +79,17 @@ class ConnectorTest < Minitest::Test
     end
   end
 
+  def test_parses_the_webhook_check_interval
+    assert_equal 300, parse("@clawdito", "--project", "A").webhook_check
+    assert_equal 60, parse("@clawdito", "--project", "A", "--webhook-check", "60").webhook_check
+  end
+
+  def test_refuses_a_non_positive_webhook_check_interval
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--webhook-check", "0"
+    end
+  end
+
   def test_refuses_value_flags_that_imply_different_trust_modes
     assert_raises ArgumentError do
       parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"

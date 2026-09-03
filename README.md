@@ -184,6 +184,19 @@ you’re done** — stopping deletes every webhook and unmounts its funnel paths
 automatically. In Claude Code, ending the skill does this; from a terminal, press
 **Ctrl-C**. Nothing is left running or exposed.
 
+While it runs, it also keeps those registrations alive. Basecamp **deactivates
+a webhook after 10 failed deliveries** (`Webhook::DeliveryJob` in bc3: about
+four to five hours of backoff), and says nothing — the registration stays listed, but
+nothing is delivered to it again. A laptop asleep overnight, a Tailscale funnel
+path that dropped, or a run whose every delivery answered `503` all end that
+way, and the chat and boost pollers keep working through it, so the connector
+looks healthy while every mention goes unheard. Every `--webhook-check` seconds
+(default 300) the connector re-reads each webhook it registered and reactivates
+any Basecamp switched off (or re-registers one deleted out from under it),
+remounts any of its funnel paths the funnel has lost, and reports both loudly on
+STDERR. The events of the gap itself are gone — bc3 does not redeliver past a
+deactivation — so a `DEACTIVATED` line in the log is worth reading.
+
 ---
 
 ## How it works
@@ -429,6 +442,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--chat-poll` | Campfire poll interval, in seconds. | `15` |
 | `--boost-poll` | Received-boosts poll interval, in seconds. Boosts have no webhooks, so the connector polls the agent's own received-boosts feed for them. | `60` |
 | `--no-boosts` | Don't poll the agent's received-boosts feed (no boost trigger). | polling on |
+| `--webhook-check` | How often, in seconds, to re-check that each registered webhook is still active and its funnel path still mounted, putting back whichever isn't. Basecamp deactivates a webhook after 10 failed deliveries. | `300` |
 | `--port` | Local port for the webhook server. | an unused high port |
 
 **What it does, in order:**
@@ -474,10 +488,11 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    anything it never classified, the keyring race included — leaves the list
    in force. A delivery that stays unanswerable for all of bc3's 10 attempts
    (~4.3h — a revoked credential looks just like the race) makes bc3
-   deactivate the webhook: fix
-   the CLI's credentials (`basecamp auth status --profile <agent>`) and
-   restart `bin/connect`, which re-registers it. The connector logs that
-   remedy with every `503`.
+   deactivate the webhook. The webhook check (`--webhook-check`, see
+   [Stopping](#stopping-and-why-it-matters)) reactivates it within one
+   interval, but a credential still broken just fails the next ten deliveries
+   too: fix it (`basecamp auth status --profile <agent>`). The connector logs
+   that remedy with every `503`.
 
 **Emitted event (STDOUT, one JSON object per line):**
 
@@ -547,6 +562,9 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   connector polls the agent's own received-boosts feed — an account-wide,
   agent-scoped surface (a boost triggers wherever the agent's boosted work
   lives, not only in watched projects).
+- **Webhook check** — `--webhook-check` interval in seconds (default 300):
+  how often each registered webhook is re-read and reactivated if Basecamp
+  deactivated it, and the funnel paths remounted if lost.
 - **Port** — `--port` (default: an unused high port).
 
 ---
