@@ -234,8 +234,10 @@ problem and must not be answered with `auth login` — see
 If the agent profile resolves to the **same** user as the operator, **nothing
 will trigger**: the connector refuses the agent's own identity in every trust
 mode, so if the agent *is* the operator, the operator's own mentions are dropped
-too. `bin/connect` warns about this at startup. Use a distinct bot account for
-the agent.
+too. `bin/connect` refuses to start in that state and says why; the usual
+cause is `BASECAMP_PROFILE` pinned to the agent's profile with no `--operator`,
+which resolves the operator through the agent's profile. Use a distinct bot
+account for the agent, and pass `--operator` when the variable is set.
 
 ## Procedure
 

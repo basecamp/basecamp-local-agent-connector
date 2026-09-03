@@ -40,7 +40,9 @@ class BasecampAgentConnector::Basecamp::Identity
     @person_id = person_id
   end
 
+  # Keyed on the identity id, which `me` always carries; an email can be
+  # absent on both sides and would then compare as different users.
   def same_user_as?(other)
-    !email.nil? && !other.email.nil? && email.casecmp?(other.email)
+    id == other.id
   end
 end

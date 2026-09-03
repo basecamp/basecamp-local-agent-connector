@@ -49,7 +49,7 @@ The connector distinguishes **two** Basecamp users:
 The agent must be a **different** user than the operator. Because replies are
 posted as the agent, and the trust filter requires the *operator* to be the
 author, agent replies are never re-ingested — this is the structural fix for the
-reply feedback loop. The connector warns at startup if the two resolve to the
+reply feedback loop. The connector refuses to start if the two resolve to the
 same user.
 
 The author match is keyed on **email address or account Person id** — either
@@ -176,8 +176,8 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    profile (`basecamp me --profile <agent>`); if not, exit with guidance to run
    `basecamp auth login --profile <agent>`. Resolve the operator identity
    (default profile, or `--operator`). If a token is expired, attempt `basecamp
-   auth refresh` once before failing (no `login` attempted automatically). Warn
-   if agent and operator resolve to the same user (reply-loop risk).
+   auth refresh` once before failing (no `login` attempted automatically). Exit
+   if agent and operator resolve to the same user (nothing could trigger).
 2. **Resolve projects** — the explicit `--project` list (required). Names/URLs
    are resolved to IDs by the `basecamp` CLI when registering. This is the
    project set to subscribe.
