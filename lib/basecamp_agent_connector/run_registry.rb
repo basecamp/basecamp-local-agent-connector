@@ -1,5 +1,6 @@
 require "json"
 require "fileutils"
+require "open3"
 require "time"
 
 # Which connectors are running on this machine, and which funnel paths each one
@@ -24,15 +25,33 @@ require "time"
 class BasecampAgentConnector::RunRegistry
   DEFAULT_DIRECTORY = File.expand_path("~/.config/basecamp-connect/runs")
 
-  # The process start time, in clock ticks since boot, from /proc/<pid>/stat
-  # field 22. Recorded alongside the pid because a pid alone is ambiguous once
-  # it is recycled, and reading a live run as dead is the expensive direction:
-  # the sweep would delete its webhooks. `comm` may itself contain spaces and
-  # parens, so the fields are counted from the last ')'.
+  # The process start time. Recorded alongside the pid because a pid alone is
+  # ambiguous once it is recycled, and reading a live run as dead is the
+  # expensive direction: the sweep would delete its webhooks. Clock ticks since
+  # boot from /proc/<pid>/stat field 22 where /proc exists (`comm` may itself
+  # contain spaces and parens, so the fields are counted from the last ')');
+  # `ps -o lstart=` elsewhere, darwin having no /proc.
   def self.process_start(pid)
+    procfs? ? proc_start(pid) : ps_start(pid)
+  end
+
+  def self.procfs?
+    File.exist?("/proc/self")
+  end
+
+  def self.proc_start(pid)
     stat = File.read("/proc/#{pid}/stat")
     stat[(stat.rindex(")") + 2)..].split[19]
   rescue SystemCallError, NoMethodError, TypeError
+    nil
+  end
+
+  # `lstart` is rendered in the caller's locale and zone, and the value is
+  # compared as text across processes that may not share them; pin both.
+  def self.ps_start(pid)
+    start, _stderr, status = Open3.capture3({ "LC_ALL" => "C", "TZ" => "UTC" }, "ps", "-o", "lstart=", "-p", pid.to_s)
+    start.strip if status.success? && !start.strip.empty?
+  rescue SystemCallError
     nil
   end
 

@@ -326,6 +326,31 @@ class ConnectorTest < Minitest::Test
     end
   end
 
+  # Claude Code launches a connector as `bash -c '… bin/connect @agent …'` and
+  # that shell stays alive as the parent, so `pgrep -f` hands back two pids per
+  # connector; only the ruby process is one.
+  def test_status_does_not_count_the_shell_that_launched_a_connector
+    with_registry do |registry|
+      runner = processes(
+        4_194_301 => "/opt/homebrew/bin/bash -c source snapshot.sh && eval 'cd connector && bin/connect @clawdito --project \"App Security\"'",
+        4_194_302 => "ruby bin/connect @clawdito --project App Security")
+
+      output = without_procfs { capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: runner) } }
+
+      assert_match(/NOT recorded: 4194302\./, output)
+    end
+  end
+
+  def test_status_does_not_count_another_status_run
+    with_registry do |registry|
+      runner = processes(4_194_302 => "ruby bin/connect --status")
+
+      output = without_procfs { capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: runner) } }
+
+      refute_match(/NOT recorded/, output)
+    end
+  end
+
   def test_status_does_not_report_a_recorded_run_as_unrecorded
     with_registry do |registry|
       registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
@@ -353,12 +378,21 @@ class ConnectorTest < Minitest::Test
       processes
     end
 
-    # A pid with no /proc entry: `watching_process?` errs toward reporting it,
-    # which is the behavior under test.
+    # Pids beyond any kernel's range, so /proc never has them: on Linux
+    # `watching_process?` errs toward reporting each one, which is the behavior
+    # under test; elsewhere it asks `ps`, whose answer is stubbed per pid — a
+    # connector's command line unless the caller gives one.
     def processes(*pids)
+      commands = pids.flat_map { |pid| pid.is_a?(Hash) ? pid.to_a : [ [ pid, "ruby bin/connect @clawdito --project A" ] ] }
       runner = FakeCommandRunner.new
-      runner.stub "pgrep", stdout: pids.join("\n")
+      runner.stub "pgrep", stdout: commands.map(&:first).join("\n")
+      commands.each { |pid, command| runner.stub "ps -o command= -p #{pid}", stdout: "#{command}\n" }
       runner
+    end
+
+    # The `ps` path, whichever platform the tests run on.
+    def without_procfs(&block)
+      BasecampAgentConnector::RunRegistry.stub(:procfs?, false, &block)
     end
 
     def capture_stderr

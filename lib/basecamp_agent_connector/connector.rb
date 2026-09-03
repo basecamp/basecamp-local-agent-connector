@@ -69,21 +69,36 @@ class BasecampAgentConnector::Connector
 
   def self.running_connector_pids(command_runner)
     result = command_runner.run("pgrep", "-f", "bin/connect")
-    result.stdout.split.map(&:to_i).reject(&:zero?).select { |pid| watching_process?(pid) }
+    result.stdout.split.map(&:to_i).reject(&:zero?).select { |pid| watching_process?(pid, command_runner) }
   rescue SystemCallError, Errno::ENOENT
     []
   end
 
   # `pgrep -f` matches the whole command line, so it also catches the shell that
   # launched a connector (bin/connect buried inside its `-c` string) and this
-  # very `--status` run. A real watcher has `bin/connect` as an argument of its
-  # own and no `--status` among them. An unreadable cmdline errs toward
-  # reporting: an unattributable connector is worth one false positive.
-  def self.watching_process?(pid)
-    arguments = File.read("/proc/#{pid}/cmdline").split("\u0000")
-    arguments.any? { |argument| argument.end_with?("bin/connect") } && !arguments.include?("--status")
+  # very `--status` run. A real watcher has `bin/connect` as the executable or
+  # as the script an interpreter was handed — before any flag, which is what
+  # rules the shell's `-c` string out once `ps` has joined argv into one line —
+  # and no `--status` among its arguments. An unreadable command line errs
+  # toward reporting: an unattributable connector is worth one false positive.
+  def self.watching_process?(pid, command_runner)
+    arguments = process_arguments(pid, command_runner)
+    arguments.nil? || \
+      (arguments.take_while { |argument| !argument.start_with?("-") }.any? { |argument| argument.end_with?("bin/connect") } && \
+        !arguments.include?("--status"))
+  end
+
+  # Exact argv from /proc where it exists; `ps` elsewhere (darwin has no
+  # /proc), which hands back one space-joined line, split on whitespace.
+  def self.process_arguments(pid, command_runner)
+    if BasecampAgentConnector::RunRegistry.procfs?
+      File.read("/proc/#{pid}/cmdline").split("\u0000")
+    else
+      result = command_runner.run("ps", "-o", "command=", "-p", pid.to_s)
+      result.stdout.split if result.success?
+    end
   rescue SystemCallError
-    true
+    nil
   end
 
   def self.parse_options(argv)

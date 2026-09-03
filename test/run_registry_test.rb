@@ -91,6 +91,23 @@ class RunRegistryTest < Minitest::Test
     end
   end
 
+  # Both platforms answer for a live pid; a pid nothing runs under has no
+  # start time anywhere.
+  def test_process_start_is_known_for_a_live_pid_and_nil_for_a_dead_one
+    refute_nil BasecampAgentConnector::RunRegistry.process_start(Process.pid)
+    assert_nil BasecampAgentConnector::RunRegistry.process_start(dead_pid)
+  end
+
+  # The recorded value is compared as text by a later process, which may run
+  # under another locale or zone; the `ps` answer must not depend on either.
+  def test_ps_start_does_not_vary_with_the_callers_locale_or_zone
+    in_c = with_env("TZ" => "UTC", "LC_ALL" => "C") { BasecampAgentConnector::RunRegistry.ps_start(Process.pid) }
+    elsewhere = with_env("TZ" => "Asia/Tokyo", "LC_ALL" => "fr_FR.UTF-8") { BasecampAgentConnector::RunRegistry.ps_start(Process.pid) }
+
+    refute_nil in_c
+    assert_equal in_c, elsewhere
+  end
+
   def test_an_unwritable_directory_does_not_raise
     logs = StringIO.new
     registry = BasecampAgentConnector::RunRegistry.new(directory: "/proc/nope/runs", logger: logs)
@@ -115,6 +132,14 @@ class RunRegistryTest < Minitest::Test
       File.write File.join(directory, "#{pid}.json"), JSON.generate(
         pid: pid, started_at: "2026-09-01T00:00:00Z", agent: agent, operator: "jorge",
         projects: [ "Queenbee" ], repos: [], paths: paths, boosts: true)
+    end
+
+    def with_env(variables)
+      saved = variables.to_h { |name, _value| [ name, ENV[name] ] }
+      variables.each { |name, value| ENV[name] = value }
+      yield
+    ensure
+      saved.each { |name, value| ENV[name] = value }
     end
 
     # A pid nothing can be running under: the kernel's max is well below this.
