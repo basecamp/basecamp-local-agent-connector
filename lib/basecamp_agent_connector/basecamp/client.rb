@@ -153,6 +153,16 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("webhooks", "list", "--project", project.to_s)
   end
 
+  def webhook(id:, project:)
+    json "webhooks", "show", id.to_s, "--project", project.to_s
+  end
+
+  # Idempotent, unlike create: an answer lost after the flag landed is
+  # re-applied unchanged by the next attempt, so the reads' retries are safe.
+  def activate_webhook(id:, project:)
+    json "webhooks", "update", id.to_s, "--project", project.to_s, "--active"
+  end
+
   private
     # A command either answers (its envelope is handed back), is refused
     # (Error, at once — Basecamp's verdict doesn't improve with repetition),

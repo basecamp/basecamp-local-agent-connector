@@ -104,6 +104,116 @@ class WebhooksTest < Minitest::Test
     assert_match(/could not list webhooks for project 7/, logs.string)
   end
 
+  def test_restore_reactivates_a_webhook_basecamp_deactivated
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => false)
+    runner.stub "webhooks update 555", stdout: envelope("id" => 555, "active" => true)
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+
+    assert_equal [ 555 ], restored.map(&:id)
+    assert_equal [ [ "basecamp", "webhooks", "update", "555", "--project", "1", "--active", "-j" ] ],
+      runner.commands_matching(/webhooks update/)
+    assert_match(/webhook 555 on project 1 was DEACTIVATED by Basecamp.*10 failed deliveries.*Reactivated it in place/, logs.string)
+  end
+
+  def test_restore_leaves_an_active_webhook_alone
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+
+    assert_empty restored
+    assert_empty runner.commands_matching(/webhooks update/)
+    assert_equal 1, runner.commands_matching(/webhooks create/).length
+    assert_empty logs.string
+  end
+
+  # Someone cleaned up by hand (the README's manual-cleanup recipe on the
+  # wrong id, say): Basecamp has nothing to reactivate, so a fresh
+  # registration replaces it, and teardown deletes the replacement.
+  def test_restore_re_registers_a_webhook_deleted_out_from_under_it
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
+    runner.stub "webhooks create", stdout: envelope("id" => 556)
+    runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+    webhooks.delete_all
+
+    assert_equal [ 556 ], restored.map(&:id)
+    assert_match(/webhook 555 on project 1 is gone \(deleted outside this connector\); re-registered it as 556/, logs.string)
+    deletions = runner.commands_matching(/webhooks delete/)
+    assert_equal 1, deletions.length
+    assert_includes deletions.first, "556"
+  end
+
+  def test_restore_keeps_a_registration_it_could_not_reactivate_and_says_so
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => false)
+    runner.stub "webhooks update 555", stdout: error_envelope("api_error", "The webhook limit for this project has been reached"), exit_status: 1
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+    webhooks.delete_all
+
+    assert_empty restored
+    assert_match(/was DEACTIVATED by Basecamp.*Failed to reactivate it: .*webhook limit.*; retrying on the next check/, logs.string)
+    assert_includes runner.commands_matching(/webhooks delete/).first, "555"
+  end
+
+  def test_restore_keeps_a_registration_it_could_not_replace_and_says_so
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
+    runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}'
+    runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+    webhooks.delete_all
+
+    assert_empty restored
+    assert_equal 4, runner.commands_matching(/webhooks create/).length
+    assert_match(/webhook 555 on project 1 is gone .* re-registering failed after 3 attempts: .*; retrying on the next check/, logs.string)
+    assert_includes runner.commands_matching(/webhooks delete/).first, "555"
+  end
+
+  def test_restore_continues_past_a_webhook_it_could_not_check
+    runner = FakeCommandRunner.new
+    runner.stub(/webhooks create .*--project 1\b/, stdout: envelope("id" => 555))
+    runner.stub(/webhooks create .*--project 2\b/, stdout: envelope("id" => 556))
+    stub_transient_failure runner, "webhooks show 555"
+    runner.stub "webhooks show 556", stdout: envelope("id" => 556, "active" => false)
+    runner.stub "webhooks update 556", stdout: envelope("id" => 556, "active" => true)
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1, 2 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+
+    assert_equal [ 556 ], restored.map(&:id)
+    assert_match(/could not check webhook 555 on project 1/, logs.string)
+  end
+
   private
     def webhooks(runner, logs = StringIO.new)
       BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })

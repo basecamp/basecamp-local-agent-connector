@@ -19,7 +19,8 @@ class BasecampAgentConnector::Basecamp::Bridge
 
   def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr,
     chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
-    boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL)
+    boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
+    webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL)
     @authorizer = authorizer
     @agent = agent
     @projects = projects
@@ -29,6 +30,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     @logger = logger
     @chat_poll_interval = chat_poll_interval
     @boost_poll_interval = boost_poll_interval
+    @webhook_check_interval = webhook_check_interval
     @secret = SecureRandom.hex(16)
     @webhooks = BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: basecamp_cli)
   end
@@ -64,8 +66,17 @@ class BasecampAgentConnector::Basecamp::Bridge
       @webhooks.delete_orphans(projects: @projects, paths: orphan_paths)
 
       url = "#{base_url}#{path}"
-      @webhooks.register_all(projects: @projects, url: url, types: @webhook_types.join(","))
+      types = @webhook_types.join(",")
+      @webhooks.register_all(projects: @projects, url: url, types: types)
       log "Listening for mentions of @#{agent_name} on #{@projects.length} project(s) at #{url}"
+
+      # Started before readiness is reported, but its first check is one
+      # interval away, so nothing here races the funnel consumer.
+      if @webhook_check_interval
+        start_webhook_monitor(url: url, types: types)
+        log "Re-checking those webhooks every #{@webhook_check_interval}s " \
+          "(Basecamp deactivates a webhook after 10 failed deliveries, silently)"
+      end
     end
 
     # The boost poller fetches nothing until its thread's first interval pass,
@@ -93,11 +104,12 @@ class BasecampAgentConnector::Basecamp::Bridge
   #
   # A failure that stays transient through all 10 attempts (~4.3h: a
   # revoked credential reports auth_required on every call, exactly like the
-  # keyring race) ends with bc3 deactivating the webhook, silently; the 503
-  # log line names that and the remedy — fix the CLI's credentials and
-  # restart bin/connect, which re-registers. Which call could not be
-  # answered — the recording fetch, or the subscriber lookup after it — is
-  # in the error's message, which names the failed command.
+  # keyring race) ends with bc3 deactivating the webhook, silently. The
+  # WebhookMonitor reactivates it on its next check, but a credential still
+  # broken just fails the next ten deliveries too, so the 503 log line names
+  # the remedy — fix the CLI's credentials. Which call could not be answered
+  # — the recording fetch, or the subscriber lookup after it — is in the
+  # error's message, which names the failed command.
   #
   # Because the work is on the request thread, shutdown (WEBrick joins its
   # request threads before `start` returns) waits for in-flight deliveries
@@ -125,7 +137,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       log "could not corroborate event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers " \
         "(bc3 deactivates the webhook after 10 failed deliveries: if this repeats, check `basecamp auth status " \
-        "--profile #{@agent.profile}` and restart bin/connect to re-register)"
+        "--profile #{@agent.profile}` — the webhook check reactivates the webhook, but not the credentials)"
       503
     rescue JSON::ParserError => error
       log "ignored malformed payload: #{error.message}"
@@ -139,6 +151,7 @@ class BasecampAgentConnector::Basecamp::Bridge
   def teardown
     @chat_poller&.stop
     @boost_poller&.stop
+    @webhook_monitor&.stop
     @webhooks.delete_all
   end
 
@@ -171,6 +184,16 @@ class BasecampAgentConnector::Basecamp::Bridge
         agent: @agent,
         interval: @boost_poll_interval,
         logger: @logger
+    end
+
+    def start_webhook_monitor(url:, types:)
+      @webhook_monitor = BasecampAgentConnector::Basecamp::WebhookMonitor.new \
+        webhooks: @webhooks,
+        url: url,
+        types: types,
+        interval: @webhook_check_interval,
+        logger: @logger
+      @webhook_monitor.start
     end
 
     def build_pipeline
