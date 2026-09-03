@@ -231,7 +231,8 @@ class BasecampAgentConnector::Connector
         @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
         @tunnel.start
       end
-    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths, tunnel: @tunnel) }
+    @bridges.each { |bridge| bridge.register(base_url: base_url, orphan_paths: orphan_paths) }
+    start_funnel_monitor if @tunnel
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
     install_signal_handlers
@@ -322,6 +323,7 @@ class BasecampAgentConnector::Connector
     def teardown
       @server&.stop
       @bridges&.each(&:teardown)
+      @funnel_monitor&.stop
       @tunnel&.stop
       @registry.forget
     end
@@ -364,6 +366,13 @@ class BasecampAgentConnector::Connector
         paths: @bridges.flat_map(&:paths), boosts: !@options.boost_poll.nil?
     end
 
+
+    # Every transport's path rides the one funnel, so the funnel is kept
+    # mounted here, on the webhook check's cadence, not per bridge.
+    def start_funnel_monitor
+      @funnel_monitor = BasecampAgentConnector::FunnelMonitor.new(tunnel: @tunnel, interval: @options.webhook_check)
+      @funnel_monitor.start
+    end
 
     def free_port
       socket = TCPServer.new("127.0.0.1", 0)

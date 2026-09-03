@@ -48,9 +48,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     [ path ].compact
   end
 
-  # `tunnel` is the funnel the webhooks deliver through, for the monitor to
-  # keep mounted; nil when the caller has none to check.
-  def register(base_url:, orphan_paths: [], tunnel: nil)
+  def register(base_url:, orphan_paths: [])
     # Chat first: webhook registration opens deliveries toward a server that
     # isn't listening yet, so don't widen that window by discovering chats
     # after it. The poller emits nothing until its thread's first interval
@@ -75,7 +73,7 @@ class BasecampAgentConnector::Basecamp::Bridge
       # Started before readiness is reported, but its first check is one
       # interval away, so nothing here races the funnel consumer.
       if @webhook_check_interval
-        start_webhook_monitor(url: url, types: types, tunnel: tunnel)
+        start_webhook_monitor(url: url, types: types)
         log "Re-checking those webhooks every #{@webhook_check_interval}s " \
           "(Basecamp deactivates a webhook after 10 failed deliveries, silently)"
       end
@@ -188,12 +186,11 @@ class BasecampAgentConnector::Basecamp::Bridge
         logger: @logger
     end
 
-    def start_webhook_monitor(url:, types:, tunnel:)
+    def start_webhook_monitor(url:, types:)
       @webhook_monitor = BasecampAgentConnector::Basecamp::WebhookMonitor.new \
         webhooks: @webhooks,
         url: url,
         types: types,
-        tunnel: tunnel,
         interval: @webhook_check_interval,
         logger: @logger
       @webhook_monitor.start
