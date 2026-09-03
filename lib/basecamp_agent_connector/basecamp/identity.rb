@@ -21,8 +21,14 @@ class BasecampAgentConnector::Basecamp::Identity
 
   # `me` returns the global identity id, but a webhook mention encodes the
   # account-scoped Person id; resolve that here so mentions match on a stable id.
+  # Every trigger keys on it and every consumer tolerates nil by matching
+  # nothing, so an answer without one would start a connector that is deaf
+  # with no symptom: refuse it here, where the profile can still be named.
   def self.account_person_id(basecamp_cli, profile)
-    basecamp_cli.person(profile: profile)["id"]
+    person = basecamp_cli.person(profile: profile)
+    (person["id"] if person.is_a?(Hash)) || \
+      raise(BasecampAgentConnector::Basecamp::Client::Error,
+        "`basecamp people show me#{" --profile #{profile}" if profile}` returned no account Person id; is that user a member of the account?")
   end
   private_class_method :account_person_id
 
