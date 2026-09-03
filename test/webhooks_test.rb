@@ -178,6 +178,25 @@ class WebhooksTest < Minitest::Test
     assert_includes runner.commands_matching(/webhooks delete/).first, "555"
   end
 
+  def test_restore_keeps_a_registration_it_could_not_replace_and_says_so
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
+    runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}'
+    runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+    webhooks.delete_all
+
+    assert_empty restored
+    assert_equal 4, runner.commands_matching(/webhooks create/).length
+    assert_match(/webhook 555 on project 1 is gone .* re-registering failed after 3 attempts: .*; retrying on the next check/, logs.string)
+    assert_includes runner.commands_matching(/webhooks delete/).first, "555"
+  end
+
   def test_restore_continues_past_a_webhook_it_could_not_check
     runner = FakeCommandRunner.new
     runner.stub(/webhooks create .*--project 1\b/, stdout: envelope("id" => 555))
