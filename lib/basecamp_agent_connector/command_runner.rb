@@ -9,6 +9,6 @@ class BasecampAgentConnector::CommandRunner
 
   def run(*command)
     stdout, stderr, status = Open3.capture3(*command)
-    Result.new(stdout: stdout, stderr: stderr, exit_status: status.exitstatus)
+    Result.new(stdout: stdout.force_encoding(Encoding::UTF_8), stderr: stderr.force_encoding(Encoding::UTF_8), exit_status: status.exitstatus)
   end
 end
