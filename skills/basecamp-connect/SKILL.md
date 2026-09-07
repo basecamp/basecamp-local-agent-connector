@@ -545,10 +545,12 @@ Instruct that background agent to, in order:
    underway:
    ```bash
    basecamp cards columns --project <project>            # find the columns
-   basecamp cards move <card-id> --column "<In progress>" --profile <agent>
+   basecamp cards move <card-id> --to "<In progress>" --profile <agent>
    ```
-   If there's no Triage-like or no In-progress-like column, skip this silently —
-   never invent columns.
+   Both also take `--card-table <id>`, **required whenever the project holds more
+   than one card table** — On Call has three, so a bare `cards columns --project
+   27` resolves nothing there. If there's no Triage-like or no In-progress-like
+   column, skip this silently — never invent columns.
 4. **Do the requested work** in the repo.
 
    **Several items means several agents.** When one request covers independent
