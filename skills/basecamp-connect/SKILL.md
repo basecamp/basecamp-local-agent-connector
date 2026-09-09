@@ -542,9 +542,11 @@ everything it needs to finish **without the front thread**:
   directive;
 - the **recording** URL/id and its parent URL;
 - the **agent profile name** (its reply identity);
-- the **requester's** name/id — i.e. the event `creator` (to @mention on
-  failure). This is the triggering author, who under a broadened trust mode is
-  not necessarily the operator;
+- the **`requester`** object as emitted (`person_id`, `name`, `client`, and
+  `github` once the person has paired) and **`authorized_by`** — the worker's
+  git author line and its "who asked" record come from these, and the
+  requester is who to @mention on failure. This is the triggering author, who
+  under a broadened trust mode is not necessarily the operator;
 - whether an **ack is still owed** (step a): the front thread's boost landed (not
   owed), failed to land (owed — the worker fallback-boosts), or was deliberately
   skipped because the reply is the ack (not owed).
