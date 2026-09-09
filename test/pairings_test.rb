@@ -53,7 +53,10 @@ class PairingsTest < Minitest::Test
 
   def test_a_missing_or_malformed_file_reads_as_nobody_paired
     assert_empty @pairings.paired
-    File.write @pairings.path, "not json"
-    assert_empty BasecampAgentConnector::Pairings.new(path: @pairings.path).paired
+    [ "not json", "[]", '{"paired": [], "pending": 3}', "null" ].each do |contents|
+      File.write @pairings.path, contents
+      assert_empty BasecampAgentConnector::Pairings.new(path: @pairings.path).paired, contents
+      assert_nil BasecampAgentConnector::Pairings.new(path: @pairings.path).find(300), contents
+    end
   end
 end

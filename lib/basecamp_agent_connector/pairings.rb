@@ -16,12 +16,13 @@ require "time"
 # runs takes effect without a restart.
 class BasecampAgentConnector::Pairings
   DEFAULT_PATH = File.expand_path("~/.config/basecamp-connect/pairings.json")
+  SECTIONS = %w[pending paired]
 
   attr_reader :path
 
   def initialize(path: DEFAULT_PATH)
     @path = path
-    @data = { "pending" => {}, "paired" => {} }
+    @data = SECTIONS.to_h { |section| [ section, {} ] }
   end
 
   def find(person_id)
@@ -61,11 +62,14 @@ class BasecampAgentConnector::Pairings
   end
 
   private
+    # A missing, unparseable, or mis-shaped file reads as nobody paired: the
+    # pipeline reads through here on every event, and a hand-edit must not
+    # take it down.
     def reload
       json = JSON.parse(File.read(@path))
-      @data = { "pending" => json["pending"] || {}, "paired" => json["paired"] || {} }
+      @data = SECTIONS.to_h { |section| [ section, json.is_a?(Hash) && json[section].is_a?(Hash) ? json[section] : {} ] }
     rescue JSON::ParserError, SystemCallError
-      @data = { "pending" => {}, "paired" => {} }
+      @data = SECTIONS.to_h { |section| [ section, {} ] }
     end
 
     def save
