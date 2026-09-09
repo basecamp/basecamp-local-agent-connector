@@ -1,5 +1,6 @@
 require "json"
 require "net/http"
+require "openssl"
 require "uri"
 
 # GitHub's OAuth device flow, used for one thing: proving that the person
@@ -85,5 +86,9 @@ class BasecampAgentConnector::GitHub::DeviceFlow
       JSON.parse(response.body)
     rescue JSON::ParserError
       { "error" => "malformed", "error_description" => response&.body.to_s[0, 200] }
+    rescue SystemCallError, SocketError, IOError, Timeout::Error, OpenSSL::SSL::SSLError => error
+      # `bin/pair approve` promises the front thread an {"error"} line, never a
+      # stack trace, so the network's failures surface the way GitHub's do.
+      raise Failed, "could not reach #{uri.host}: #{error.message}"
     end
 end

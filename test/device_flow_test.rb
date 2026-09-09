@@ -55,6 +55,17 @@ class DeviceFlowTest < Minitest::Test
     assert_match(/not enabled/, error.message)
   end
 
+  # `bin/pair approve` relays every failure as an {"error"} line; a network
+  # that is down has to arrive the same way, not as a stack trace.
+  def test_an_unreachable_github_fails_by_name
+    flow = BasecampAgentConnector::GitHub::DeviceFlow.new(client_id: "Iv1.abc")
+
+    Net::HTTP.stub(:start, ->(*) { raise Errno::ECONNREFUSED }) do
+      error = assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Failed) { flow.start }
+      assert_match(/could not reach github.com/, error.message)
+    end
+  end
+
   def test_client_id_comes_from_the_host_config
     Dir.mktmpdir do |directory|
       path = File.join(directory, "github-oauth.json")
