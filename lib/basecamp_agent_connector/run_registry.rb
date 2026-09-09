@@ -89,10 +89,13 @@ class BasecampAgentConnector::RunRegistry
       Array(trust["person_ids"]).map(&:to_i)
     end
 
+    # Every key the run admits beyond the operator, and whose eyes it judged
+    # them with — the whole trust set, so `--status` can answer "could this
+    # person's request have come through here?" without the run's argv.
     def trust_description
       mode = trust["mode"] || "operator"
-      people = allowed_person_ids
-      "#{mode}#{" (+ Person #{people.join(", ")})" if people.any?}"
+      admitted = Array(trust["emails"]) + allowed_person_ids.map { |id| "Person #{id}" } + Array(trust["domains"]).map { |domain| "@#{domain}" }
+      "#{mode}#{" (+ #{admitted.join(", ")})" if admitted.any?}#{"; corroborated as the agent" if trust["corroborate_as"] == "agent"}"
     end
 
     def alive?

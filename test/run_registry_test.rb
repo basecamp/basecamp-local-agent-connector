@@ -272,11 +272,13 @@ class RunRegistryTest < Minitest::Test
 
   def test_records_and_reads_back_the_trust_set
     in_registry do |registry|
-      registry.record(**run_attributes, trust: { "mode" => "allowlist", "person_ids" => [ 300 ], "corroborate_as" => "agent" })
+      registry.record(**run_attributes, trust: { "mode" => "allowlist", "emails" => [ "marie@example.com" ], "person_ids" => [ 300 ], "corroborate_as" => "agent" })
 
       run = registry.live.first
       assert_equal [ 300 ], run.allowed_person_ids
-      assert_equal "allowlist (+ Person 300)", run.trust_description
+      assert_equal "allowlist (+ marie@example.com, Person 300); corroborated as the agent", run.trust_description
+      assert_equal "domain (+ @37signals.com)",
+        BasecampAgentConnector::RunRegistry::Run.from_json("trust" => { "mode" => "domain", "domains" => [ "37signals.com" ] }).trust_description
     end
   end
 

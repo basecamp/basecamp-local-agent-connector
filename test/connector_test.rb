@@ -510,11 +510,11 @@ class ConnectorTest < Minitest::Test
   def test_status_names_the_people_a_run_trusts
     with_registry do |registry|
       registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: false,
-        trust: { "mode" => "allowlist", "person_ids" => [ 300, 400 ] })
+        trust: { "mode" => "allowlist", "emails" => [ "sam@example.com" ], "person_ids" => [ 300, 400 ], "corroborate_as" => "agent" })
 
       output = capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry) }
 
-      assert_match(/trust:    allowlist \(\+ Person 300, 400\)/, output)
+      assert_match(/trust:    allowlist \(\+ sam@example.com, Person 300, Person 400\); corroborated as the agent/, output)
     end
   end
 

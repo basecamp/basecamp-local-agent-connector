@@ -483,16 +483,25 @@ class BasecampAgentConnector::Connector
       @options.projects.any? && !@options.boost_poll.nil?
     end
 
-    # Who this run trusts, for `--status` and for a dispatcher deciding
-    # whether a person's request could have come through this connector.
+    # Who this run trusts, so `--status` can say whether a person's request
+    # could have come through this connector.
     def trust_record
       {
         "mode" => @options.trust.to_s,
         "emails" => @options.allowed_emails,
         "person_ids" => @options.allowed_person_ids,
-        "domains" => @options.allowed_domains,
+        "domains" => trusted_domains,
         "corroborate_as" => @options.corroborate_as.to_s
       }
+    end
+
+    # Bare `--trust domain` admits the default domain without listing it.
+    def trusted_domains
+      if @options.trust == :domain && @options.allowed_domains.empty?
+        [ BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN ]
+      else
+        @options.allowed_domains
+      end
     end
 
 
