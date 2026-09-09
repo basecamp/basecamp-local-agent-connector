@@ -277,8 +277,8 @@ class RunRegistryTest < Minitest::Test
       run = registry.live.first
       assert_equal [ 300 ], run.allowed_person_ids
       assert_equal "allowlist (+ marie@example.com, Person 300); corroborated as the agent", run.trust_description
-      assert_equal "domain (+ @37signals.com)",
-        BasecampAgentConnector::RunRegistry::Run.from_json("trust" => { "mode" => "domain", "domains" => [ "37signals.com" ] }).trust_description
+      assert_equal "domain (+ @37signals.com); assignments from any authorized author",
+        BasecampAgentConnector::RunRegistry::Run.from_json("trust" => { "mode" => "domain", "domains" => [ "37signals.com" ], "assignments" => true }).trust_description
     end
   end
 

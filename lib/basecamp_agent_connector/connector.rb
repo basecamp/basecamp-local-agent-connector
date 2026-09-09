@@ -491,6 +491,7 @@ class BasecampAgentConnector::Connector
         "emails" => @options.allowed_emails,
         "person_ids" => @options.allowed_person_ids,
         "domains" => trusted_domains,
+        "assignments" => @options.allow_assignments,
         "corroborate_as" => @options.corroborate_as.to_s
       }
     end

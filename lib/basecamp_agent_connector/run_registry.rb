@@ -95,7 +95,9 @@ class BasecampAgentConnector::RunRegistry
     def trust_description
       mode = trust["mode"] || "operator"
       admitted = Array(trust["emails"]) + allowed_person_ids.map { |id| "Person #{id}" } + Array(trust["domains"]).map { |domain| "@#{domain}" }
-      "#{mode}#{" (+ #{admitted.join(", ")})" if admitted.any?}#{"; corroborated as the agent" if trust["corroborate_as"] == "agent"}"
+      "#{mode}#{" (+ #{admitted.join(", ")})" if admitted.any?}" \
+        "#{"; assignments from any authorized author" if trust["assignments"] == true}" \
+        "#{"; corroborated as the agent" if trust["corroborate_as"] == "agent"}"
     end
 
     def alive?
