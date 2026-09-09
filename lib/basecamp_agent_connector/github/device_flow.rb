@@ -11,6 +11,9 @@ require "uri"
 # anywhere, so there is nothing to refresh, revoke, or leak.
 class BasecampAgentConnector::GitHub::DeviceFlow
   class Failed < StandardError; end
+  # GitHub could not be reached: a network fault, not an answer. Polling
+  # rides through it until the code's own deadline.
+  class Unreachable < Failed; end
 
   DEFAULT_CONFIG = File.expand_path("~/.config/basecamp-connect/github-oauth.json")
   TIMEOUT = 15 * 60
@@ -47,8 +50,7 @@ class BasecampAgentConnector::GitHub::DeviceFlow
 
     while @clock.call < deadline
       @sleeper.call(interval)
-      answer = @http.call("https://github.com/login/oauth/access_token",
-        { "client_id" => @client_id, "device_code" => code.device_code, "grant_type" => "urn:ietf:params:oauth:grant-type:device_code" })
+      answer = poll(code)
 
       case answer["error"]
       when nil then return identity(answer.fetch("access_token"))
@@ -64,6 +66,15 @@ class BasecampAgentConnector::GitHub::DeviceFlow
   end
 
   private
+    # A network fault mid-flow is not GitHub's answer; the code stays valid, so
+    # keep polling rather than abandon a ceremony the person is in the middle of.
+    def poll(code)
+      @http.call("https://github.com/login/oauth/access_token",
+        { "client_id" => @client_id, "device_code" => code.device_code, "grant_type" => "urn:ietf:params:oauth:grant-type:device_code" })
+    rescue Unreachable => error
+      { "error" => "authorization_pending", "error_description" => error.message }
+    end
+
     def identity(token)
       user = @http.call("https://api.github.com/user", nil, token: token)
       raise Failed, "GitHub did not identify the token's user: #{user.inspect}" if user["login"].nil?
@@ -89,6 +100,6 @@ class BasecampAgentConnector::GitHub::DeviceFlow
     rescue SystemCallError, SocketError, IOError, Timeout::Error, OpenSSL::SSL::SSLError => error
       # `bin/pair approve` promises the front thread an {"error"} line, never a
       # stack trace, so the network's failures surface the way GitHub's do.
-      raise Failed, "could not reach #{uri.host}: #{error.message}"
+      raise Unreachable, "could not reach #{uri.host}: #{error.message}"
     end
 end

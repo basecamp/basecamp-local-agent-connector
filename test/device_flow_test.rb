@@ -48,6 +48,17 @@ class DeviceFlowTest < Minitest::Test
     assert_match(/within/, error.message)
   end
 
+  def test_polling_rides_through_a_transient_network_failure
+    answer "device_code" => "dc", "user_code" => "X", "verification_uri" => "u", "expires_in" => 900, "interval" => 1
+    answer BasecampAgentConnector::GitHub::DeviceFlow::Unreachable.new("could not reach github.com: timeout")
+    answer "access_token" => "gho_once"
+    answer "login" => "marie", "id" => 4242
+
+    flow = flow()
+    assert_equal "marie", flow.wait(flow.start).login
+    assert_equal [ 1, 1 ], @sleeps
+  end
+
   def test_a_flow_that_cannot_start_says_why
     answer "error" => "unauthorized_client", "error_description" => "device flow is not enabled"
 
@@ -83,7 +94,8 @@ class DeviceFlowTest < Minitest::Test
     def flow(advance: 0)
       http = lambda do |url, body, token: nil|
         @calls << { url: url, body: body, token: token }
-        @answers.shift or raise "no more answers for #{url}"
+        answer = @answers.shift or raise "no more answers for #{url}"
+        answer.is_a?(Exception) ? raise(answer) : answer
       end
       BasecampAgentConnector::GitHub::DeviceFlow.new(client_id: "Iv1.abc", http: http,
         clock: -> { @now += advance }, sleeper: ->(seconds) { @sleeps << seconds })
