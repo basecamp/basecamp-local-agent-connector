@@ -146,6 +146,15 @@ class EventTest < Minitest::Test
     assert_nil emitted["authorized_by"]
   end
 
+  def test_with_pairing_adds_the_github_identity_to_the_requester
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 300, "name" => "Marie", "client" => false }))
+
+    paired = event.with_pairing("login" => "marie", "id" => 4242, "paired_at" => "2026-09-09")
+
+    assert_equal({ "person_id" => 300, "name" => "Marie", "client" => false, "github" => { "login" => "marie", "id" => 4242 } }, paired.requester)
+    assert_same event, event.with_pairing(nil)
+  end
+
   def test_with_authorization_stamps_the_admitting_rule_onto_the_emitted_line
     event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload)
 

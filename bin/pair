@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+# Pair a Basecamp person with the GitHub identity a worker may name as git
+# author for their requests. The ceremony (README → Pairing):
+#
+#   bin/pair setup --client-id ID                    # once per host: the OAuth App (device flow) client id
+#   bin/pair request --person ID --login LOGIN --reply URL   # record a person's request, pending the operator's approval
+#   bin/pair approve --person ID [--approved-by ID]  # run the device flow; prints the code, waits, stores login+id
+#   bin/pair list
+#   bin/pair remove --person ID
+#
+# `approve` prints NDJSON: first {"user_code","verification_uri","expires_in"}
+# for the front thread to relay to the person as the agent, then either
+# {"paired": {...}} or {"error": "..."} when the flow settles.
+
+require_relative "../lib/basecamp_agent_connector"
+require "fileutils"
+require "json"
+require "optparse"
+
+command = ARGV.shift
+person = login = reply = approved_by = client_id = nil
+OptionParser.new do |parser|
+  parser.on("--person ID", Integer) { |value| person = value }
+  parser.on("--login LOGIN") { |value| login = value.strip.delete_prefix("@") }
+  parser.on("--reply URL") { |value| reply = value }
+  parser.on("--approved-by ID", Integer) { |value| approved_by = value }
+  parser.on("--client-id ID") { |value| client_id = value }
+end.parse!
+
+pairings = BasecampAgentConnector::Pairings.new
+usage = lambda do |message|
+  warn "pair: #{message}"
+  warn File.read(__FILE__).lines.grep(/^#   bin\/pair/).join
+  exit 2
+end
+
+case command
+when "setup"
+  usage.call("setup needs --client-id") if client_id.nil?
+  path = BasecampAgentConnector::GitHub::DeviceFlow::DEFAULT_CONFIG
+  FileUtils.mkdir_p File.dirname(path), mode: 0o700
+  File.write path, JSON.pretty_generate("client_id" => client_id) + "\n", perm: 0o600
+  puts "GitHub OAuth client id stored in #{path}."
+when "request"
+  usage.call("request needs --person, --login and --reply") if person.nil? || login.nil? || reply.nil?
+  pairings.request(person, login: login, reply_url: reply)
+  puts JSON.generate("pending" => { "person_id" => person, "login" => login, "reply_url" => reply })
+when "approve"
+  usage.call("approve needs --person") if person.nil?
+  pending = pairings.pending(person)
+  login ||= pending && pending["login"]
+  usage.call("no pending request for Person #{person}; pass --login LOGIN") if login.nil?
+
+  begin
+    flow = BasecampAgentConnector::GitHub::DeviceFlow.new(client_id: BasecampAgentConnector::GitHub::DeviceFlow.client_id)
+    code = flow.start
+    puts JSON.generate("user_code" => code.user_code, "verification_uri" => code.verification_uri, "expires_in" => code.expires_in)
+    $stdout.flush
+    identity = flow.wait(code)
+    unless identity.login.casecmp?(login)
+      puts JSON.generate("error" => "the GitHub account that consented is #{identity.login}, not #{login}; nothing stored")
+      exit 3
+    end
+    pairings.pair(person, login: identity.login, id: identity.id, approved_by: approved_by)
+    puts JSON.generate("paired" => { "person_id" => person, "login" => identity.login, "id" => identity.id })
+  rescue BasecampAgentConnector::GitHub::DeviceFlow::Failed => error
+    puts JSON.generate("error" => error.message)
+    exit 3
+  end
+when "list"
+  pairings.paired.each { |id, pairing| puts "#{id}\t@#{pairing["login"]} (#{pairing["id"]})\tpaired #{pairing["paired_at"]}" }
+  puts "(nobody paired)" if pairings.paired.empty?
+when "remove"
+  usage.call("remove needs --person") if person.nil?
+  puts pairings.remove(person) ? "Removed the pairing for Person #{person}." : "Person #{person} was not paired."
+else
+  usage.call("unknown command #{command.inspect}")
+end

@@ -440,7 +440,32 @@ class PipelineTest < Minitest::Test
 
     emitted = JSON.parse(@output.string)
     assert_equal "allowlist:person", emitted["authorized_by"]
-    assert_equal({ "person_id" => 300, "name" => "Marie" }, emitted["requester"])
+    assert_equal({ "person_id" => 300, "name" => "Marie", "client" => false }, emitted["requester"])
+  end
+
+  # A paired GitHub identity rides on the line so a worker can name the
+  # requester as git author; an unpaired requester carries none.
+  def test_the_emitted_line_carries_the_requesters_paired_github_identity
+    Dir.mktmpdir do |directory|
+      pairings = BasecampAgentConnector::Pairings.new(path: File.join(directory, "pairings.json"))
+      pairings.pair(300, login: "marie", id: 4242, approved_by: 100)
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+
+      pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]), pairings: pairings)
+        .process(sample_payload("creator" => colleague))
+
+      assert_equal({ "login" => "marie", "id" => 4242 }, JSON.parse(@output.string)["requester"]["github"])
+    end
+  end
+
+  def test_an_unpaired_requester_carries_no_github_identity
+    Dir.mktmpdir do |directory|
+      pairings = BasecampAgentConnector::Pairings.new(path: File.join(directory, "pairings.json"))
+      pipeline(corroborating_runner, pairings: pairings).process(sample_payload)
+
+      refute JSON.parse(@output.string)["requester"].key?("github")
+    end
   end
 
   def test_the_operators_own_event_is_stamped_operator
@@ -711,13 +736,14 @@ class PipelineTest < Minitest::Test
       runner
     end
 
-    def pipeline(runner, authorizer: authorizer(), webhook: false, corroborate_as: nil)
+    def pipeline(runner, authorizer: authorizer(), webhook: false, corroborate_as: nil, pairings: nil)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent, corroborate_as: corroborate_as),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: webhook,
-        logger: @logs
+        logger: @logs,
+        pairings: pairings
     end
 end

@@ -235,12 +235,20 @@ class BasecampAgentConnector::Basecamp::Event
     self.class.from_payload(@payload.merge("authorized_by" => rule))
   end
 
-  # The requester as a downstream dispatcher needs it: the account Person id
-  # that keys every trust and roster decision, plus the display name. Same
-  # facts as `creator`, named for what they are — the author of the request,
-  # who under a broadened trust mode is not the operator.
+  # The requester as a downstream worker needs it: the account Person id
+  # that keys every trust decision, the display name, whether Basecamp marks
+  # them a client (a fact the corroborated recording carries and the people
+  # API does not), and — once the pipeline has stamped one — the GitHub
+  # identity they paired (see Pairings). Same facts as `creator`, named for
+  # what they are: the author of the request, who under a broadened trust
+  # mode is not the operator.
   def requester
-    { "person_id" => creator_id, "name" => creator["name"] }
+    { "person_id" => creator_id, "name" => creator["name"], "client" => creator["client"], "github" => @payload["requester_github"] }.compact
+  end
+
+  # A copy of this event carrying the requester's paired GitHub identity.
+  def with_pairing(pairing)
+    pairing.nil? ? self : self.class.from_payload(@payload.merge("requester_github" => pairing.slice("login", "id")))
   end
 
   # The top-level keys mirror the webhook envelope; `trigger`, `authorized_by`

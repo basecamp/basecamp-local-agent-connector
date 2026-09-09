@@ -7,6 +7,7 @@ require "base64"
 require "json"
 require "openssl"
 require "stringio"
+require "tmpdir"
 
 class FakeCommandRunner
   attr_reader :commands

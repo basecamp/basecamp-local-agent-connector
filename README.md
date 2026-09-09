@@ -450,6 +450,50 @@ the recording.
 
 ---
 
+## Pairing: the requester's GitHub identity
+
+Trust modes decide who may trigger the agent. Pairing decides one further
+thing: the GitHub identity a worker may **name as git author** when it commits
+for that person. Everything else stays the agent's — the agent posts on
+Basecamp, pushes, and opens the pull request, and records who asked in the PR
+body ("Requested by Marie Chef in Basecamp: <link>") and in a
+`Basecamp-Request:` commit trailer. Pairing makes the author line honest; it
+never lets anyone act *as* the person, so there is no token to keep.
+
+The ceremony, in Basecamp, once per person and host:
+
+1. **Marie asks**, in a comment the agent is watching: *"@Clawdito pair me with
+   GitHub @marie"*. The front thread records the request and replies as the
+   agent that it is waiting for the operator (`bin/pair request --person
+   51659243 --login marie --reply <that reply's URL>`).
+2. **The operator approves** by boosting that reply. The boost arrives as a
+   corroborated, operator-keyed event — the same trigger the connector already
+   verifies — so approval costs no new mechanism.
+3. **Marie proves control** of the login. `bin/pair approve --person 51659243
+   --approved-by <operator id>` runs GitHub's device flow: it prints a
+   one-time code, the front thread relays it as the agent, Marie enters it in
+   her own browser. The tool stores the pairing only if the account that
+   consented is the login she declared, keeps just her login and numeric id,
+   and discards the token.
+4. From then on every emitted line for her carries `requester.github`, and a
+   worker commits her requests with
+   `--author="Marie Chef <4242+marie@users.noreply.github.com>"`, the address
+   GitHub links to her account through renames.
+
+Setup once per host: register a GitHub **OAuth App** (Settings → Developer
+settings → OAuth Apps; enable *Device flow*; no callback URL or secret is
+needed here) and store its client id with `bin/pair setup --client-id <id>`.
+`bin/pair list` and `bin/pair remove --person <id>` manage pairings; they live
+in `~/.config/basecamp-connect/pairings.json` (0600) and take effect without a
+restart.
+
+An unpaired requester's work carries no author line of theirs: the commits
+are the host's, and the PR body and trailer still say who asked. Leaving the
+account is handled by corroboration (their recordings stop corroborating),
+not by GitHub.
+
+---
+
 ## Internal command: `bin/connect`
 
 The bridge. Run it directly to watch a project and print trusted events; the
@@ -535,7 +579,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 ```json
 {"event_id":99001,"kind":"comment_created","created_at":"…",
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@…"},
- "requester":{"person_id":100,"name":"Jorge Manrubia"},
+ "requester":{"person_id":100,"name":"Jorge Manrubia","client":false,"github":{"login":"jorgemanrubia","id":12345}},
  "authorized_by":"operator",
  "recording":{"id":456,"type":"Comment","app_url":"…","url":"…",
    "content":"<p>… <bc-attachment content-type=\"application/vnd.basecamp.mention\">…Clawdito…</bc-attachment> fix X</p>",
@@ -543,12 +587,13 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
  "trigger":{"mentioned":true,"subscribed":false}}
 ```
 
-`requester` is the author by the key a dispatcher resolves identity on — the
-account Person id — and `authorized_by` names the trust rule that admitted them:
-`operator`, `allowlist:email`, `allowlist:person`, `domain`, or `project`. A
-consumer acting *for* the requester (committing as them, posting with their
-mention) keys on `requester.person_id`, never on the name or the email, which a
-non-admin profile sees masked.
+`requester` is the author by the key a worker resolves identity on — the
+account Person id — plus the corroborated `client` flag and, once the person
+has [paired](#pairing-the-requesters-github-identity), the GitHub identity a
+worker may name as git author. `authorized_by` names the trust rule that
+admitted them: `operator`, `allowlist:email`, `allowlist:person`, `domain`, or
+`project`. A consumer acting *for* the requester keys on `requester.person_id`,
+never on the name or the email, which a non-admin profile sees masked.
 
 `trigger` is the connector's own verdict on why the event targets the agent,
 settled on the re-fetched recording: `mentioned` when its content carries a

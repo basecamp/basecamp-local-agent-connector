@@ -1,0 +1,76 @@
+require "json"
+require "fileutils"
+require "time"
+
+# Which Basecamp people have paired a GitHub identity with this host's agent,
+# keyed on the account Person id every event carries as `creator.id`. A
+# pairing is the person's own request, the operator's approval, and a
+# device-flow consent in the person's browser proving they control the login
+# (see GitHub::DeviceFlow); only the login and numeric id are kept — the
+# token that proved it is discarded, because nothing here acts *as* them.
+# The pairing exists so a worker can name them as git author, honestly.
+#
+# Two states live in one file: `pending` requests awaiting the operator's
+# approval, and `paired` identities. The file is re-read on every lookup —
+# it is tiny and events are rare — so a pairing made while the connector
+# runs takes effect without a restart.
+class BasecampAgentConnector::Pairings
+  DEFAULT_PATH = File.expand_path("~/.config/basecamp-connect/pairings.json")
+
+  attr_reader :path
+
+  def initialize(path: DEFAULT_PATH)
+    @path = path
+    @data = { "pending" => {}, "paired" => {} }
+  end
+
+  def find(person_id)
+    reload
+    @data["paired"][person_id.to_s]
+  end
+
+  def pending(person_id)
+    reload
+    @data["pending"][person_id.to_s]
+  end
+
+  def paired
+    reload
+    @data["paired"].dup
+  end
+
+  def request(person_id, login:, reply_url:, requested_at: Time.now.utc)
+    reload
+    @data["pending"][person_id.to_s] = { "login" => login.delete_prefix("@"), "reply_url" => reply_url, "requested_at" => requested_at.iso8601 }
+    save
+  end
+
+  def pair(person_id, login:, id:, approved_by:, paired_at: Time.now.utc)
+    reload
+    @data["pending"].delete(person_id.to_s)
+    @data["paired"][person_id.to_s] = { "login" => login, "id" => id, "approved_by" => approved_by, "paired_at" => paired_at.iso8601 }
+    save
+  end
+
+  def remove(person_id)
+    reload
+    removed = !@data["paired"].delete(person_id.to_s).nil?
+    @data["pending"].delete(person_id.to_s)
+    save
+    removed
+  end
+
+  private
+    def reload
+      json = JSON.parse(File.read(@path))
+      @data = { "pending" => json["pending"] || {}, "paired" => json["paired"] || {} }
+    rescue JSON::ParserError, SystemCallError
+      @data = { "pending" => {}, "paired" => {} }
+    end
+
+    def save
+      FileUtils.mkdir_p File.dirname(@path), mode: 0o700
+      File.write @path, JSON.pretty_generate(@data) + "\n", perm: 0o600
+      self
+    end
+end

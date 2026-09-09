@@ -27,10 +27,11 @@ class BasecampAgentConnector::Basecamp::Bridge
     boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
     webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL,
     delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK,
-    corroborate_as: nil)
+    corroborate_as: nil, pairings: nil)
     @authorizer = authorizer
     @agent = agent
     @corroborate_as = corroborate_as
+    @pairings = pairings
     @projects = projects
     @webhook_types, @chat_types = partition_types(types)
     @basecamp_cli = basecamp_cli
@@ -222,7 +223,8 @@ class BasecampAgentConnector::Basecamp::Bridge
         verifier: verifier,
         emitter: @emitter,
         webhook: webhook,
-        logger: @logger
+        logger: @logger,
+        pairings: @pairings
     end
 
     def verifier

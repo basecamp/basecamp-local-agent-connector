@@ -1,11 +1,12 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr)
+  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr, pairings: nil)
     @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
     @webhook = webhook
     @logger = logger
+    @pairings = pairings
     @seen_event_ids = Set.new
     @in_flight_event_ids = Set.new
     @lock = Mutex.new
@@ -205,7 +206,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
       elsif !targets_agent?(verified)
         log "dropped event #{event.id}: authoritative recording does not target the agent"
       else
-        @emitter.emit(verified.with_authorization(authorization))
+        @emitter.emit(verified.with_authorization(authorization).with_pairing(@pairings&.find(verified.creator_id)))
       end
 
       !verified.nil?

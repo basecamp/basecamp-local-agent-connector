@@ -330,7 +330,7 @@ class BasecampAgentConnector::Connector
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
-        corroborate_as: @options.corroborating_profile,
+        corroborate_as: @options.corroborating_profile, pairings: BasecampAgentConnector::Pairings.new,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 

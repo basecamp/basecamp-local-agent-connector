@@ -603,7 +603,20 @@ Instruct that background agent to, in order:
    than one card table** — On Call has three, so a bare `cards columns --project
    27` resolves nothing there. If there's no Triage-like or no In-progress-like
    column, skip this silently — never invent columns.
-4. **Do the requested work** in the repo.
+4. **Do the requested work** in the repo, **as the requester where git is
+   concerned.** When the event's `requester.github` is present (the person
+   has paired — see *Pairing* below), every commit for this request is
+   authored by them and the committer stays this machine's identity:
+   ```bash
+   git commit --author="<requester.name> <<requester.github.id>+<requester.github.login>@users.noreply.github.com>" -m "…
+
+   Basecamp-Request: <recording.app_url>"
+   ```
+   Never sign the commit, never add `Signed-off-by` or `Co-authored-by`, never
+   post a status or `gh signoff` in their name. When `requester.github` is
+   absent the commit is authored by this machine as usual; the trailer and the
+   PR body line below still say who asked. The operator's own requests
+   (`authorized_by` is `operator`) change nothing.
 
    **Several items means several agents.** When one request covers independent
    work — six cards, a todo list, four unrelated bugs — spawn a subagent per
@@ -653,6 +666,31 @@ Because the background agent gathers its own context and posts its own reply, th
 front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
+
+### Pairing: a colleague's GitHub identity
+
+A mention that asks to **pair** — "pair me with GitHub @marie", "link my GitHub
+login marie" — is handled by the front thread, not dispatched:
+
+1. Reply as the agent on the recording: *"Pairing request from <name> for
+   GitHub @marie — waiting for the operator to approve (boost this reply)."*
+   Record it: `bin/pair request --person <creator.id> --login marie --reply
+   <the reply's app_url>`.
+2. When a `boost_created` event arrives whose `recording` is that reply and
+   whose `creator` is the operator (`authorized_by` is `operator`; any other
+   booster is ignored), run `bin/pair approve --person <id> --approved-by
+   <operator's Person id>` in the background and read its first NDJSON line.
+   Reply as the agent with the code: *"Enter <user_code> at <verification_uri>
+   within 15 minutes to confirm you control @marie."* Then wait for the final
+   line: `{"paired": …}` → reply *"Paired: your requests now commit as
+   @marie."*; `{"error": …}` → reply with the reason and @mention the
+   requester. The declared login must be the account that consents; the tool
+   refuses otherwise.
+3. From then on the connector stamps `requester.github` on that person's
+   events and step 4 above commits as them.
+
+`bin/pair list` and `bin/pair remove --person <id>` manage pairings; README →
+Pairing has the one-time OAuth App setup.
 
 ### Write replies as rich text
 
@@ -877,7 +915,10 @@ green** — getting CI green is part of finishing the task, not a follow-up:
    stays clean. Do all the work there.
 2. **Green locally first** — run `bin/ci` in the worktree and iterate until it
    passes. Never push red.
-3. **Push and open the PR.**
+3. **Push and open the PR.** The body's first line names who asked:
+   `Requested by <requester.name> in Basecamp: <recording.app_url>` — for the
+   operator's own requests too. The PR is opened by this machine's `gh`
+   identity; the line and the commit trailer are the record of the request.
 4. **Green remotely** — `gh pr checks <n> --watch --fail-fast`; if a check fails,
    fix it, push, and re-watch. Loop until every check is green (remote can fail
    what local passed).
