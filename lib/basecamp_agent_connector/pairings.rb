@@ -83,21 +83,27 @@ class BasecampAgentConnector::Pairings
     # here on every event, and a hand-edit must not take it down.
     def reload
       json = JSON.parse(File.read(@path))
-      @data = SECTIONS.to_h { |section| [ section, entries(json.is_a?(Hash) ? json[section] : nil) ] }
+      @data = SECTIONS.to_h { |section| [ section, entries(json.is_a?(Hash) ? json[section] : nil, REQUIRED[section]) ] }
     rescue JSON::ParserError, SystemCallError
       @data = SECTIONS.to_h { |section| [ section, {} ] }
     end
 
-    def entries(section)
-      section.is_a?(Hash) ? section.select { |_, entry| entry.is_a?(Hash) } : {}
+    def entries(section, required)
+      section.is_a?(Hash) ? section.select { |_, entry| well_formed?(entry, required) } : {}
+    end
+
+    def well_formed?(entry, required)
+      entry.is_a?(Hash) && required.all? { |key, type| entry[key].is_a?(type) && entry[key] != "" }
     end
 
     # Written beside and renamed over, so the connector, which reads this on
-    # every event, never sees a half-written file.
+    # every event, never sees a half-written file; the scratch name is this
+    # process's own, so two writers cannot rename each other's.
     def save
       FileUtils.mkdir_p File.dirname(@path), mode: 0o700
-      File.write "#{@path}.tmp", JSON.pretty_generate(@data) + "\n", perm: 0o600
-      File.rename "#{@path}.tmp", @path
+      scratch = "#{@path}.#{Process.pid}.tmp"
+      File.write scratch, JSON.pretty_generate(@data) + "\n", perm: 0o600
+      File.rename scratch, @path
       self
     end
 end
