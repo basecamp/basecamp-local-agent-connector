@@ -478,8 +478,9 @@ The ceremony, in Basecamp, once per person and host:
    and discards the token.
 4. From then on every emitted line for her carries `requester.github`, and a
    worker commits her requests with
-   `--author="Marie Chef <4242+marie@users.noreply.github.com>"`, the address
-   GitHub links to her account through renames.
+   `--author="marie <4242+marie@users.noreply.github.com>"` — the login rather
+   than her display name, because the line is shell, and the address GitHub
+   links to her account through renames.
 
 Setup once per host: register a GitHub **OAuth App** (Settings → Developer
 settings → OAuth Apps; enable *Device flow*; no callback URL or secret is

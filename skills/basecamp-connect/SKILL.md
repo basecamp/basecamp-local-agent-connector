@@ -613,11 +613,14 @@ Instruct that background agent to, in order:
    has paired — see *Pairing* below), every commit for this request is
    authored by them and the committer stays this machine's identity:
    ```bash
-   git commit --no-gpg-sign --author="<requester.name> <<requester.github.id>+<requester.github.login>@users.noreply.github.com>" -m "…
+   git commit --no-gpg-sign --author="<requester.github.login> <<requester.github.id>+<requester.github.login>@users.noreply.github.com>" -m "…
 
    Basecamp-Request: <recording.app_url>"
    ```
-   Never sign the commit (`--no-gpg-sign` overrides a host's `commit.gpgSign`;
+   The author name is the GitHub login, not `requester.name`: a Basecamp
+   display name is free text and this is a shell line, while a login is
+   `[A-Za-z0-9-]` and GitHub shows the account either way. Never sign the
+   commit (`--no-gpg-sign` overrides a host's `commit.gpgSign`;
    a signature would be this machine's key under their name), never add
    `Signed-off-by` or `Co-authored-by`, never
    post a status or `gh signoff` in their name. When `requester.github` is
