@@ -81,6 +81,10 @@ class DeviceFlowTest < Minitest::Test
     Dir.mktmpdir do |directory|
       path = File.join(directory, "github-oauth.json")
       assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Failed) { BasecampAgentConnector::GitHub::DeviceFlow.client_id(path) }
+      [ "{", "[]", "null", "{}" ].each do |contents|
+        File.write path, contents
+        assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Failed, contents) { BasecampAgentConnector::GitHub::DeviceFlow.client_id(path) }
+      end
       File.write path, JSON.generate("client_id" => "Iv1.abc")
       assert_equal "Iv1.abc", BasecampAgentConnector::GitHub::DeviceFlow.client_id(path)
     end

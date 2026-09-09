@@ -22,9 +22,12 @@ class BasecampAgentConnector::GitHub::DeviceFlow
   Identity = Data.define(:login, :id)
 
   def self.client_id(path = DEFAULT_CONFIG)
-    JSON.parse(File.read(path))["client_id"] or raise Failed, "no client_id in #{path}"
+    config = JSON.parse(File.read(path))
+    config.is_a?(Hash) && config["client_id"] or raise Failed, "no client_id in #{path}"
   rescue Errno::ENOENT
     raise Failed, "no GitHub OAuth client id at #{path}: run `bin/pair setup --client-id <id>` (README → Pairing)"
+  rescue JSON::ParserError
+    raise Failed, "#{path} is not JSON: run `bin/pair setup --client-id <id>` again"
   end
 
   def initialize(client_id:, http: method(:post_json), clock: -> { Time.now }, sleeper: ->(seconds) { sleep seconds })
