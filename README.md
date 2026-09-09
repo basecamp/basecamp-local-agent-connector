@@ -411,12 +411,12 @@ of the modes — read the limit below before choosing it.
 
 **Who does the re-fetching also matters.** By default the corroborating reads
 run under the operator's profile. `--corroborate-as agent` runs them under the
-agent's own profile instead, so the connector sees exactly what the agent user
-sees: a mention in a project the agent is in but you are not still
-corroborates (under the operator's profile it would be dropped as
-uncorroborated, silently), and a non-admin agent sees every colleague's email
-masked — so combine it with `--allow-person`, never with `--allow` or `--trust
-domain` (the connector warns at startup if you do).
+agent's own profile instead, so the trust decision is made from what the agent
+user sees. It does not change what arrives: webhooks are registered and
+Campfire polled as the operator, so you still have to be a member of every
+watched project. What changes is the author it judges — a non-admin agent sees
+every colleague's email masked — so combine it with `--allow-person`, never
+with `--allow` or `--trust domain` (the connector warns at startup if you do).
 
 Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can

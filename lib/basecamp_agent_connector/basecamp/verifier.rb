@@ -8,16 +8,15 @@ class BasecampAgentConnector::Basecamp::Verifier
   DRAFTED_STATUS = "drafted"
 
   # `corroborate_as` is the CLI profile every corroborating read runs under:
-  # nil for the CLI default (the operator's), or the agent's own profile. The
-  # choice decides two things at once. Reach: a recording only the agent can
-  # read (a project the machine owner is not in, where a rostered colleague
-  # mentioned the agent) corroborates under the agent's profile and is
-  # silently uncorroborated under the operator's. Visibility: bc3 shows other
-  # users' email addresses only to admins, so under a non-admin profile the
-  # corroborated creator arrives with a masked address and only Person-id
-  # keyed trust (`--allow-person`, `project`) can authorize. The received-
-  # boosts feed is always read as the agent, whatever this says — it is the
-  # agent's own feed.
+  # nil for the CLI default (the operator's), or the agent's own profile. It
+  # decides whose eyes the trust decision is made with, not what arrives:
+  # webhooks are registered and Campfire polled as the operator, so an event
+  # reaches here only from a project the operator is in. What the choice
+  # changes is the corroborated creator — bc3 shows other users' email
+  # addresses only to admins, so under a non-admin profile the address
+  # arrives masked and only Person-id keyed trust (`--allow-person`,
+  # `project`) can authorize. The received-boosts feed is always read as the
+  # agent, whatever this says — it is the agent's own feed.
   def initialize(basecamp_cli:, agent:, corroborate_as: nil)
     @basecamp_cli = basecamp_cli
     @agent = agent
