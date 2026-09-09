@@ -75,14 +75,18 @@ class BasecampAgentConnector::Pairings
   end
 
   private
-    # A missing, unparseable, or mis-shaped file reads as nobody paired: the
-    # pipeline reads through here on every event, and a hand-edit must not
-    # take it down.
+    # A missing, unparseable, or mis-shaped file reads as nobody paired, and a
+    # mis-shaped entry as that person unpaired: the pipeline reads through
+    # here on every event, and a hand-edit must not take it down.
     def reload
       json = JSON.parse(File.read(@path))
-      @data = SECTIONS.to_h { |section| [ section, json.is_a?(Hash) && json[section].is_a?(Hash) ? json[section] : {} ] }
+      @data = SECTIONS.to_h { |section| [ section, entries(json.is_a?(Hash) ? json[section] : nil) ] }
     rescue JSON::ParserError, SystemCallError
       @data = SECTIONS.to_h { |section| [ section, {} ] }
+    end
+
+    def entries(section)
+      section.is_a?(Hash) ? section.select { |_, entry| entry.is_a?(Hash) } : {}
     end
 
     # Written beside and renamed over, so the connector, which reads this on
