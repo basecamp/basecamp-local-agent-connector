@@ -923,13 +923,14 @@ Some instructions are "open a PR for X." For these the background agent follows 
 stricter lifecycle and **must not report the work done until the branch is
 green** — getting CI green is part of finishing the task, not a follow-up:
 
-1. **Work in a fresh worktree off the default branch** — `git remote set-head
-   origin --auto && git worktree add -b <branch> <path> origin/HEAD` in the
-   resolved repo (the default branch is `main` in some repos and `master` in
-   others, e.g. bc3 and haystack; `origin/HEAD` names it without guessing, and
-   `set-head --auto` creates that ref in a repo wired by `git remote add`
-   rather than cloned), so the task is isolated and the default branch stays
-   clean. Do all the work there.
+1. **Work in a fresh worktree off the default branch** — `git fetch origin &&
+   git remote set-head origin --auto && git worktree add -b <branch> <path>
+   origin/HEAD` in the resolved repo (the default branch is `main` in some
+   repos and `master` in others, e.g. bc3 and haystack; `origin/HEAD` names it
+   without guessing; the fetch brings the tracking branch up to date and, in a
+   repo wired by `git remote add` rather than cloned, into existence, which
+   `set-head --auto` needs before it can point at it), so the task starts from
+   current code, isolated, with the default branch clean. Do all the work there.
 2. **Green locally first** — run `bin/ci` in the worktree and iterate until it
    passes. Never push red.
 3. **Push and open the PR.** The body's first line names who asked:
