@@ -85,17 +85,15 @@ class BasecampAgentConnector::GitHub::DeviceFlow
       Identity.new login: user["login"], id: user["id"]
     end
 
-    # A POST with a JSON body, or a GET when the body is nil, answered as JSON.
+    # A form-encoded POST (RFC 8628's wire format for the device endpoints), or
+    # a GET when the body is nil, answered as JSON.
     def post_json(url, body, token: nil)
       uri = URI(url)
       request = body.nil? ? Net::HTTP::Get.new(uri) : Net::HTTP::Post.new(uri)
       request["Accept"] = "application/json"
       request["User-Agent"] = "basecamp-agent-connector"
       request["Authorization"] = "Bearer #{token}" unless token.nil?
-      unless body.nil?
-        request["Content-Type"] = "application/json"
-        request.body = JSON.generate(body)
-      end
+      request.set_form_data(body) unless body.nil?
       response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 10, read_timeout: 30) { |http| http.request(request) }
       JSON.parse(response.body)
     rescue JSON::ParserError
