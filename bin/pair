@@ -4,8 +4,8 @@
 #
 #   bin/pair setup --client-id ID                    # once per host: the OAuth App (device flow) client id
 #   bin/pair request --person ID --login LOGIN --reply URL   # record a person's request, pending the operator's approval
-#   bin/pair approve --person ID [--approved-by ID]  # run the device flow; prints the code, waits, stores login+id
-#   bin/pair list
+#   bin/pair approve (--person ID | --reply URL) [--approved-by ID]   # run the device flow; prints the code, waits, stores login+id
+#   bin/pair list                                    # paired identities and pending requests
 #   bin/pair remove --person ID
 #
 # `approve` prints NDJSON: first {"user_code","verification_uri","expires_in"}
@@ -46,8 +46,10 @@ when "request"
   pairings.request(person, login: login, reply_url: reply)
   puts JSON.generate("pending" => { "person_id" => person, "login" => login, "reply_url" => reply })
 when "approve"
-  usage.call("approve needs --person") if person.nil?
-  pending = pairings.pending(person)
+  usage.call("approve needs --person or --reply") if person.nil? && reply.nil?
+  pending = person.nil? ? pairings.pending_for_reply(reply) : pairings.pending(person)
+  person ||= pending && pending["person_id"]
+  usage.call("no pending request was answered at #{reply}") if person.nil?
   login ||= pending && pending["login"]
   usage.call("no pending request for Person #{person}; pass --login LOGIN") if login.nil?
 
@@ -70,6 +72,7 @@ when "approve"
 when "list"
   pairings.paired.each { |id, pairing| puts "#{id}\t@#{pairing["login"]} (#{pairing["id"]})\tpaired #{pairing["paired_at"]}" }
   puts "(nobody paired)" if pairings.paired.empty?
+  pairings.pending_requests.each { |id, request| puts "#{id}\t@#{request["login"]}\tpending since #{request["requested_at"]}, reply #{request["reply_url"]}" }
 when "remove"
   usage.call("remove needs --person") if person.nil?
   puts pairings.remove(person) ? "Removed the pairing for Person #{person}." : "Person #{person} was not paired."

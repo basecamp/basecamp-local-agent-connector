@@ -35,6 +35,19 @@ class BasecampAgentConnector::Pairings
     @data["pending"][person_id.to_s]
   end
 
+  # The request whose agent reply was boosted, by that reply's URL — what a
+  # boost event names is the reply, not the person who asked for the pairing.
+  def pending_for_reply(reply_url)
+    reload
+    @data["pending"].find { |_, request| request["reply_url"] == reply_url } \
+      &.then { |person_id, request| request.merge("person_id" => person_id.to_i) }
+  end
+
+  def pending_requests
+    reload
+    @data["pending"].dup
+  end
+
   def paired
     reload
     @data["paired"].dup

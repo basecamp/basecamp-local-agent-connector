@@ -59,4 +59,17 @@ class PairingsTest < Minitest::Test
       assert_nil BasecampAgentConnector::Pairings.new(path: @pairings.path).find(300), contents
     end
   end
+
+  # The operator approves by boosting the agent's reply, so the approving
+  # event carries that reply's URL and not the requester's id.
+  def test_a_pending_request_is_found_by_the_reply_it_was_acknowledged_in
+    @pairings.request(300, login: "marie", reply_url: "https://3.basecamp.com/000/buckets/222/comments/900")
+
+    found = @pairings.pending_for_reply("https://3.basecamp.com/000/buckets/222/comments/900")
+
+    assert_equal 300, found["person_id"]
+    assert_equal "marie", found["login"]
+    assert_nil @pairings.pending_for_reply("https://3.basecamp.com/000/buckets/222/comments/901")
+    assert_equal [ "300" ], @pairings.pending_requests.keys
+  end
 end

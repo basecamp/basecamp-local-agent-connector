@@ -469,8 +469,9 @@ The ceremony, in Basecamp, once per person and host:
 2. **The operator approves** by boosting that reply. The boost arrives as a
    corroborated, operator-keyed event — the same trigger the connector already
    verifies — so approval costs no new mechanism.
-3. **Marie proves control** of the login. `bin/pair approve --person 51659243
-   --approved-by <operator id>` runs GitHub's device flow: it prints a
+3. **Marie proves control** of the login. `bin/pair approve --reply <that
+   reply's URL> --approved-by <operator id>` (or `--person 51659243`) runs
+   GitHub's device flow: it prints a
    one-time code, the front thread relays it as the agent, Marie enters it in
    her own browser. The tool stores the pairing only if the account that
    consented is the login she declared, keeps just her login and numeric id,
@@ -483,7 +484,8 @@ The ceremony, in Basecamp, once per person and host:
 Setup once per host: register a GitHub **OAuth App** (Settings → Developer
 settings → OAuth Apps; enable *Device flow*; no callback URL or secret is
 needed here) and store its client id with `bin/pair setup --client-id <id>`.
-`bin/pair list` and `bin/pair remove --person <id>` manage pairings; they live
+`bin/pair list` shows pairings and pending requests, `bin/pair remove --person
+<id>` forgets one; they live
 in `~/.config/basecamp-connect/pairings.json` (0600) and take effect without a
 restart.
 
