@@ -146,7 +146,8 @@ The skill remembers the last successful connection in
   "agent": "clawdito",
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
-  "trust": { "mode": "domain", "allow": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false },
+  "trust": { "mode": "domain", "allow": [], "allow_person": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false,
+             "corroborate_as": "operator" },
   "types": "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line",
   "chat_poll": 15,
   "boost_poll": 60,
@@ -181,8 +182,10 @@ The skill remembers the last successful connection in
   not overwrite it.
 - **Reconstructing the command from the store:** always emit **exactly one
   `--trust <mode>`** for the stored mode, followed by its value flags (`allow` →
-  `--allow`, `allow_domain` → `--allow-domain`, `allow_assignments` → the
-  assignment opt-in; `--trust project` needs no value flag). Emitting the mode
+  `--allow`, `allow_person` → `--allow-person`, `allow_domain` →
+  `--allow-domain`, `allow_assignments` → the assignment opt-in,
+  `corroborate_as` → `--corroborate-as`; `--trust project` needs no value
+  flag; a missing `corroborate_as` means `operator`). Emitting the mode
   explicitly makes `bare --trust domain` (empty `allow_domain`) reconstruct as
   `domain` — using the built-in default domain — rather than silently dropping
   to operator, and makes a value flag that disagrees with the stored mode (e.g.
