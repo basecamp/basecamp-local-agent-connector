@@ -16,7 +16,10 @@ require "time"
 # runs takes effect without a restart.
 class BasecampAgentConnector::Pairings
   DEFAULT_PATH = File.expand_path("~/.config/basecamp-connect/pairings.json")
-  SECTIONS = %w[pending paired]
+  # What an entry must carry to be one: a paired identity names a login and
+  # GitHub's numeric id, a pending request a login and the reply it waits on.
+  REQUIRED = { "pending" => { "login" => String, "reply_url" => String }, "paired" => { "login" => String, "id" => Integer } }
+  SECTIONS = REQUIRED.keys
 
   attr_reader :path
 
