@@ -135,20 +135,6 @@ class BasecampAgentConnector::Basecamp::Client
     json "subscriptions", "show", url_or_id, *profile_flag(profile)
   end
 
-  # A person on the account, as the profile's user sees them (`people show`
-  # takes an id, or "me"). The roster check a dispatcher runs before acting for
-  # a requester: does this Person still exist here, and are they a client?
-  def person_by_id(id, profile: nil)
-    json "people", "show", id.to_s, *profile_flag(profile)
-  end
-
-  # Posts a comment on a recording as the profile's user. One attempt, like
-  # the other mutations: a lost answer is not a lost request, and a repeated
-  # post would double the comment.
-  def comment(url_or_id, content, profile: nil)
-    json "comment", url_or_id, content, *profile_flag(profile), attempts: 1
-  end
-
   # The boosts the profile's user has received (bc3's `/my/boosts.json` — the
   # report behind the "You've got Boosts!" notification), newest first. The CLI
   # has no dedicated command for the received-boosts feed, so go through its
