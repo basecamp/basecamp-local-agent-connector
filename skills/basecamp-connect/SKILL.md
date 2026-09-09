@@ -688,7 +688,10 @@ login marie" — is handled by the front thread, not dispatched:
    booster is ignored), run `bin/pair approve --reply <recording.app_url>
    --approved-by <creator.id>` in the background and read its first NDJSON
    line. The reply URL is the key: the boost names the reply, not the person,
-   and the pending request recorded in step 1 survives a watcher restart.
+   and the pending request recorded in step 1 outlives a watcher restart. A
+   boost given while the connector was stopped is not: boosts before start
+   are history, never emitted, so ask the operator to boost again (or run the
+   `approve` command by hand).
    Reply as the agent with the code: *"Enter <user_code> at <verification_uri>
    within 15 minutes to confirm you control @marie."* Then wait for the final
    line: `{"paired": …}` → reply *"Paired: your requests now commit as
