@@ -85,9 +85,12 @@ class BasecampAgentConnector::Pairings
       @data = SECTIONS.to_h { |section| [ section, {} ] }
     end
 
+    # Written beside and renamed over, so the connector, which reads this on
+    # every event, never sees a half-written file.
     def save
       FileUtils.mkdir_p File.dirname(@path), mode: 0o700
-      File.write @path, JSON.pretty_generate(@data) + "\n", perm: 0o600
+      File.write "#{@path}.tmp", JSON.pretty_generate(@data) + "\n", perm: 0o600
+      File.rename "#{@path}.tmp", @path
       self
     end
 end
