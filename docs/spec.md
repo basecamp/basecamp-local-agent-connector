@@ -237,9 +237,9 @@ For each delivered event:
 
 1. **Cheap pre-filter** (on the raw payload, no API calls):
    - Path matches the secret path.
-   - `kind` is a `*_created`, `*_content_changed` or `*_active` event (edits
-     that add the mention count; `*_active` is a draft being published — see
-     below).
+   - `kind` is a `*_created`, `*_content_changed`, `*_active` or
+     `*_assignment_changed` event (edits that add the mention count; `*_active`
+     is a draft being published — see below).
    - `creator.email_address` matches the **operator** (case-insensitive). Email,
      not id — a webhook's `creator.id` is an account-scoped Person id while
      `basecamp me` returns a global identity id; the email bridges them.
@@ -593,7 +593,7 @@ Coverage the suite must include:
 |------|----------------|
 | Mention matching | a mention attachment naming the agent matches; a mention of a different user does not; plain text naming the agent does not |
 | Operator filter | events authored by the operator pass; events from any other user are dropped |
-| Kind filter | `*_created`, `*_content_changed` and `*_active` pass; other kinds dropped |
+| Kind filter | `*_created`, `*_content_changed`, `*_active` and `*_assignment_changed` pass; other kinds dropped |
 | Draft publishing | a `*_active` event mentioning the agent emits exactly once; a recording Basecamp still marks `drafted` emits nothing |
 | Dedup | a repeated `event.id` is dropped; distinct ids pass |
 | Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected |
@@ -686,8 +686,9 @@ Coverage the suite must include:
   verdict.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
-- Triggers: `*_created`, `*_content_changed`, and `*_active` (a draft published
-  after the fact — the only delivery its mention ever gets).
+- Triggers: `*_created`, `*_content_changed`, `*_active` (a draft published
+  after the fact — the only delivery its mention ever gets), and
+  `*_assignment_changed`.
 - Mention match: a mention attachment (`application/vnd.basecamp.mention`)
   whose SGID carries the agent's Person id — not a plain-text token, and not
   the display name, which is not unique.
