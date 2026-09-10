@@ -41,6 +41,45 @@ class PipelineTest < Minitest::Test
     assert_empty @output.string
   end
 
+  # The bug this covers: a message drafted first and published later never
+  # produces a `message_created` delivery. bc3 records that event while the
+  # recording is still drafted, refuses to relay it ("don't leak drafts") and
+  # never re-relays it, so the mention arrives only as the publication itself.
+  def test_emits_for_a_message_published_from_a_draft
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(published_message)
+
+    pipeline(runner).process(draft_published_payload)
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "message_active", JSON.parse(@output.string)["kind"]
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+  end
+
+  # A draft is visible to nobody but its author and bc3 relays no event for
+  # one, so a delivery naming a still-drafted recording is a forgery — and
+  # emitting it would hand the agent an unpublished message.
+  def test_does_not_emit_for_a_message_basecamp_still_marks_a_draft
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(published_message("status" => "drafted"))
+
+    refute pipeline(runner).process(draft_published_payload)
+
+    assert_empty @output.string
+    assert_match(/not corroborated/, @logs.string)
+  end
+
+  def test_dedupes_a_redelivered_publication
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(published_message)
+    pipeline = pipeline(runner)
+
+    pipeline.process(draft_published_payload)
+    pipeline.process(draft_published_payload)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
   def test_ignores_a_comment_that_neither_mentions_nor_subscribes_the_agent
     recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
     runner = FakeCommandRunner.new

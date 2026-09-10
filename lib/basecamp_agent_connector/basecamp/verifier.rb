@@ -1,6 +1,12 @@
 class BasecampAgentConnector::Basecamp::Verifier
   COMMENT_RECORDING_TYPE = "Comment"
 
+  # A recording Basecamp still files as a draft is visible to nobody but its
+  # author, and bc3 relays no event for one ("don't leak drafts": Webhook's
+  # `eligible_event?`). So a delivery naming one is either a forgery or a
+  # recording re-drafted since the event, and either way it stays private.
+  DRAFTED_STATUS = "drafted"
+
   def initialize(basecamp_cli:, agent:)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -53,12 +59,20 @@ class BasecampAgentConnector::Basecamp::Verifier
     # can't fake real Basecamp state.
     def corroborated?(recording, event)
       return false unless recording.is_a?(Hash)
+      return false if drafted?(recording)
 
       if event.assignment_changed?
         assigns_agent?(recording)
       else
         recording.dig("creator", "id") == event.creator_id
       end
+    end
+
+    # Only what Basecamp positively marks a draft is refused: representations
+    # that carry no status at all (a chat line) say nothing about drafting, and
+    # nothing in bc3 can draft them.
+    def drafted?(recording)
+      recording["status"] == DRAFTED_STATUS
     end
 
     def assigns_agent?(recording)

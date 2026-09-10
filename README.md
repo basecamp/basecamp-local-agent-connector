@@ -260,7 +260,11 @@ What `bin/connect` has in place, at a glance:
   explicitly opts assignments in.
 - **Mention gating** — the recording must contain a real Basecamp mention
   *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
-  the agent's Person id encoded in the mention SGID.
+  the agent's Person id encoded in the mention SGID. A mention typed into a
+  **draft** counts from the moment the draft is published: Basecamp relays no
+  event while a recording is drafted and never re-relays its creation once it
+  goes live, so the publication (`*_active`) is the delivery the connector acts
+  on — and a recording Basecamp still marks `drafted` never emits.
 - **Subscription gating** — a new comment with *no* mention still triggers when
   the agent subscribes to the commented-on recording (a card/thread it
   participates in). Subscription is a live API fact, so it is confirmed by

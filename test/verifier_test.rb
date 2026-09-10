@@ -18,6 +18,23 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(sample_payload))
   end
 
+  def test_rejects_a_recording_basecamp_still_marks_a_draft
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(published_message("status" => "drafted"))
+
+    assert_nil verifier(runner).verify(event(draft_published_payload))
+  end
+
+  def test_verifies_a_recording_published_from_a_draft
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(published_message)
+
+    verified = verifier(runner).verify(event(draft_published_payload))
+
+    refute_nil verified
+    assert verified.mentioned?
+  end
+
   def test_rejects_when_recording_not_found
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")

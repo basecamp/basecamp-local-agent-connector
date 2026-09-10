@@ -4,6 +4,7 @@ class EventTest < Minitest::Test
   def test_actionable_kind
     assert from_kind("comment_created").actionable_kind?
     assert from_kind("message_content_changed").actionable_kind?
+    assert from_kind("message_active").actionable_kind?
     assert from_kind("kanban_card_assignment_changed").actionable_kind?
     assert from_kind("todo_assignment_changed").actionable_kind?
     refute from_kind("comment_archived").actionable_kind?

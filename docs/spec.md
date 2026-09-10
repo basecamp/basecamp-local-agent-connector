@@ -237,8 +237,9 @@ For each delivered event:
 
 1. **Cheap pre-filter** (on the raw payload, no API calls):
    - Path matches the secret path.
-   - `kind` is a `*_created` **or** `*_content_changed` event (edits that add the
-     mention count).
+   - `kind` is a `*_created`, `*_content_changed` or `*_active` event (edits
+     that add the mention count; `*_active` is a draft being published — see
+     below).
    - `creator.email_address` matches the **operator** (case-insensitive). Email,
      not id — a webhook's `creator.id` is an account-scoped Person id while
      `basecamp me` returns a global identity id; the email bridges them.
@@ -275,7 +276,10 @@ For each delivered event:
    content, and boosted recording all come from that fresh fetch, and presence
    in the feed doubles as the targeting fact (stamped `agent_boosted`). The
    webhook route refuses boost-kind payloads outright: Basecamp never delivers
-   them, so the poller is the sole boost source.
+   them, so the poller is the sole boost source. Verification also refuses any
+   recording Basecamp still marks `drafted`: bc3 relays no event for a drafted
+   recording (`Webhook.eligible_event?` — "don't leak drafts"), so a delivery
+   naming one is a forgery, and a draft is visible to nobody but its author.
 4. **Emit** — print one NDJSON line to STDOUT with the verified event (see
    format below). Non-matching / unverified events are dropped (logged to
    STDERR).
@@ -486,9 +490,20 @@ Confirmed against `bc3` source (`app/views/api/webhooks/event.jbuilder`,
   `creator`, (`copy` for copied events).
 - **`kind`**: `"<container>_<action>"`, e.g. `comment_created`,
   `message_created`, `kanban_card_created`, `message_content_changed`. The
-  connector subscribes to `*_created`, `*_content_changed`, and
+  connector subscribes to `*_created`, `*_content_changed`, `*_active`, and
   `*_assignment_changed` (assignment events carry `details.added_person_ids` /
   `removed_person_ids`).
+- **Drafts and `*_active`**: a recording written as a draft and published later
+  never delivers a `*_created` event. bc3 records that event while the recording
+  is `drafted` and refuses to relay it (`Webhook.eligible_event?` drops any event
+  whose recording is `drafted?`), and it never re-relays it once the draft goes
+  live. What it relays instead is the publication itself: `drafted => active` is
+  tracked as the action `active` (`Recording::Eventable#track_status_change`) and
+  named `<container>_active` — `message_active`, `document_active`,
+  `upload_active`. So a mention typed into a draft arrives under `*_active` or
+  not at all. bc3 pairs the two kinds the same way internally
+  (`Event::Categorized::CATEGORIZED_KINDS = %w[ message_created message_active ]`)
+  but deliberately does not normalize them on the webhook path.
 - **`recording`**: `id`, `status`, `type` (Ruby class: `Comment`, `Message`,
   `Kanban::Card`, `Todo`, …), `title`, `url` (API JSON), `app_url` (browser),
   `bookmark_url`, `parent` {id,title,type,url,app_url}, `bucket` {id,name,type},
@@ -578,7 +593,8 @@ Coverage the suite must include:
 |------|----------------|
 | Mention matching | a mention attachment naming the agent matches; a mention of a different user does not; plain text naming the agent does not |
 | Operator filter | events authored by the operator pass; events from any other user are dropped |
-| Kind filter | `*_created` and `*_content_changed` pass; other kinds dropped |
+| Kind filter | `*_created`, `*_content_changed` and `*_active` pass; other kinds dropped |
+| Draft publishing | a `*_active` event mentioning the agent emits exactly once; a recording Basecamp still marks `drafted` emits nothing |
 | Dedup | a repeated `event.id` is dropped; distinct ids pass |
 | Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected |
 | Emitter | one well-formed NDJSON line per verified event |
@@ -670,7 +686,8 @@ Coverage the suite must include:
   verdict.
 - Working dir: infer from project name (app token → repo); **ask interactively**
   on miss.
-- Triggers: both `*_created` and `*_content_changed`.
+- Triggers: `*_created`, `*_content_changed`, and `*_active` (a draft published
+  after the fact — the only delivery its mention ever gets).
 - Mention match: a mention attachment (`application/vnd.basecamp.mention`)
   whose SGID carries the agent's Person id — not a plain-text token, and not
   the display name, which is not unique.

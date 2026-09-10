@@ -96,6 +96,34 @@ module PayloadHelpers
     ).merge(overrides)
   end
 
+  # A `*_active` webhook: a recording that was drafted first and published
+  # later. bc3 relays nothing while it is drafted, so the publication is the
+  # only delivery the mention ever arrives in.
+  def draft_published_payload(overrides = {})
+    {
+      "id" => 99004,
+      "kind" => "message_active",
+      "created_at" => "2026-06-28T12:00:00Z",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "details" => { "notified_recipient_ids" => [ 200 ] },
+      "recording" => published_message
+    }.merge(overrides)
+  end
+
+  def published_message(overrides = {})
+    sample_recording(
+      "id" => 458,
+      "type" => "Message",
+      "status" => "active",
+      "title" => "Kick off",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/messages/458",
+      "url" => "https://3.basecamp.com/000/buckets/222/messages/458.json",
+      "content" => "<p>Hey #{mention_html(person_id: 200)} let us start</p>",
+      "parent" => { "id" => 790, "type" => "Message::Board", "title" => "Message Board",
+        "app_url" => "https://3.basecamp.com/000/buckets/222/message_boards/790" }
+    ).merge(overrides)
+  end
+
   # A webhook delivers a mention as an unexpanded attachment: just the SGID
   # (which encodes the Person gid) and content-type, with no rendered name.
   def mention_html(person_id:)
