@@ -239,6 +239,32 @@ cause is `BASECAMP_PROFILE` pinned to the agent's profile with no `--operator`,
 which resolves the operator through the agent's profile. Use a distinct bot
 account for the agent, and pass `--operator` when the variable is set.
 
+## Prerequisite: the funnel hostname must resolve in public DNS
+
+Basecamp validates `payload_url` at webhook **creation** by resolving the
+hostname to a public IP. (Fizzy resolves only at delivery time, so a Fizzy
+webhook succeeding proves nothing here.) A node's `<node>.<tailnet>.ts.net`
+A record is published to the `ts.net` zone by Tailscale's control plane when
+Funnel is first enabled on that node — `tailscale funnel status` saying "on"
+reflects local config, not that the record exists yet. On 2026-09-10 the
+record took ~50 minutes to appear on a fresh node.
+
+If registration fails with `payload_url: must resolve to an active public IP`,
+check the **authoritative** server, not a public resolver:
+
+```bash
+dig +short <node>.<tailnet>.ts.net @ns1.dnsimple.com
+```
+
+- **Empty:** the record is not published. Do **not** retry in a tight loop.
+  Every attempt makes Basecamp's resolver re-fetch, get NXDOMAIN, and cache
+  it for another 300s (the `ts.net` SOA minimum); an attempt landing just
+  before expiry pushes success further out. Poll `dig` instead.
+- **Answers:** wait 5 minutes with **no** attempts so cached NXDOMAINs expire,
+  then retry. Anycast resolvers are many independent caches, so a name can
+  resolve on `1.1.1.1` while another node still returns NXDOMAIN; a couple
+  of spaced retries may still be needed.
+
 ## Procedure
 
 ### 1. Launch the bridge, then watch its STDOUT
