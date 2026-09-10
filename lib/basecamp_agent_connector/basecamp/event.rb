@@ -7,7 +7,20 @@ class BasecampAgentConnector::Basecamp::Event
   # carry `added_person_ids` / `removed_person_ids`.
   ASSIGNMENT_KIND_SUFFIX = "_assignment_changed"
 
-  ACTIONABLE_KIND_SUFFIXES = [ "_created", "_content_changed", ASSIGNMENT_KIND_SUFFIX ]
+  # Publishing a draft is the one way a recording becomes visible without a
+  # `_created` event ever reaching here. bc3 records the `created` event while
+  # the recording is still drafted and refuses to relay it — Webhook's
+  # `eligible_event?` drops any event whose recording is `drafted?`, so drafts
+  # cannot leak — and it never re-relays that event at publish time. What it
+  # relays instead is the status change itself: publishing moves the recording
+  # drafted => active, which Recording::Eventable tracks as the action `active`
+  # and Event#set_kind names `<container>_active` (`message_active`,
+  # `document_active`, `upload_active`). So a mention typed into a draft
+  # reaches the connector under this suffix or not at all.
+  DRAFT_PUBLISHED_KIND_SUFFIX = "_active"
+
+  ACTIONABLE_KIND_SUFFIXES = \
+    [ "_created", "_content_changed", DRAFT_PUBLISHED_KIND_SUFFIX, ASSIGNMENT_KIND_SUFFIX ]
 
   # Basecamp never delivers chat events by webhook: bc3 hard-excludes every
   # /^chat/ event kind from webhook relay and rejects Chat::Line as a
