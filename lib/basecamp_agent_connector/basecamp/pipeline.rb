@@ -44,7 +44,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
       begin
         emit_if_verified(event)
       ensure
-        release(event)
+        release(event.id)
       end
     else
       true
@@ -70,15 +70,33 @@ class BasecampAgentConnector::Basecamp::Pipeline
   end
 
   # Runs the block unless the event id is heard, decided as `heard?` decides
-  # it, and keeps the lock while the block runs, so no delivery of that id can
-  # settle between the answer and what the caller does about it. Answers
-  # whether the block ran. The block must not call back into this pipeline.
+  # it, with no delivery of that id able to settle between the answer and what
+  # the block does about it. That is not done by holding the lock across the
+  # block: the block writes a log line, and a stderr nobody is draining would
+  # then stall every live delivery's claim and release, unrelated events on
+  # every project included. It is done by holding the id itself in flight for
+  # the block's duration, so only a delivery of that same event waits, and it
+  # waits for the block exactly as it would for a verification. The
+  # reservation marks nothing seen: once the block is done, that delivery
+  # claims the id afresh. Answers whether the block ran.
   def unless_heard(event_id)
-    @lock.synchronize do
-      unless heard_once_settled?(event_id)
-        yield
+    reserved = @lock.synchronize do
+      if heard_once_settled?(event_id)
+        false
+      else
+        @in_flight_event_ids << event_id
         true
       end
+    end
+
+    if reserved
+      begin
+        yield
+      ensure
+        release(event_id)
+      end
+
+      true
     end
   end
 
@@ -146,9 +164,9 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
     end
 
-    def release(event)
+    def release(event_id)
       @lock.synchronize do
-        @in_flight_event_ids.delete(event.id)
+        @in_flight_event_ids.delete(event_id)
         @settled.broadcast
       end
     end

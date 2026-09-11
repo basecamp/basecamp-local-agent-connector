@@ -126,11 +126,12 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
     # A delivery whose event the pipeline heard by another delivery is left
     # alone, replayable or not (see Pipeline#heard?, which waits out a
     # verification still in flight so the answer is a verdict). A hole is
-    # reported under the pipeline's lock, so that a live delivery of the same
-    # event cannot emit between the pipeline answering "not heard" and the log
-    # announcing a miss. A replay needs no such care: `process` claims the id
-    # atomically, so an event heard a moment after the check is still
-    # suppressed.
+    # reported while the pipeline holds its event's id reserved (see
+    # Pipeline#unless_heard), so a live delivery of the same event cannot emit
+    # between the pipeline answering "not heard" and the log announcing a miss:
+    # it waits for the line, then claims the id afresh. A replay needs no such
+    # care: `process` claims the id atomically, so an event heard a moment
+    # after the check is still suppressed.
     def settle(registration, delivery, settled)
       if delivered?(delivery)
         # it arrived

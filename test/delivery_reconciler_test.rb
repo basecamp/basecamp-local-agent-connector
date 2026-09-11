@@ -47,6 +47,30 @@ class DeliveryReconcilerTest < Minitest::Test
     end
   end
 
+  # Blocks inside the first line matching `pattern` until released: a stderr
+  # pipe nobody is draining.
+  class PausingLogger
+    attr_reader :paused, :resume, :lines
+
+    def initialize(pattern)
+      @pattern = pattern
+      @pending = true
+      @paused = Queue.new
+      @resume = Queue.new
+      @lines = []
+    end
+
+    def puts(message)
+      if @pending && message.match?(@pattern)
+        @pending = false
+        @paused << true
+        @resume.pop
+      end
+
+      @lines << message
+    end
+  end
+
   def setup
     @agent = agent_identity
     @output = StringIO.new
@@ -501,6 +525,49 @@ class DeliveryReconcilerTest < Minitest::Test
     assert_equal 1, @logs.string.scan(/MISSED and NOT recovered: delivery 70001/).length
   end
 
+  # The bug this covers: the MISSED line was written under the pipeline's
+  # lock, so a stderr nobody was draining stalled every live delivery's claim
+  # — unrelated events, on every project — until someone drained it.
+  def test_a_blocked_missed_report_does_not_stall_an_unrelated_live_delivery
+    runner = corroborating_runner(webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z"))
+    pipeline = pipeline(runner)
+    logger = PausingLogger.new(/MISSED/)
+    reconciler = reconciler(runner, pipeline: pipeline, logger: logger)
+    reconciling = Thread.new { reconciler.reconcile }
+    logger.paused.pop
+
+    live = Thread.new { pipeline.process(sample_payload("id" => 99002)) }
+
+    assert live.join(2), "the unrelated live delivery stalled behind the blocked report"
+    assert_equal [ 99002 ], emitted_event_ids
+  ensure
+    logger&.resume&.push(true)
+    reconciling&.join(2)
+  end
+
+  # What keeps the report atomic without the lock: a live delivery of the very
+  # event being reported waits for the line, then claims the id afresh and
+  # emits — after the MISSED line, never before it.
+  def test_a_live_delivery_of_the_event_being_reported_waits_for_the_report_and_then_emits
+    runner = corroborating_runner(webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z"))
+    pipeline = pipeline(runner)
+    logger = PausingLogger.new(/MISSED/)
+    reconciler = reconciler(runner, pipeline: pipeline, logger: logger)
+    reconciling = Thread.new { reconciler.reconcile }
+    logger.paused.pop
+
+    live = Thread.new { pipeline.process(sample_payload) }
+    refute live.join(0.1), "the live delivery emitted while its miss was still being reported"
+    assert_empty @output.string
+
+    logger.resume << true
+
+    assert live.join(2)
+    assert reconciling.join(2)
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_equal 1, logger.lines.grep(/MISSED and NOT recovered: delivery 70001/).length
+  end
+
   private
     def emitted_event_ids
       @output.string.lines.map { |line| JSON.parse(line)["event_id"] }
@@ -544,12 +611,12 @@ class DeliveryReconcilerTest < Minitest::Test
     end
 
     def reconciler(runner, webhooks: webhooks(runner), pipeline: pipeline(runner),
-      lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK, clock: -> { NOW })
+      lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK, clock: -> { NOW }, logger: @logs)
       BasecampAgentConnector::Basecamp::DeliveryReconciler.new \
         webhooks: webhooks,
         pipeline: pipeline,
         lookback: lookback,
-        logger: @logs,
+        logger: logger,
         clock: clock
     end
 end
