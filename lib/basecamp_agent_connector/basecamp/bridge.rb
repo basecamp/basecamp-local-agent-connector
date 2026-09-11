@@ -126,24 +126,15 @@ class BasecampAgentConnector::Basecamp::Bridge
   # a stalled network can run to minutes.
   def handler
     lambda do |request|
+      # Chat and boost kinds, which Basecamp never delivers by webhook, are
+      # refused by the webhook pipeline itself (see Pipeline), so the replay
+      # path the DeliveryReconciler takes cannot skip that gate either.
       payload = JSON.parse(request.body)
-
-      # Basecamp never delivers chat or boost events by webhook, so either
-      # kind on this route is by definition not from Basecamp. The pollers
-      # are the sole sources; refuse the impostor rather than corroborate it
-      # (or let it replay a real boost through this pipeline's separate dedupe).
-      event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
-      if event.chat_kind?
-        log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
-      elsif event.boost?
-        log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
-      else
-        pipeline.process(payload)
-      end
+      pipeline.process(payload)
 
       nil
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
-      log "could not corroborate event #{event.id}: #{error.message}; answered 503 so Basecamp redelivers " \
+      log "could not corroborate event #{payload["id"]}: #{error.message}; answered 503 so Basecamp redelivers " \
         "(bc3 deactivates the webhook after 10 failed deliveries: if this repeats, check `basecamp auth status " \
         "--profile #{@agent.profile}` — the webhook check reactivates the webhook, but not the credentials)"
       503
@@ -169,7 +160,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     end
 
     def pipeline
-      @pipeline ||= build_pipeline
+      @pipeline ||= build_pipeline(webhook: true)
     end
 
     # The poller gets its own pipeline so chat line ids and webhook event ids
@@ -208,7 +199,9 @@ class BasecampAgentConnector::Basecamp::Bridge
     # The reconciler shares the webhook route's own pipeline, deliberately: one
     # per-event.id suppression space covers both, so a delivery recovered here
     # and the same delivery arriving live — a Basecamp retry, or one still in
-    # flight when the history was read — fire once between them, not twice.
+    # flight when the history was read — fire once between them, not twice;
+    # and every gate that pipeline applies, the webhook-only kind refusal
+    # included, applies to a replay exactly as to a live delivery.
     def delivery_reconciler
       BasecampAgentConnector::Basecamp::DeliveryReconciler.new \
         webhooks: @webhooks,
@@ -217,12 +210,13 @@ class BasecampAgentConnector::Basecamp::Bridge
         logger: @logger
     end
 
-    def build_pipeline
+    def build_pipeline(webhook: false)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: @authorizer,
         agent: @agent,
         verifier: verifier,
         emitter: @emitter,
+        webhook: webhook,
         logger: @logger
     end
 

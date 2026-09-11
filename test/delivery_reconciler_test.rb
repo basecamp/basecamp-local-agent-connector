@@ -5,6 +5,24 @@ class DeliveryReconcilerTest < Minitest::Test
   # boundary is the same on every day this runs.
   NOW = Time.utc(2026, 6, 28, 12, 0, 5)
 
+  # A registration list and its histories, set directly, so a test can change
+  # what the next pass reads — or make a read fail — between passes.
+  class FakeWebhooks
+    attr_reader :histories
+
+    def initialize(histories)
+      @histories = histories
+    end
+
+    def registrations
+      @histories.keys
+    end
+
+    def delivery_history(registration)
+      @histories[registration]
+    end
+  end
+
   def setup
     @agent = agent_identity
     @output = StringIO.new
@@ -20,8 +38,7 @@ class DeliveryReconcilerTest < Minitest::Test
 
     reconciler(runner).reconcile
 
-    assert_equal 1, @output.string.lines.length
-    assert_equal 99001, JSON.parse(@output.string)["event_id"]
+    assert_equal [ 99001 ], emitted_event_ids
     assert_equal({ "mentioned" => true, "subscribed" => false }, JSON.parse(@output.string)["trigger"])
   end
 
@@ -35,7 +52,7 @@ class DeliveryReconcilerTest < Minitest::Test
   def test_reports_the_response_code_of_a_delivery_that_was_answered_badly
     reconciler(corroborating_runner(webhook_delivery(code: 503))).reconcile
 
-    assert_equal 1, @output.string.lines.length
+    assert_equal [ 99001 ], emitted_event_ids
     assert_match(/answered HTTP 503/, @logs.string)
   end
 
@@ -58,18 +75,23 @@ class DeliveryReconcilerTest < Minitest::Test
 
     2.times { reconciler.reconcile }
 
-    assert_equal 1, @output.string.lines.length
+    assert_equal [ 99001 ], emitted_event_ids
     assert_equal 1, runner.commands_matching(/basecamp show/).length
   end
 
-  def test_does_not_emit_an_event_the_live_delivery_already_settled
+  # A live delivery bc3 recorded as failed — verifying it overran bc3's 10s
+  # timeout — did reach the connector. It is neither replayed nor announced as
+  # a delivery that never arrived.
+  def test_does_not_replay_an_event_the_live_delivery_already_settled
     runner = corroborating_runner(webhook_delivery(code: 0))
     pipeline = pipeline(runner)
     pipeline.process(sample_payload)
 
     reconciler(runner, pipeline: pipeline).reconcile
 
-    assert_equal 1, @output.string.lines.length
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_equal 1, runner.commands_matching(/basecamp show/).length
+    refute_match(/never reached this connector/, @logs.string)
   end
 
   # The other order: Basecamp retries the delivery after the reconciliation
@@ -81,7 +103,7 @@ class DeliveryReconcilerTest < Minitest::Test
     reconciler(runner, pipeline: pipeline).reconcile
     pipeline.process(sample_payload)
 
-    assert_equal 1, @output.string.lines.length
+    assert_equal [ 99001 ], emitted_event_ids
   end
 
   def test_refuses_a_failed_delivery_from_an_unauthorized_author
@@ -124,6 +146,38 @@ class DeliveryReconcilerTest < Minitest::Test
     assert_match(/dropped event 99001: not corroborated by Basecamp/, @logs.string)
   end
 
+  # The live route refuses both kinds before verifying anything; a replay
+  # reaches the same webhook pipeline, so it must meet the same refusal.
+  def test_refuses_a_failed_delivery_of_a_kind_basecamp_never_delivers_by_webhook
+    runner = corroborating_runner \
+      webhook_delivery(code: 0, id: 70003, body: boost_payload),
+      webhook_delivery(code: 0, id: 70004, body: chat_line_payload)
+
+    reconciler(runner).reconcile
+
+    assert_empty @output.string
+    assert_empty runner.commands_matching(/basecamp show|chat line/)
+    assert_match(/ignored boost-kind payload/, @logs.string)
+    assert_match(/ignored chat-kind payload/, @logs.string)
+  end
+
+  # The live route answers 200 to a delivery Basecamp would not corroborate,
+  # so bc3 never redelivers it; a reconciled one is settled the same way,
+  # rather than re-verified every check and then reported as a hole.
+  def test_settles_a_delivery_basecamp_would_not_corroborate_as_the_live_route_does
+    now = NOW
+    runner = registered_runner(webhook_delivery(code: 0))
+    runner.stub "basecamp show", stdout: envelope(sample_recording("status" => "drafted"))
+    reconciler = reconciler(runner, clock: -> { now })
+
+    reconciler.reconcile
+    now += 2 * 3600
+    reconciler.reconcile
+
+    assert_equal 1, runner.commands_matching(/basecamp show/).length
+    refute_match(/MISSED/, @logs.string)
+  end
+
   def test_does_not_emit_a_failed_delivery_older_than_the_lookback
     runner = corroborating_runner(webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z"))
 
@@ -131,6 +185,17 @@ class DeliveryReconcilerTest < Minitest::Test
 
     assert_empty @output.string
     assert_empty runner.commands_matching(/basecamp show/)
+  end
+
+  def test_the_lookback_includes_its_own_boundary_and_nothing_older
+    runner = corroborating_runner \
+      webhook_delivery(code: 0, created_at: "2026-06-28T11:00:05Z"),
+      webhook_delivery(code: 0, id: 70002, created_at: "2026-06-28T11:00:04Z", body: sample_payload("id" => 99002))
+
+    reconciler(runner).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_match(/MISSED and NOT recovered: delivery 70002/, @logs.string)
   end
 
   def test_reports_a_delivery_older_than_the_lookback_as_an_unrecovered_hole
@@ -143,6 +208,95 @@ class DeliveryReconcilerTest < Minitest::Test
     assert_match(/delivery 70001 of event 99001 \(comment_created\) on project 1/, @logs.string)
     assert_match(/older than the 3600s reconciliation window/, @logs.string)
     assert_match(%r{https://3\.basecamp\.com/000/buckets/222/comments/456}, @logs.string)
+  end
+
+  # A failed delivery whose event did arrive by another delivery is no hole,
+  # however old: telling the operator to hand it over would run it twice.
+  def test_does_not_report_as_missed_an_event_heard_by_another_delivery
+    runner = corroborating_runner(webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z"))
+    pipeline = pipeline(runner)
+    pipeline.process(sample_payload)
+
+    reconciler(runner, pipeline: pipeline).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+    refute_match(/MISSED/, @logs.string)
+  end
+
+  # Failing open here would lift the lookback bound off exactly the deliveries
+  # the connector never received, where no suppression can stand in for it.
+  def test_does_not_replay_a_delivery_whose_attempt_time_cannot_be_read
+    runner = corroborating_runner(webhook_delivery(code: 0, created_at: "not a timestamp"))
+    reconciler = reconciler(runner)
+
+    2.times { reconciler.reconcile }
+
+    assert_empty @output.string
+    assert_empty runner.commands_matching(/basecamp show/)
+    assert_equal 1, @logs.string.scan(/MISSED and NOT recovered: delivery 70001 .*attempt time could not be read/).length
+  end
+
+  def test_reconciles_a_body_recorded_as_a_json_string
+    runner = corroborating_runner(webhook_delivery(code: 0, body: JSON.generate(sample_payload)))
+
+    reconciler(runner).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+  end
+
+  def test_reports_a_failed_delivery_whose_body_cannot_be_read_instead_of_settling_it_silently
+    runner = corroborating_runner \
+      webhook_delivery(code: 0, id: 70005, body: "{not json"),
+      webhook_delivery(code: 0, id: 70006, body: nil),
+      webhook_delivery(code: 0, id: 70007, body: sample_payload.except("id"))
+
+    reconciler(runner).reconcile
+
+    assert_empty @output.string
+    [ 70005, 70006, 70007 ].each do |id|
+      assert_match(/MISSED and NOT recovered: delivery #{id} of an unreadable event .*request body could not be read/, @logs.string)
+    end
+  end
+
+  # The bug this covers: an entry in a shape nobody expected raised before it
+  # was settled, so every pass died on it and never reached the mention behind.
+  def test_a_malformed_delivery_does_not_stop_the_ones_behind_it
+    malformed = { "id" => 70009, "created_at" => "2026-06-28T11:59:00Z", "request" => { "body" => [] }, "response" => [] }
+    runner = corroborating_runner(malformed, webhook_delivery(code: 0))
+    reconciler = reconciler(runner)
+
+    2.times { reconciler.reconcile }
+
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_equal 1, @logs.string.scan(/MISSED and NOT recovered: delivery 70009/).length
+  end
+
+  def test_skips_loudly_a_history_entry_that_carries_no_delivery_id
+    runner = corroborating_runner([ "not", "a", "delivery" ], webhook_delivery(code: 0))
+
+    reconciler(runner).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_match(/skipped an entry of the delivery history of webhook 555 on project 1: it carries no delivery id/, @logs.string)
+  end
+
+  def test_an_exception_reconciling_one_delivery_does_not_stop_the_ones_behind_it
+    runner = corroborating_runner \
+      webhook_delivery(code: 0, id: 70002, body: sample_payload("id" => 99002)),
+      webhook_delivery(code: 0)
+    real = pipeline(runner)
+    exploding = Object.new
+    exploding.define_singleton_method(:heard?) { |event_id| real.heard?(event_id) }
+    exploding.define_singleton_method(:process) do |payload|
+      raise "surprise" if payload["id"] == 99002
+
+      real.process(payload)
+    end
+
+    reconciler(runner, pipeline: exploding).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+    assert_match(/could not reconcile delivery 70002 of webhook 555 on project 1: RuntimeError: surprise; not retried/, @logs.string)
   end
 
   # A corroboration the CLI could not complete is no verdict, so the delivery
@@ -160,7 +314,7 @@ class DeliveryReconcilerTest < Minitest::Test
     runner.stub "basecamp show", stdout: envelope(sample_recording)
     reconciler.reconcile
 
-    assert_equal 1, @output.string.lines.length
+    assert_equal [ 99001 ], emitted_event_ids
   end
 
   def test_reconciles_every_registration
@@ -174,10 +328,81 @@ class DeliveryReconcilerTest < Minitest::Test
 
     reconciler(runner, webhooks: webhooks(runner, projects: [ 1, 2 ])).reconcile
 
-    assert_equal [ 99001, 99002 ], @output.string.lines.map { |line| JSON.parse(line)["event_id"] }
+    assert_equal [ 99001, 99002 ], emitted_event_ids
+  end
+
+  # The WebhookMonitor's lock refuses a unit once a stop has begun; the pass
+  # must end there, not run on through every delivery behind it.
+  def test_a_pass_ends_at_the_first_unit_its_guard_refuses
+    runner = corroborating_runner \
+      webhook_delivery(code: 0),
+      webhook_delivery(code: 0, id: 70002, body: sample_payload("id" => 99002))
+    allowed = 2 # the history read, then the first delivery
+    guard = lambda do |&unit|
+      next false if allowed.zero?
+
+      allowed -= 1
+      unit.call
+      true
+    end
+
+    reconciler(runner).reconcile(guard: guard)
+
+    assert_equal [ 99001 ], emitted_event_ids
+  end
+
+  # The bug this covers: every delivery id ever read was kept for the session,
+  # a busy project's whole traffic, though the history only ever holds 25.
+  def test_keeps_settled_ids_only_for_the_deliveries_still_in_the_history
+    registration = registration(555)
+    webhooks = FakeWebhooks.new(registration => (1..25).map { |id| webhook_delivery(id: id) })
+    reconciler = reconciler(FakeCommandRunner.new, webhooks: webhooks)
+
+    reconciler.reconcile
+    webhooks.histories[registration] = (26..50).map { |id| webhook_delivery(id: id) }
+    reconciler.reconcile
+
+    assert_equal (26..50).to_set, reconciler.instance_variable_get(:@settled_delivery_ids)[registration]
+  end
+
+  def test_a_history_that_could_not_be_read_lets_go_of_nothing
+    registration = registration(555)
+    old = webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z")
+    webhooks = FakeWebhooks.new(registration => [ old ])
+    reconciler = reconciler(FakeCommandRunner.new, webhooks: webhooks)
+
+    reconciler.reconcile
+    webhooks.histories[registration] = nil
+    reconciler.reconcile
+    webhooks.histories[registration] = [ old ]
+    reconciler.reconcile
+
+    assert_equal 1, @logs.string.scan(/MISSED and NOT recovered/).length
+  end
+
+  def test_forgets_a_registration_no_longer_registered
+    retired = registration(555)
+    replacement = registration(556)
+    webhooks = FakeWebhooks.new(retired => [ webhook_delivery ])
+    reconciler = reconciler(FakeCommandRunner.new, webhooks: webhooks)
+
+    reconciler.reconcile
+    webhooks.histories.delete(retired)
+    webhooks.histories[replacement] = []
+    reconciler.reconcile
+
+    assert_equal [ replacement ], reconciler.instance_variable_get(:@settled_delivery_ids).keys
   end
 
   private
+    def emitted_event_ids
+      @output.string.lines.map { |line| JSON.parse(line)["event_id"] }
+    end
+
+    def registration(id, project: 1)
+      BasecampAgentConnector::Basecamp::Webhooks::Registration.new(project: project, id: id)
+    end
+
     def corroborating_runner(*deliveries)
       registered_runner(*deliveries).tap do |runner|
         runner.stub "basecamp show", stdout: envelope(sample_recording)
@@ -199,22 +424,25 @@ class DeliveryReconcilerTest < Minitest::Test
       end
     end
 
+    # Built as the Bridge builds the webhook route's pipeline, which is the one
+    # the reconciler shares.
     def pipeline(runner)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
+        webhook: true,
         logger: @logs
     end
 
     def reconciler(runner, webhooks: webhooks(runner), pipeline: pipeline(runner),
-      lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK)
+      lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK, clock: -> { NOW })
       BasecampAgentConnector::Basecamp::DeliveryReconciler.new \
         webhooks: webhooks,
         pipeline: pipeline,
         lookback: lookback,
         logger: @logs,
-        clock: -> { NOW }
+        clock: clock
     end
 end

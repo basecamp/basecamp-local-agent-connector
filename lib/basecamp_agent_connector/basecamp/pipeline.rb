@@ -1,9 +1,10 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(authorizer:, agent:, verifier:, emitter:, logger: $stderr)
+  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr)
     @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
+    @webhook = webhook
     @logger = logger
     @seen_event_ids = Set.new
     @in_flight_event_ids = Set.new
@@ -37,7 +38,9 @@ class BasecampAgentConnector::Basecamp::Pipeline
   def process(payload)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    if actionable?(event) && claim(event)
+    if impostor_on_webhook?(event)
+      true
+    elsif actionable?(event) && claim(event)
       begin
         emit_if_verified(event)
       ensure
@@ -48,7 +51,38 @@ class BasecampAgentConnector::Basecamp::Pipeline
     end
   end
 
+  # Whether this pipeline has heard of an event id: one it settled and still
+  # remembers (emitted, or dropped on the authoritative re-check), or one
+  # being verified right now. An id it forgot — Basecamp would not corroborate
+  # it, or could not be asked — has not been heard, and neither has one the
+  # pre-filter turned away before claiming it. The DeliveryReconciler asks, so
+  # that a failed delivery of an event that did arrive by another delivery is
+  # neither replayed nor reported as a hole.
+  def heard?(event_id)
+    @lock.synchronize { @seen_event_ids.include?(event_id) }
+  end
+
   private
+    # Basecamp never delivers chat or boost events by webhook: bc3
+    # hard-excludes every chat kind from relay, and a boost is not a Recording
+    # and creates no event. So on the webhook pipeline either kind is by
+    # definition not from Basecamp, and is refused rather than corroborated —
+    # or let replay a real boost past the BoostPoller's own dedupe, which this
+    # pipeline does not share. The refusal lives here rather than on the route
+    # so that every way into the webhook pipeline passes it: a live delivery
+    # and a reconciled one alike.
+    def impostor_on_webhook?(event)
+      if @webhook && event.chat_kind?
+        log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
+        true
+      elsif @webhook && event.boost?
+        log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
+        true
+      else
+        false
+      end
+    end
+
     def actionable?(event)
       event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
     end

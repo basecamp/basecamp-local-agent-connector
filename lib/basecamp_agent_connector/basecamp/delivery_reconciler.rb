@@ -1,3 +1,4 @@
+require "json"
 require "set"
 require "time"
 
@@ -18,19 +19,21 @@ require "time"
 # re-check every registration's history is read, and each delivery that did
 # not land in the 2xx range is fed through the same Pipeline the live route
 # uses — with the original body, not a reconstruction. That makes a reconciled
-# trigger indistinguishable from a delivered one: same authorizer gate, same
-# corroborating re-fetch, same authoritative re-check, same drops (agent
-# authored, unauthorized author, still a draft), and the same `event_id`,
-# which is what keys the pipeline's per-event suppression. A Basecamp retry
-# landing later, a second reconciliation pass, and a delivery still in flight
-# while the history is read all converge on that one id, so between them the
-# trigger fires exactly once.
+# trigger indistinguishable from a delivered one: same refusal of the kinds
+# Basecamp never delivers by webhook, same authorizer gate, same corroborating
+# re-fetch, same authoritative re-check, same drops (agent authored,
+# unauthorized author, still a draft), and the same `event_id`, which is what
+# keys the pipeline's per-event suppression. A Basecamp retry landing later, a
+# second reconciliation pass, and a delivery still in flight while the history
+# is read all converge on that one id, so between them the trigger fires
+# exactly once.
 #
 # Bounded by `lookback`: a webhook reactivated after an outage can carry the
 # whole outage in its history, and replaying hours of triggers at once is its
 # own kind of failure. A failed delivery older than the window is never
-# emitted — it is named in the log instead, once, with its event and its
-# recording, so the hole is visible and can be handed over by hand.
+# emitted, and neither is one whose attempt time or recorded body cannot be
+# read, since neither can be shown safe to replay: each is named in the log
+# instead, once, so the hole is visible and can be handed over by hand.
 class BasecampAgentConnector::Basecamp::DeliveryReconciler
   # Wide enough to cover several webhook checks (300s each) and a funnel or
   # network blip, short enough that a webhook reactivated after a night asleep
@@ -39,117 +42,200 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
 
   DELIVERED_RESPONSE_CODES = (200..299)
 
+  # For a caller with nothing to guard a pass with: every unit runs.
+  UNGUARDED = lambda do |&unit|
+    unit.call
+    true
+  end
+
+  # One history entry, read defensively. bc3 renders the entry, but its body
+  # embeds what people wrote, and a shape this code did not expect must cost
+  # that entry — never the pass, and never the entries behind it.
+  Delivery = Data.define(:id, :created_at, :attempted_at, :code, :body) do
+    def event_id
+      body["id"] if body
+    end
+  end
+
   def initialize(webhooks:, pipeline:, lookback: DEFAULT_LOOKBACK, logger: $stderr, clock: -> { Time.now })
     @webhooks = webhooks
     @pipeline = pipeline
     @lookback = lookback
     @logger = logger
     @clock = clock
-    @settled_delivery_ids = Set.new
+    @settled_delivery_ids = {}
   end
 
   # One rule per delivery, first pass or fiftieth: already settled here — skip
-  # it; answered 2xx — it arrived, so settle it silently; failed inside the
-  # window — reconcile it; failed outside — report the hole and settle it, so
-  # the log names it once instead of on every check. Settled ids accumulate one
-  # integer per delivery for the session, small enough to keep unpruned.
-  def reconcile
-    @webhooks.deliveries.each do |registration, deliveries|
-      deliveries.each { |delivery| consider(registration, delivery) }
+  # it; answered 2xx, or its event heard by the pipeline through another
+  # delivery — it arrived, so settle it silently; unreadable, or failed outside
+  # the window — report the hole and settle it, so the log names it once
+  # instead of on every check; failed inside the window — reconcile it.
+  #
+  # `guard` runs each unit of the pass — one history read, one delivery — and
+  # answers whether it did; the first refusal ends the pass. The
+  # WebhookMonitor guards with its lock, so a stop waits for the unit in
+  # flight, not for every verification left in the pass. Each delivery is its
+  # own failure boundary as well: one this code cannot handle is logged and
+  # settled, and the ones behind it still run.
+  #
+  # Settled ids are kept per registration, and only for the deliveries still in
+  # its history: one that has scrolled out of the last 25 can never be read
+  # again, so remembering it would only grow. A history that could not be read
+  # lets go of nothing, or the next read would re-report every hole in it.
+  def reconcile(guard: UNGUARDED)
+    registrations = @webhooks.registrations
+    @settled_delivery_ids.select! { |registration, _| registrations.include?(registration) }
+
+    registrations.each do |registration|
+      history = nil
+      return unless guard.call { history = @webhooks.delivery_history(registration) }
+      next if history.nil?
+
+      settled = settled_ids(registration, history)
+      history.each do |entry|
+        return unless guard.call { consider(registration, entry, settled) }
+      end
     end
   end
 
   private
-    def consider(registration, delivery)
-      if @settled_delivery_ids.include?(delivery["id"])
-        # already handled
-      elsif delivered?(delivery)
-        @settled_delivery_ids << delivery["id"]
-      elsif within_lookback?(delivery)
-        reconcile_delivery(registration, delivery)
+    def settled_ids(registration, history)
+      ids = history.filter_map { |entry| entry["id"] if entry.is_a?(Hash) }
+      @settled_delivery_ids[registration] = @settled_delivery_ids.fetch(registration, Set.new) & ids
+    end
+
+    # An entry with no delivery id has nothing to settle it under, so it is
+    # named on every check it is still in the history: bc3 has always given
+    # one, and a history that stops doing so should be loud about it.
+    def consider(registration, entry, settled)
+      delivery = read(entry)
+
+      if delivery.nil?
+        log "skipped an entry of the delivery history of webhook #{registration.id} on project " \
+          "#{registration.project}: it carries no delivery id"
+      elsif !settled.include?(delivery.id)
+        settled << delivery.id
+        settle(registration, delivery, settled)
+      end
+    rescue => error
+      log "could not reconcile delivery #{delivery&.id} of webhook #{registration.id} on project " \
+        "#{registration.project}: #{error.class}: #{error.message}; not retried"
+    end
+
+    def settle(registration, delivery, settled)
+      if delivered?(delivery) || heard?(delivery)
+        # it arrived: by this delivery, or by another of the same event
+      elsif delivery.body.nil?
+        report_unrecovered registration, delivery, "its recorded request body could not be read"
+      elsif delivery.attempted_at.nil?
+        report_unrecovered registration, delivery,
+          "its attempt time could not be read, so it cannot be shown to fall inside the #{@lookback}s " \
+          "reconciliation window"
+      elsif delivery.attempted_at < @clock.call - @lookback
+        report_unrecovered registration, delivery, "older than the #{@lookback}s reconciliation window"
       else
-        report_unrecovered(registration, delivery)
+        reconcile_delivery registration, delivery, settled
       end
     end
 
     # Only a 2xx answer proves the delivery landed. A code of 0 is bc3 saying
     # it never got an answer, and a history entry carrying no code at all —
     # a delivery still in flight while this read went out — says the same
-    # thing: not known to have landed. Both are offered to the pipeline, whose
-    # suppression settles the in-flight case (the claim waits for the live
-    # verdict and then finds the id seen).
+    # thing: not known to have landed.
     def delivered?(delivery)
-      code = delivery.dig("response", "code")
-      code.is_a?(Integer) && DELIVERED_RESPONSE_CODES.cover?(code)
+      delivery.code.is_a?(Integer) && DELIVERED_RESPONSE_CODES.cover?(delivery.code)
     end
 
-    # Fail toward reconciling: a delivery whose timestamp is missing or
-    # unreadable counts as inside the window, since a needless re-offer is
-    # deduped away while a dropped mention is gone for good. Comparing
-    # Basecamp's timestamps against the local clock assumes NTP-grade sync;
-    # skew shifts the boundary by its own magnitude.
-    def within_lookback?(delivery)
-      attempted_at = parse_time(delivery["created_at"])
-      attempted_at.nil? || attempted_at >= @clock.call - @lookback
+    # The pipeline has heard of the event when some delivery of it did arrive:
+    # a live one bc3 recorded as failed because verifying it overran bc3's 10s
+    # timeout, a retry that landed since, or one being verified right now. That
+    # is no hole, and its outcome is that delivery's to settle, just as if the
+    # history had never been read — including a verification that comes back
+    # with no verdict, which the live route answers 503 so bc3 redelivers.
+    def heard?(delivery)
+      !delivery.event_id.nil? && @pipeline.heard?(delivery.event_id)
     end
 
-    def parse_time(value)
-      Time.iso8601(value.to_s)
-    rescue ArgumentError
-      nil
-    end
-
-    # Settled means the pipeline reached a verdict (emitted, dropped, ignored,
-    # or suppressed as a duplicate). A body Basecamp would not corroborate is
-    # unsettled again, so a later check retries it while the recording may yet
-    # reappear — exactly as a redelivery would be re-verified. A call the CLI
-    # could not complete is unsettled the same way: the next check is this
-    # pass's redelivery. A pipeline exception leaves it settled, since
-    # retrying a bug every check would only repeat it.
-    def reconcile_delivery(registration, delivery)
-      log "delivery #{delivery["id"]} of #{describe(delivery)} on project #{registration.project} never reached this " \
+    # Settled once the pipeline returns, whatever its verdict: emitted, dropped,
+    # a duplicate, or not corroborated by Basecamp. That last is what the live
+    # route answers 200 to, so bc3 would never redeliver it either, and
+    # retrying it here every check would only re-log the same refusal for an
+    # hour and then name it a hole. Only a call the CLI could not complete
+    # leaves the delivery unsettled: there is no verdict yet, and the next
+    # check is this pass's redelivery.
+    def reconcile_delivery(registration, delivery, settled)
+      log "delivery #{delivery.id} of #{describe(delivery)} on project #{registration.project} never reached this " \
         "connector (#{describe_response(delivery)}), so nothing was heard of it; reconciling it from the webhook's " \
         "delivery history"
 
-      @settled_delivery_ids << delivery["id"]
-      @settled_delivery_ids.delete(delivery["id"]) unless @pipeline.process(body(delivery))
+      @pipeline.process(delivery.body)
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
-      @settled_delivery_ids.delete(delivery["id"])
+      settled.delete(delivery.id)
       log "could not corroborate reconciled #{describe(delivery)}: #{error.message}; retried on the next webhook check"
     end
 
     # Not emitted, but never silent: the event, the project and the recording
-    # go in the log, so a trigger too old to replay safely is a hole the
+    # go in the log, so a trigger that cannot be replayed safely is a hole the
     # operator can see and hand over by hand.
-    def report_unrecovered(registration, delivery)
-      @settled_delivery_ids << delivery["id"]
-      log "MISSED and NOT recovered: delivery #{delivery["id"]} of #{describe(delivery)} on project " \
+    def report_unrecovered(registration, delivery, reason)
+      log "MISSED and NOT recovered: delivery #{delivery.id} of #{describe(delivery)} on project " \
         "#{registration.project} never reached this connector (#{describe_response(delivery)}) at " \
-        "#{delivery["created_at"]}, older than the #{@lookback}s reconciliation window#{recording_note(delivery)}; " \
-        "if it was a trigger, hand it to the agent by hand"
+        "#{delivery.created_at}, #{reason}#{recording_note(delivery)}; if it was a trigger, hand it to the agent by hand"
+    end
+
+    def read(entry)
+      if entry.is_a?(Hash) && !entry["id"].nil?
+        Delivery.new id: entry["id"], created_at: entry["created_at"], attempted_at: parse_time(entry["created_at"]),
+          code: response_code(entry), body: request_body(entry)
+      end
+    end
+
+    def response_code(entry)
+      response = entry["response"]
+      response["code"] if response.is_a?(Hash)
+    end
+
+    # The body as the live route would have read it. bc3 renders it decoded,
+    # but one recorded as a string is parsed exactly as the route parses the
+    # raw POST. Anything that does not come out as an event envelope — a hash
+    # carrying the event id the pipeline's suppression is keyed on — is
+    # unreadable, and reported rather than guessed at.
+    def request_body(entry)
+      request = entry["request"]
+      body = request["body"] if request.is_a?(Hash)
+      body = JSON.parse(body) if body.is_a?(String)
+      body if body.is_a?(Hash) && !body["id"].nil?
+    rescue JSON::ParserError
+      nil
+    end
+
+    def parse_time(value)
+      Time.iso8601(value) if value.is_a?(String)
+    rescue ArgumentError
+      nil
     end
 
     def describe(delivery)
-      "event #{body(delivery)["id"]} (#{body(delivery)["kind"]})"
+      if delivery.body
+        "event #{delivery.body["id"]} (#{delivery.body["kind"]})"
+      else
+        "an unreadable event"
+      end
     end
 
     def describe_response(delivery)
-      code = delivery.dig("response", "code")
-
-      if code.is_a?(Integer) && code.positive?
-        "answered HTTP #{code}"
+      if delivery.code.is_a?(Integer) && delivery.code.positive?
+        "answered HTTP #{delivery.code}"
       else
         "no response: the connection failed"
       end
     end
 
     def recording_note(delivery)
-      app_url = body(delivery).dig("recording", "app_url")
+      recording = delivery.body["recording"] if delivery.body
+      app_url = recording["app_url"] if recording.is_a?(Hash)
       " — #{app_url}" if app_url
-    end
-
-    def body(delivery)
-      delivery.dig("request", "body") || {}
     end
 
     def log(message)

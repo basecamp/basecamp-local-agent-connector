@@ -214,20 +214,30 @@ class WebhooksTest < Minitest::Test
     assert_match(/could not check webhook 555 on project 1/, logs.string)
   end
 
-  def test_reads_each_registrations_delivery_history
+  def test_reads_a_registrations_delivery_history
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery ])
     webhooks = webhooks(runner)
     webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
 
-    deliveries = webhooks.deliveries
-
-    assert_equal [ 1 ], deliveries.keys.map(&:project)
-    assert_equal [ 70001 ], deliveries.values.first.map { |delivery| delivery["id"] }
+    assert_equal [ 1 ], webhooks.registrations.map(&:project)
+    assert_equal [ 70001 ], webhooks.delivery_history(webhooks.registrations.first).map { |delivery| delivery["id"] }
   end
 
-  def test_reports_a_delivery_history_it_could_not_read_and_keeps_going
+  def test_an_empty_delivery_history_is_read_as_empty
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555)
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_equal [], webhooks.delivery_history(webhooks.registrations.first)
+  end
+
+  # Nil, not empty: a caller must not take a failed read for a history with
+  # nothing in it, and let go of what it remembers about the real one.
+  def test_reports_a_delivery_history_it_could_not_read_as_none_read
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
     stub_transient_failure runner, "webhooks show 555"
@@ -235,8 +245,31 @@ class WebhooksTest < Minitest::Test
     webhooks = webhooks(runner, logs)
     webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
 
-    assert_equal [ [] ], webhooks.deliveries.values
+    assert_nil webhooks.delivery_history(webhooks.registrations.first)
     assert_match(/could not read the delivery history of webhook 555 on project 1/, logs.string)
+  end
+
+  def test_reports_a_delivery_history_that_is_not_a_list_as_none_read
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => { "id" => 70001 })
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_nil webhooks.delivery_history(webhooks.registrations.first)
+    assert_match(/recent_deliveries is not a list/, logs.string)
+  end
+
+  def test_registrations_is_a_copy_restore_cannot_rewrite_under_a_caller
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    webhooks.registrations.clear
+
+    assert_equal [ 555 ], webhooks.registrations.map(&:id)
   end
 
   private

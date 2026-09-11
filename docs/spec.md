@@ -170,8 +170,9 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
   paths remounted if the funnel lost them. The same tick reconciles each
   webhook's `recent_deliveries`: any delivery inside a one-hour lookback whose
   `response.code` is not 2xx is replayed, body and all, through the webhook
-  pipeline (same suppression, so at most one emission per event id); an older
-  one is logged as an unrecovered hole instead.
+  pipeline (same gates, same suppression, so at most one emission per event
+  id); an older one, or one whose attempt time or recorded body cannot be
+  read, is logged as an unrecovered hole instead.
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence

@@ -207,9 +207,9 @@ and the code it got back, and any delivery of the last hour that did not answer
 2xx is replayed through the very same pipeline a live delivery takes — same
 authorization, same corroborating re-fetch, same per-event suppression, so a
 recovered trigger fires exactly once even if Basecamp retries it too. Recoveries
-are logged; a failed delivery older than that hour is **not** replayed, and says
-so in the log (`MISSED and NOT recovered`) with the recording's URL, so you can
-hand it over yourself.
+are logged; a failed delivery older than that hour, or one whose time or body
+can't be read, is **not** replayed, and says so in the log (`MISSED and NOT
+recovered`) with the recording's URL, so you can hand it over yourself.
 
 ---
 
