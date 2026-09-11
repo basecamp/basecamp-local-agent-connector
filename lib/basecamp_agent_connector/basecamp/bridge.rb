@@ -12,6 +12,11 @@ require "securerandom"
 # a BoostPoller over the agent's own received-boosts feed. All sources feed
 # identical pipelines: authorizer pre-filter, corroborating re-fetch,
 # authoritative re-check, one STDOUT funnel.
+#
+# The deliveries the webhook route never received are a source of their own: on
+# the webhook re-check's tick a DeliveryReconciler reads each registration's own
+# delivery history and replays the recorded body of every delivery that failed,
+# through this same webhook pipeline (see DeliveryReconciler).
 class BasecampAgentConnector::Basecamp::Bridge
   # `--types` entries that select Campfire coverage rather than a registrable
   # webhook recording type. Chat::Line is the canonical spelling.
@@ -20,7 +25,8 @@ class BasecampAgentConnector::Basecamp::Bridge
   def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr,
     chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
     boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
-    webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL)
+    webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL,
+    delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK)
     @authorizer = authorizer
     @agent = agent
     @projects = projects
@@ -31,6 +37,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     @chat_poll_interval = chat_poll_interval
     @boost_poll_interval = boost_poll_interval
     @webhook_check_interval = webhook_check_interval
+    @delivery_lookback = delivery_lookback
     @secret = SecureRandom.hex(16)
     @webhooks = BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: basecamp_cli)
   end
@@ -75,7 +82,8 @@ class BasecampAgentConnector::Basecamp::Bridge
       if @webhook_check_interval
         start_webhook_monitor(url: url, types: types)
         log "Re-checking those webhooks every #{@webhook_check_interval}s " \
-          "(Basecamp deactivates a webhook after 10 failed deliveries, silently)"
+          "(Basecamp deactivates a webhook after 10 failed deliveries, silently), and reconciling from their " \
+          "delivery history any delivery of the last #{@delivery_lookback}s that never arrived"
       end
     end
 
@@ -192,8 +200,21 @@ class BasecampAgentConnector::Basecamp::Bridge
         url: url,
         types: types,
         interval: @webhook_check_interval,
+        reconciler: delivery_reconciler,
         logger: @logger
       @webhook_monitor.start
+    end
+
+    # The reconciler shares the webhook route's own pipeline, deliberately: one
+    # per-event.id suppression space covers both, so a delivery recovered here
+    # and the same delivery arriving live — a Basecamp retry, or one still in
+    # flight when the history was read — fire once between them, not twice.
+    def delivery_reconciler
+      BasecampAgentConnector::Basecamp::DeliveryReconciler.new \
+        webhooks: @webhooks,
+        pipeline: pipeline,
+        lookback: @delivery_lookback,
+        logger: @logger
     end
 
     def build_pipeline

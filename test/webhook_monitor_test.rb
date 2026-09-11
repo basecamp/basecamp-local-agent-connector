@@ -26,6 +26,32 @@ class WebhookMonitorTest < Minitest::Test
     assert_empty runner.commands_matching(/webhooks update/)
   end
 
+  # One timer, both holes: the registration is put back, and the deliveries
+  # that never arrived while it was fine are recovered from its own history.
+  def test_check_reconciles_the_delivery_history_after_restoring
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    reconciler = Minitest::Mock.new
+    reconciler.expect :reconcile, nil
+
+    monitor(runner, reconciler: reconciler).check
+
+    reconciler.verify
+  end
+
+  def test_check_reconciles_nothing_once_stopping
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    reconciler = Minitest::Mock.new
+    monitor = monitor(runner, reconciler: reconciler)
+
+    monitor.stop
+    monitor.check
+
+    reconciler.verify
+    assert_empty runner.commands_matching(/webhooks show/)
+  end
+
   def test_start_checks_nothing_before_the_first_interval_and_stop_ends_the_thread
     runner = FakeCommandRunner.new
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
@@ -127,12 +153,13 @@ class WebhookMonitorTest < Minitest::Test
   end
 
   private
-    def monitor(runner, webhooks: registered_webhooks(runner), wait: ->(_seconds) { })
+    def monitor(runner, webhooks: registered_webhooks(runner), reconciler: nil, wait: ->(_seconds) { })
       BasecampAgentConnector::Basecamp::WebhookMonitor.new \
         webhooks: webhooks,
         url: "https://host.example.ts.net/bc5/abc",
         types: "Comment",
         interval: 300,
+        reconciler: reconciler,
         logger: @logs,
         wait: wait
     end

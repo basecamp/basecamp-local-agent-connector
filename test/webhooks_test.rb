@@ -214,6 +214,31 @@ class WebhooksTest < Minitest::Test
     assert_match(/could not check webhook 555 on project 1/, logs.string)
   end
 
+  def test_reads_each_registrations_delivery_history
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery ])
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    deliveries = webhooks.deliveries
+
+    assert_equal [ 1 ], deliveries.keys.map(&:project)
+    assert_equal [ 70001 ], deliveries.values.first.map { |delivery| delivery["id"] }
+  end
+
+  def test_reports_a_delivery_history_it_could_not_read_and_keeps_going
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    stub_transient_failure runner, "webhooks show 555"
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_equal [ [] ], webhooks.deliveries.values
+    assert_match(/could not read the delivery history of webhook 555 on project 1/, logs.string)
+  end
+
   private
     def webhooks(runner, logs = StringIO.new)
       BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: logs, wait: ->(_seconds) { })

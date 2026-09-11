@@ -8,12 +8,13 @@
 class BasecampAgentConnector::Basecamp::WebhookMonitor
   DEFAULT_INTERVAL = 300
 
-  def initialize(webhooks:, url:, types:, interval: DEFAULT_INTERVAL, logger: $stderr,
+  def initialize(webhooks:, url:, types:, interval: DEFAULT_INTERVAL, reconciler: nil, logger: $stderr,
     wait: ->(seconds) { sleep seconds })
     @webhooks = webhooks
     @url = url
     @types = types
     @interval = interval
+    @reconciler = reconciler
     @logger = logger
     @wait = wait
     @stopping = false
@@ -29,7 +30,8 @@ class BasecampAgentConnector::Basecamp::WebhookMonitor
   # registrations never recorded, for teardown to miss. Taking the lock
   # waits for that, so the kill only ever lands in the interval's sleep;
   # the wait is bounded by the CLI's own timeouts, like an in-flight
-  # delivery's.
+  # delivery's — a reconciliation pass verifying recovered deliveries can
+  # hold it for as many of those as it found.
   def stop
     @stopping = true
 
@@ -40,9 +42,14 @@ class BasecampAgentConnector::Basecamp::WebhookMonitor
     end
   end
 
+  # Restore first: reconciling against a webhook whose registration is gone
+  # would read the history of an id Basecamp no longer has.
   def check
     @checking.synchronize do
-      @webhooks.restore(url: @url, types: @types) unless @stopping
+      unless @stopping
+        @webhooks.restore(url: @url, types: @types)
+        @reconciler&.reconcile
+      end
     end
   end
 
