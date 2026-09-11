@@ -23,6 +23,30 @@ class DeliveryReconcilerTest < Minitest::Test
     end
   end
 
+  # Blocks inside the first command matching `pattern` until released, to hold
+  # a live verification in flight while a reconciliation pass runs.
+  class PausingCommandRunner < FakeCommandRunner
+    attr_reader :paused, :resume
+
+    def initialize(pattern)
+      super()
+      @pattern = pattern
+      @pending = true
+      @paused = Queue.new
+      @resume = Queue.new
+    end
+
+    def run(*command)
+      if @pending && command.join(" ").match?(@pattern)
+        @pending = false
+        @paused << true
+        @resume.pop
+      end
+
+      super
+    end
+  end
+
   def setup
     @agent = agent_identity
     @output = StringIO.new
@@ -392,6 +416,89 @@ class DeliveryReconcilerTest < Minitest::Test
     reconciler.reconcile
 
     assert_equal [ replacement ], reconciler.instance_variable_get(:@settled_delivery_ids).keys
+  end
+
+  # The bug this covers: an id still being verified counted as heard, so a
+  # failed delivery of it was settled on the spot. When that live verification
+  # then could not reach Basecamp, the pipeline forgot the id and answered 503
+  # to a connection bc3 had already given up on — and nothing was left to
+  # recover the trigger.
+  def test_waits_out_a_live_verification_that_finds_no_verdict_and_then_recovers_the_delivery
+    runner = PausingCommandRunner.new(/basecamp show/)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery(code: 0) ])
+    stub_transient_failure(runner, "basecamp show")
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+    reconciler = reconciler(runner, pipeline: pipeline)
+
+    live = Thread.new do
+      pipeline.process(sample_payload)
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      :no_verdict
+    end
+    runner.paused.pop
+    reconciling = Thread.new { reconciler.reconcile }
+    sleep 0.05
+    assert_predicate reconciling, :alive?
+
+    runner.resume << true
+
+    assert_equal :no_verdict, live.value
+    reconciling.join(2)
+    refute_predicate reconciling, :alive?
+    assert_equal [ 99001 ], emitted_event_ids
+  end
+
+  # Too old to replay is still no hole while a live delivery of the same event
+  # is being verified: the report waits for that verdict, and the delivery
+  # that emits is the answer, not a miss announced a moment before it.
+  def test_does_not_report_as_missed_an_event_whose_live_delivery_is_still_being_verified
+    runner = PausingCommandRunner.new(/basecamp show/)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555,
+      "recent_deliveries" => [ webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z") ])
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    pipeline = pipeline(runner)
+    reconciler = reconciler(runner, pipeline: pipeline)
+
+    live = Thread.new { pipeline.process(sample_payload) }
+    runner.paused.pop
+    reconciling = Thread.new { reconciler.reconcile }
+    sleep 0.05
+    assert_predicate reconciling, :alive?
+
+    runner.resume << true
+
+    live.join(2)
+    reconciling.join(2)
+    refute_predicate reconciling, :alive?
+    assert_equal [ 99001 ], emitted_event_ids
+    refute_match(/MISSED/, @logs.string)
+  end
+
+  # And when that live verification finds no verdict, the old delivery really
+  # was not recovered, so it is reported after all.
+  def test_reports_an_old_delivery_whose_live_verification_found_no_verdict
+    runner = PausingCommandRunner.new(/basecamp show/)
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555,
+      "recent_deliveries" => [ webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z") ])
+    stub_transient_failure(runner, "basecamp show")
+    pipeline = pipeline(runner)
+    reconciler = reconciler(runner, pipeline: pipeline)
+
+    live = Thread.new do
+      pipeline.process(sample_payload)
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      :no_verdict
+    end
+    runner.paused.pop
+    reconciling = Thread.new { reconciler.reconcile }
+    sleep 0.05
+    runner.resume << true
+
+    assert_equal :no_verdict, live.value
+    reconciling.join(2)
+    assert_empty @output.string
+    assert_equal 1, @logs.string.scan(/MISSED and NOT recovered: delivery 70001/).length
   end
 
   private

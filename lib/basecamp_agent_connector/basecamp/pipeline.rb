@@ -51,15 +51,35 @@ class BasecampAgentConnector::Basecamp::Pipeline
     end
   end
 
-  # Whether this pipeline has heard of an event id: one it settled and still
-  # remembers (emitted, or dropped on the authoritative re-check), or one
-  # being verified right now. An id it forgot — Basecamp would not corroborate
-  # it, or could not be asked — has not been heard, and neither has one the
-  # pre-filter turned away before claiming it. The DeliveryReconciler asks, so
-  # that a failed delivery of an event that did arrive by another delivery is
-  # neither replayed nor reported as a hole.
+  # Whether this pipeline has heard of an event id: reached a verdict on it
+  # that it still remembers — emitted, or dropped on the authoritative
+  # re-check. An id it forgot (Basecamp would not corroborate it, or could not
+  # be asked) has not been heard, and neither has one the pre-filter turned
+  # away before claiming it. The DeliveryReconciler asks, so that a failed
+  # delivery of an event that did arrive by another delivery is neither
+  # replayed nor reported as a hole.
+  #
+  # An id still being verified has no verdict yet, so this waits for that
+  # verification to settle, as `claim` does, and answers on the outcome. A
+  # snapshot taken mid-verification would call heard an event whose
+  # verification is about to find no verdict and be forgotten — answered 503,
+  # perhaps, on a connection bc3 already gave up on — and whoever trusted that
+  # answer would let the trigger go with nobody left to recover it.
   def heard?(event_id)
-    @lock.synchronize { @seen_event_ids.include?(event_id) }
+    @lock.synchronize { heard_once_settled?(event_id) }
+  end
+
+  # Runs the block unless the event id is heard, decided as `heard?` decides
+  # it, and keeps the lock while the block runs, so no delivery of that id can
+  # settle between the answer and what the caller does about it. Answers
+  # whether the block ran. The block must not call back into this pipeline.
+  def unless_heard(event_id)
+    @lock.synchronize do
+      unless heard_once_settled?(event_id)
+        yield
+        true
+      end
+    end
   end
 
   private
@@ -81,6 +101,12 @@ class BasecampAgentConnector::Basecamp::Pipeline
       else
         false
       end
+    end
+
+    # Called under the lock.
+    def heard_once_settled?(event_id)
+      @settled.wait(@lock) while @in_flight_event_ids.include?(event_id)
+      @seen_event_ids.include?(event_id)
     end
 
     def actionable?(event)

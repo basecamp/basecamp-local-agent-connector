@@ -75,28 +75,33 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # never received, which is what the DeliveryReconciler reads it for. Read
   # one registration at a time, so a slow read holds up nothing already read.
   #
-  # Nil when the history could not be read — the call failed, or came back in a
-  # shape that is not a list — which is logged, and which a caller must tell
-  # apart from an empty history: nothing was learned, so nothing remembered
-  # about that history should be let go. The next check reads it again.
+  # Nil when the history could not be read — the call failed, or came back as
+  # something other than a webhook carrying a list — which is logged, and which
+  # a caller must tell apart from an empty history: nothing was learned, so
+  # nothing remembered about that history should be let go. Only a webhook
+  # that is a webhook and simply has no deliveries reads as empty. The next
+  # check reads it again.
   def delivery_history(registration)
     webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
-    history = webhook["recent_deliveries"] if webhook.is_a?(Hash)
 
-    if history.nil? || history.is_a?(Array)
-      Array(history)
+    if !webhook.is_a?(Hash)
+      unreadable_history registration, "Basecamp did not answer with a webhook"
+    elsif webhook["recent_deliveries"].nil? || webhook["recent_deliveries"].is_a?(Array)
+      Array(webhook["recent_deliveries"])
     else
-      log "could not read the delivery history of webhook #{registration.id} on project #{registration.project}: " \
-        "recent_deliveries is not a list"
-      nil
+      unreadable_history registration, "recent_deliveries is not a list"
     end
   rescue BasecampAgentConnector::Basecamp::Client::Error => error
-    log "could not read the delivery history of webhook #{registration.id} on project #{registration.project}: " \
-      "#{error.message}"
-    nil
+    unreadable_history registration, error.message
   end
 
   private
+    def unreadable_history(registration, reason)
+      log "could not read the delivery history of webhook #{registration.id} on project #{registration.project}: " \
+        "#{reason}"
+      nil
+    end
+
     def orphans_in(project, paths)
       @basecamp_cli.webhooks(project: project).filter_map do |webhook|
         webhook["id"] if paths.any? { |path| webhook["payload_url"].to_s.end_with?(path) }

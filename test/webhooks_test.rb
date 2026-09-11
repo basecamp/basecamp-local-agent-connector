@@ -261,6 +261,21 @@ class WebhooksTest < Minitest::Test
     assert_match(/recent_deliveries is not a list/, logs.string)
   end
 
+  # The bug this covers: an answer that was not a webhook at all read as a
+  # webhook with no deliveries, and the reconciler let go of everything it
+  # remembered about the real history — re-reporting its holes on the next read.
+  def test_reports_an_answer_that_is_not_a_webhook_as_no_history_read
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks show 555", stdout: envelope([])
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_nil webhooks.delivery_history(webhooks.registrations.first)
+    assert_match(/Basecamp did not answer with a webhook/, logs.string)
+  end
+
   def test_registrations_is_a_copy_restore_cannot_rewrite_under_a_caller
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)

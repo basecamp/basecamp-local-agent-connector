@@ -123,19 +123,32 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
         "#{registration.project}: #{error.class}: #{error.message}; not retried"
     end
 
+    # A delivery whose event the pipeline heard by another delivery is left
+    # alone, replayable or not (see Pipeline#heard?, which waits out a
+    # verification still in flight so the answer is a verdict). A hole is
+    # reported under the pipeline's lock, so that a live delivery of the same
+    # event cannot emit between the pipeline answering "not heard" and the log
+    # announcing a miss. A replay needs no such care: `process` claims the id
+    # atomically, so an event heard a moment after the check is still
+    # suppressed.
     def settle(registration, delivery, settled)
-      if delivered?(delivery) || heard?(delivery)
-        # it arrived: by this delivery, or by another of the same event
+      if delivered?(delivery)
+        # it arrived
       elsif delivery.body.nil?
         report_unrecovered registration, delivery, "its recorded request body could not be read"
-      elsif delivery.attempted_at.nil?
-        report_unrecovered registration, delivery,
-          "its attempt time could not be read, so it cannot be shown to fall inside the #{@lookback}s " \
+      elsif (reason = unreplayable(delivery))
+        @pipeline.unless_heard(delivery.event_id) { report_unrecovered registration, delivery, reason }
+      elsif !@pipeline.heard?(delivery.event_id)
+        reconcile_delivery registration, delivery, settled
+      end
+    end
+
+    def unreplayable(delivery)
+      if delivery.attempted_at.nil?
+        "its attempt time could not be read, so it cannot be shown to fall inside the #{@lookback}s " \
           "reconciliation window"
       elsif delivery.attempted_at < @clock.call - @lookback
-        report_unrecovered registration, delivery, "older than the #{@lookback}s reconciliation window"
-      else
-        reconcile_delivery registration, delivery, settled
+        "older than the #{@lookback}s reconciliation window"
       end
     end
 
@@ -145,16 +158,6 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
     # thing: not known to have landed.
     def delivered?(delivery)
       delivery.code.is_a?(Integer) && DELIVERED_RESPONSE_CODES.cover?(delivery.code)
-    end
-
-    # The pipeline has heard of the event when some delivery of it did arrive:
-    # a live one bc3 recorded as failed because verifying it overran bc3's 10s
-    # timeout, a retry that landed since, or one being verified right now. That
-    # is no hole, and its outcome is that delivery's to settle, just as if the
-    # history had never been read — including a verification that comes back
-    # with no verdict, which the live route answers 503 so bc3 redelivers.
-    def heard?(delivery)
-      !delivery.event_id.nil? && @pipeline.heard?(delivery.event_id)
     end
 
     # Settled once the pipeline returns, whatever its verdict: emitted, dropped,
@@ -177,11 +180,14 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
 
     # Not emitted, but never silent: the event, the project and the recording
     # go in the log, so a trigger that cannot be replayed safely is a hole the
-    # operator can see and hand over by hand.
+    # operator can see and hand over by hand. It is not recovered *here*; bc3
+    # may yet redeliver it on its own, which nothing can rule out, so the log
+    # says to check before handing it over rather than promising it never will.
     def report_unrecovered(registration, delivery, reason)
       log "MISSED and NOT recovered: delivery #{delivery.id} of #{describe(delivery)} on project " \
         "#{registration.project} never reached this connector (#{describe_response(delivery)}) at " \
-        "#{delivery.created_at}, #{reason}#{recording_note(delivery)}; if it was a trigger, hand it to the agent by hand"
+        "#{delivery.created_at}, #{reason}#{recording_note(delivery)}; if it was a trigger and has not reached the " \
+        "agent since, hand it to the agent by hand"
     end
 
     def read(entry)
