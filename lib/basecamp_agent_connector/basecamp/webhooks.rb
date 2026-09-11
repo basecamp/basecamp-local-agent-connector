@@ -61,7 +61,46 @@ class BasecampAgentConnector::Basecamp::Webhooks
     restored
   end
 
+  # The registrations as they stand, as a copy: a caller walking them one
+  # history read at a time must not be walking the list `restore` rewrites.
+  def registrations
+    @registrations.dup
+  end
+
+  # One registration's recent delivery history, newest first, as Basecamp
+  # reports it on the webhook itself: the last attempts (25 of them, verified
+  # against production), each carrying the request body it POSTed and the
+  # response it got back. That is the only record of a delivery this connector
+  # never received, which is what the DeliveryReconciler reads it for. Read
+  # one registration at a time, so a slow read holds up nothing already read.
+  #
+  # Nil when the history could not be read — the call failed, or came back as
+  # something other than a webhook carrying a list — which is logged, and which
+  # a caller must tell apart from an empty history: nothing was learned, so
+  # nothing remembered about that history should be let go. Only a webhook
+  # that is a webhook and simply has no deliveries reads as empty. The next
+  # check reads it again.
+  def delivery_history(registration)
+    webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
+
+    if !webhook.is_a?(Hash)
+      unreadable_history registration, "Basecamp did not answer with a webhook"
+    elsif webhook["recent_deliveries"].nil? || webhook["recent_deliveries"].is_a?(Array)
+      Array(webhook["recent_deliveries"])
+    else
+      unreadable_history registration, "recent_deliveries is not a list"
+    end
+  rescue BasecampAgentConnector::Basecamp::Client::Error => error
+    unreadable_history registration, error.message
+  end
+
   private
+    def unreadable_history(registration, reason)
+      log "could not read the delivery history of webhook #{registration.id} on project #{registration.project}: " \
+        "#{reason}"
+      nil
+    end
+
     def sweep(project, paths)
       orphans = orphans_in(project, paths)
       return false if orphans.nil?

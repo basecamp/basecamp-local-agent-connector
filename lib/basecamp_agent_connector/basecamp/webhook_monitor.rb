@@ -8,12 +8,13 @@
 class BasecampAgentConnector::Basecamp::WebhookMonitor
   DEFAULT_INTERVAL = 300
 
-  def initialize(webhooks:, url:, types:, interval: DEFAULT_INTERVAL, logger: $stderr,
+  def initialize(webhooks:, url:, types:, interval: DEFAULT_INTERVAL, reconciler: nil, logger: $stderr,
     wait: ->(seconds) { sleep seconds })
     @webhooks = webhooks
     @url = url
     @types = types
     @interval = interval
+    @reconciler = reconciler
     @logger = logger
     @wait = wait
     @stopping = false
@@ -24,12 +25,16 @@ class BasecampAgentConnector::Basecamp::WebhookMonitor
     @thread = Thread.new { check_loop }
   end
 
-  # A check in flight is let finish before the thread is killed: killing it
-  # mid-restore would leave a replacement webhook Basecamp created but the
-  # registrations never recorded, for teardown to miss. Taking the lock
-  # waits for that, so the kill only ever lands in the interval's sleep;
-  # the wait is bounded by the CLI's own timeouts, like an in-flight
-  # delivery's.
+  # The unit of a check in flight — the restore, one delivery history read,
+  # one reconciled delivery — is let finish before the thread is killed:
+  # killing it mid-restore would leave a replacement webhook Basecamp created
+  # but the registrations never recorded, for teardown to miss. Taking the
+  # lock waits for that one unit, so the kill only ever lands between units
+  # or in the interval's sleep. It never waits for the rest of a pass: a
+  # reconciliation pass can hold twenty-five failed deliveries per webhook,
+  # each a verification bounded only by the CLI's own timeouts, and a pass in
+  # progress stops at the next unit instead. The one wait left is bounded like
+  # an in-flight delivery's.
   def stop
     @stopping = true
 
@@ -40,9 +45,11 @@ class BasecampAgentConnector::Basecamp::WebhookMonitor
     end
   end
 
+  # Restore first: reconciling against a webhook whose registration is gone
+  # would read the history of an id Basecamp no longer has.
   def check
-    @checking.synchronize do
-      @webhooks.restore(url: @url, types: @types) unless @stopping
+    if guarded { @webhooks.restore(url: @url, types: @types) }
+      @reconciler&.reconcile(guard: method(:guarded))
     end
   end
 
@@ -57,6 +64,17 @@ class BasecampAgentConnector::Basecamp::WebhookMonitor
           check
         rescue => error
           log "webhook check failed: #{error.message}"
+        end
+      end
+    end
+
+    # Runs one unit of a check under the lock unless a stop has begun, and
+    # answers whether it ran — so a pass ends at the first unit a stop reaches.
+    def guarded
+      @checking.synchronize do
+        unless @stopping
+          yield
+          true
         end
       end
     end

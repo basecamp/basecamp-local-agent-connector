@@ -199,6 +199,20 @@ remounts any of its funnel paths the funnel has lost, and reports both loudly on
 STDERR. The events of the gap itself are gone — bc3 does not redeliver past a
 deactivation — so a `DEACTIVATED` line in the log is worth reading.
 
+Deactivation is the loud failure; the quiet one is a **single delivery that never
+arrived**. Basecamp records it (`response.code: 0` — the connection failed, the
+funnel re-establishing or the network dropping for a second), leaves the webhook
+active, and never mentions it again; the connector logs nothing, because it never
+received the request. So the same check also **reconciles the delivery history**:
+Basecamp keeps the last deliveries on each webhook, with the exact body it POSTed
+and the code it got back, and any delivery of the last hour that did not answer
+2xx is replayed through the very same pipeline a live delivery takes — same
+authorization, same corroborating re-fetch, same per-event suppression, so a
+recovered trigger fires exactly once even if Basecamp retries it too. Recoveries
+are logged; a failed delivery older than that hour, or one whose time or body
+can't be read, is **not** replayed, and says so in the log (`MISSED and NOT
+recovered`) with the recording's URL, so you can hand it over yourself.
+
 ---
 
 ## How it works
@@ -451,7 +465,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--chat-poll` | Campfire poll interval, in seconds. | `15` |
 | `--boost-poll` | Received-boosts poll interval, in seconds. Boosts have no webhooks, so the connector polls the agent's own received-boosts feed for them. | `60` |
 | `--no-boosts` | Don't poll the agent's received-boosts feed (no boost trigger). | polling on |
-| `--webhook-check` | How often, in seconds, to re-check that each registered webhook is still active and its funnel path still mounted, putting back whichever isn't. Basecamp deactivates a webhook after 10 failed deliveries. | `300` |
+| `--webhook-check` | How often, in seconds, to re-check that each registered webhook is still active and its funnel path still mounted, putting back whichever isn't, and to reconcile each webhook's delivery history so a delivery that never arrived is replayed. Basecamp deactivates a webhook after 10 failed deliveries. | `300` |
 | `--port` | Local port for the webhook server. | an unused high port |
 
 **What it does, in order:**
@@ -576,7 +590,9 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   lives, not only in watched projects).
 - **Webhook check** — `--webhook-check` interval in seconds (default 300):
   how often each registered webhook is re-read and reactivated if Basecamp
-  deactivated it, and the funnel paths remounted if lost.
+  deactivated it, the funnel paths remounted if lost, and each webhook's
+  delivery history reconciled so a delivery that never arrived is replayed
+  (within a one-hour lookback; anything older is logged, not replayed).
 - **Port** — `--port` (default: an unused high port).
 
 ---

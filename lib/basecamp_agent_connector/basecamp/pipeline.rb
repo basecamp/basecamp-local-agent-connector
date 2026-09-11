@@ -1,9 +1,10 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(authorizer:, agent:, verifier:, emitter:, logger: $stderr)
+  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr)
     @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
+    @webhook = webhook
     @logger = logger
     @seen_event_ids = Set.new
     @in_flight_event_ids = Set.new
@@ -37,18 +38,95 @@ class BasecampAgentConnector::Basecamp::Pipeline
   def process(payload)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    if actionable?(event) && claim(event)
+    if impostor_on_webhook?(event)
+      true
+    elsif actionable?(event) && claim(event)
       begin
         emit_if_verified(event)
       ensure
-        release(event)
+        release(event.id)
       end
     else
       true
     end
   end
 
+  # Whether this pipeline has heard of an event id: reached a verdict on it
+  # that it still remembers — emitted, or dropped on the authoritative
+  # re-check. An id it forgot (Basecamp would not corroborate it, or could not
+  # be asked) has not been heard, and neither has one the pre-filter turned
+  # away before claiming it. The DeliveryReconciler asks, so that a failed
+  # delivery of an event that did arrive by another delivery is neither
+  # replayed nor reported as a hole.
+  #
+  # An id still being verified has no verdict yet, so this waits for that
+  # verification to settle, as `claim` does, and answers on the outcome. A
+  # snapshot taken mid-verification would call heard an event whose
+  # verification is about to find no verdict and be forgotten — answered 503,
+  # perhaps, on a connection bc3 already gave up on — and whoever trusted that
+  # answer would let the trigger go with nobody left to recover it.
+  def heard?(event_id)
+    @lock.synchronize { heard_once_settled?(event_id) }
+  end
+
+  # Runs the block unless the event id is heard, decided as `heard?` decides
+  # it, with no delivery of that id able to settle between the answer and what
+  # the block does about it. That is not done by holding the lock across the
+  # block: the block writes a log line, and a stderr nobody is draining would
+  # then stall every live delivery's claim and release, unrelated events on
+  # every project included. It is done by holding the id itself in flight for
+  # the block's duration, so only a delivery of that same event waits, and it
+  # waits for the block exactly as it would for a verification. The
+  # reservation marks nothing seen: once the block is done, that delivery
+  # claims the id afresh. Answers whether the block ran.
+  def unless_heard(event_id)
+    reserved = @lock.synchronize do
+      if heard_once_settled?(event_id)
+        false
+      else
+        @in_flight_event_ids << event_id
+        true
+      end
+    end
+
+    if reserved
+      begin
+        yield
+      ensure
+        release(event_id)
+      end
+
+      true
+    end
+  end
+
   private
+    # Basecamp never delivers chat or boost events by webhook: bc3
+    # hard-excludes every chat kind from relay, and a boost is not a Recording
+    # and creates no event. So on the webhook pipeline either kind is by
+    # definition not from Basecamp, and is refused rather than corroborated —
+    # or let replay a real boost past the BoostPoller's own dedupe, which this
+    # pipeline does not share. The refusal lives here rather than on the route
+    # so that every way into the webhook pipeline passes it: a live delivery
+    # and a reconciled one alike.
+    def impostor_on_webhook?(event)
+      if @webhook && event.chat_kind?
+        log "ignored chat-kind payload: Basecamp does not deliver chat webhooks"
+        true
+      elsif @webhook && event.boost?
+        log "ignored boost-kind payload: Basecamp does not deliver boost webhooks"
+        true
+      else
+        false
+      end
+    end
+
+    # Called under the lock.
+    def heard_once_settled?(event_id)
+      @settled.wait(@lock) while @in_flight_event_ids.include?(event_id)
+      @seen_event_ids.include?(event_id)
+    end
+
     def actionable?(event)
       event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
     end
@@ -86,9 +164,9 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
     end
 
-    def release(event)
+    def release(event_id)
       @lock.synchronize do
-        @in_flight_event_ids.delete(event.id)
+        @in_flight_event_ids.delete(event_id)
         @settled.broadcast
       end
     end

@@ -167,7 +167,12 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
 - `--webhook-check` — how often (default 300s) each registered webhook is
   re-read and reactivated if bc3 deactivated it (which it does, silently,
   after 10 failed deliveries — `Webhook::DeliveryJob`), and the run's funnel
-  paths remounted if the funnel lost them.
+  paths remounted if the funnel lost them. The same tick reconciles each
+  webhook's `recent_deliveries`: any delivery inside a one-hour lookback whose
+  `response.code` is not 2xx is replayed, body and all, through the webhook
+  pipeline (same gates, same suppression, so at most one emission per event
+  id); an older one, or one whose attempt time or recorded body cannot be
+  read, is logged as an unrecovered hole instead.
 - `--port` — local port for the Ruby server (default: an unused high port).
 
 ### Startup sequence

@@ -199,6 +199,20 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Event.boost_payload(boost)
   end
 
+  # An entry from a webhook's `recent_deliveries`, as `basecamp webhooks show`
+  # returns it: the exact request body Basecamp POSTed, plus the response it
+  # got back. `code: 0` with no headers is bc3's record of a delivery whose
+  # connection never completed — nothing reached the connector (verified
+  # against production).
+  def webhook_delivery(body: sample_payload, code: 200, created_at: "2026-06-28T11:59:00Z", id: 70001)
+    {
+      "id" => id,
+      "created_at" => created_at,
+      "request" => { "body" => body, "headers" => { "Content-Type" => "application/json" } },
+      "response" => { "code" => code, "headers" => (code.zero? ? nil : { "Content-Length" => "0" }), "message" => "" }
+    }
+  end
+
   # The `basecamp subscriptions show` envelope: the subscribers of a recording,
   # each a person with an id. The connector matches the agent's Person id here.
   def subscribers_envelope(*person_ids)

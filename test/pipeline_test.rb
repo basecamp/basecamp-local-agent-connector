@@ -622,6 +622,35 @@ class PipelineTest < Minitest::Test
     assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
   end
 
+  # Basecamp never delivers either kind by webhook, so on the webhook pipeline
+  # either is an impostor, refused before anything is verified — whichever
+  # path brought it there, a live delivery or one replayed from the history.
+  def test_the_webhook_pipeline_refuses_the_kinds_basecamp_never_delivers_by_webhook
+    runner = FakeCommandRunner.new
+    pipeline = pipeline(runner, webhook: true)
+
+    assert pipeline.process(boost_payload)
+    assert pipeline.process(chat_line_payload)
+
+    assert_empty @output.string
+    assert_empty runner.commands
+    assert_match(/ignored boost-kind payload/, @logs.string)
+    assert_match(/ignored chat-kind payload/, @logs.string)
+  end
+
+  def test_has_heard_an_event_it_emitted_but_not_one_basecamp_would_not_corroborate
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording), once: true
+    runner.stub "basecamp show", stdout: envelope(sample_recording("status" => "drafted"))
+    pipeline = pipeline(runner)
+
+    pipeline.process(sample_payload)
+    pipeline.process(sample_payload("id" => 99002))
+
+    assert pipeline.heard?(99001)
+    refute pipeline.heard?(99002)
+  end
+
   private
     def emitted_trigger
       JSON.parse(@output.string)["trigger"]
@@ -637,12 +666,13 @@ class PipelineTest < Minitest::Test
       runner
     end
 
-    def pipeline(runner, authorizer: authorizer())
+    def pipeline(runner, authorizer: authorizer(), webhook: false)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
+        webhook: webhook,
         logger: @logs
     end
 end

@@ -26,6 +26,65 @@ class WebhookMonitorTest < Minitest::Test
     assert_empty runner.commands_matching(/webhooks update/)
   end
 
+  # One timer, both holes: the registration is put back, and the deliveries
+  # that never arrived while it was fine are recovered from its own history.
+  def test_check_reconciles_the_delivery_history_after_restoring
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    reconciler = UnitsReconciler.new(3)
+
+    monitor(runner, reconciler: reconciler).check
+
+    assert_equal [ 0, 1, 2 ], reconciler.ran
+    assert_equal 1, runner.commands_matching(/webhooks show/).length
+  end
+
+  def test_check_reconciles_nothing_once_stopping
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    reconciler = UnitsReconciler.new(3)
+    monitor = monitor(runner, reconciler: reconciler)
+
+    monitor.stop
+    monitor.check
+
+    assert_empty reconciler.ran
+    assert_empty runner.commands_matching(/webhooks show/)
+  end
+
+  # The bug this covers: a reconciliation pass ran under the lock from its
+  # first delivery to its last, so stop — which takes that lock before its
+  # own 5s join — waited out every verification in it, twenty-five per
+  # webhook, each bounded only by the CLI's timeouts, and the pass ran on
+  # to its end although the monitor was already stopping.
+  def test_stop_waits_for_the_unit_in_flight_and_not_the_rest_of_the_pass
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
+    started = Queue.new
+    release = Queue.new
+    reconciler = UnitsReconciler.new(25) do |unit|
+      if unit.zero?
+        started << true
+        release.pop
+      end
+    end
+    ticks = Queue.new
+    monitor = monitor(runner, reconciler: reconciler, wait: ->(_seconds) { ticks.pop })
+
+    monitor.start
+    ticks << true
+    started.pop
+    stopper = Thread.new { monitor.stop }
+    sleep 0.05
+    assert_predicate stopper, :alive?
+
+    release << true
+    stopper.join(2)
+
+    refute_predicate stopper, :alive?
+    assert_equal [ 0 ], reconciler.ran
+  end
+
   def test_start_checks_nothing_before_the_first_interval_and_stop_ends_the_thread
     runner = FakeCommandRunner.new
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
@@ -126,13 +185,37 @@ class WebhookMonitorTest < Minitest::Test
     end
   end
 
+  # Stands in for the DeliveryReconciler: `count` units of work, each run
+  # through the guard the monitor hands over, stopping at the first refusal.
+  class UnitsReconciler
+    attr_reader :ran
+
+    def initialize(count, &work)
+      @count = count
+      @work = work
+      @ran = []
+    end
+
+    def reconcile(guard:)
+      @count.times do |unit|
+        ran = guard.call do
+          @work&.call(unit)
+          @ran << unit
+        end
+
+        break unless ran
+      end
+    end
+  end
+
   private
-    def monitor(runner, webhooks: registered_webhooks(runner), wait: ->(_seconds) { })
+    def monitor(runner, webhooks: registered_webhooks(runner), reconciler: nil, wait: ->(_seconds) { })
       BasecampAgentConnector::Basecamp::WebhookMonitor.new \
         webhooks: webhooks,
         url: "https://host.example.ts.net/bc5/abc",
         types: "Comment",
         interval: 300,
+        reconciler: reconciler,
         logger: @logs,
         wait: wait
     end
