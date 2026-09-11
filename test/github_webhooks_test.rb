@@ -69,6 +69,18 @@ class GithubWebhooksTest < Minitest::Test
     assert_match(/failed to delete webhook 888 for repo acme\/a/, logs.string)
   end
 
+  def test_an_orphan_that_will_not_delete_leaves_the_repo_unswept
+    runner = FakeCommandRunner.new
+    runner.stub "-X DELETE", exit_status: 1, stderr: "404 Not Found"
+    runner.stub "/hooks", stdout: JSON.generate([ [ { "id" => 999, "config" => { "url" => "https://host.ts.net/gh/dead" } } ] ])
+    logs = StringIO.new
+
+    swept = webhooks(runner, logs).delete_orphans(repos: [ "acme/a" ], paths: [ "/gh/dead" ])
+
+    assert_empty swept
+    assert_match(/failed to delete webhook 999/, logs.string)
+  end
+
   private
     def webhooks(runner, logs = StringIO.new)
       BasecampAgentConnector::GitHub::Webhooks.new(github_cli: build_github_cli(runner), logger: logs, wait: ->(_seconds) { })
