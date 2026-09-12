@@ -501,7 +501,9 @@ move on — the dispatched agent posts the fallback boost.
 the project name (`recording.bucket.name`). Basecamp project names usually carry
 an app token — e.g. a `BC5 …` project maps to the Basecamp repo under
 `~/Work/<org>/<repo>`. A mapping table (see `config/project_repos.toml`, if
-present) backs the heuristic. **If you cannot confidently map the project to a
+present) backs the heuristic. If the project's `AGENTS.md` doc declares repo
+mappings, they take precedence — repo resolution is where those mappings are
+honored, since the dispatched worker stays scoped to the repo chosen here. **If you cannot confidently map the project to a
 repo, ask the user which repo to use — do not guess and do not silently fall
 back.** This is the one step that may need you; everything after it is delegated.
 
@@ -563,6 +565,24 @@ Instruct that background agent to, in order:
    basecamp show <recording.parent.app_url> -j   # the card/message it lives in
    # plus the thread/comments and the project as needed
    ```
+   **Read the project's `AGENTS.md` doc, if it has one, and respect it.** A
+   project may carry a vault doc named `AGENTS.md` — its standing instruction file
+   for agents: board and column semantics, comms norms, and the workflow to run
+   (the same doc the `coworker` skill reads at onboarding). Repo mappings in it
+   are honored earlier, at repo resolution (step b), since the worker is already
+   scoped to the repo chosen there.
+   ```bash
+   basecamp docs documents list --all --project <project-id> -j  # find a doc titled AGENTS.md
+   basecamp docs show <doc-id> --project <project-id> -j         # read it
+   ```
+   Trust is at the **project** level — like a directory's config or a repo's own
+   `AGENTS.md`, not a review of the doc's contents or its author. The operator
+   attaching the connector to this project settles it: that attachment (confirmed
+   once at launch, step 1; `--allow-project` / `--trust` broadens it explicitly)
+   is the trust grant, so honor the project's `AGENTS.md`. Trust is a property of
+   the connected project, not of each dispatch — there is no per-event trust
+   prompt to ask or persist. If there is no such doc, proceed with the event as
+   usual.
 3. **Move the card out of Triage.** If the work lives on a card (the recording
    or its parent is a `Kanban::Card`), check which column it sits in. If it's in
    a **Triage**-like column and the card table has an **In progress**-like column
