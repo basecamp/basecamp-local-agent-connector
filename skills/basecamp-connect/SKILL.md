@@ -625,8 +625,16 @@ Instruct that background agent to, in order:
 5. **Reply on the originating recording as the agent** — commenting with the
    agent's profile so the reply posts as the agent user:
    ```bash
-   basecamp comment <recording.url|id> "<body>" --profile <agent>
+   basecamp comments create <recording.url|id> "<body>" --profile <agent>
    ```
+   Basecamp has no comment-on-a-comment: `comments create` only accepts a
+   commentable parent (Card, Message, Todo, Document, …), so when `recording`
+   **is itself a `Comment`** (the mention arrived inside one, as most do),
+   target `recording.parent` instead — `basecamp comments create
+   <recording.parent.url|id> "<body>" --profile <agent>`. Pointing it at the
+   comment's own id/url fails with `access denied`. When `recording` is
+   already a top-level item (a card mentioned in its description, say), reply
+   to `recording` directly.
    - **Success** — post the results where the mention was written.
    - **Failure** (it errored or couldn't finish) — post a short error summary and
      **@mention the requester** (the event `creator`) so it surfaces as a
