@@ -68,6 +68,11 @@ when "approve"
   rescue BasecampAgentConnector::GitHub::DeviceFlow::Failed => error
     puts JSON.generate("error" => error.message)
     exit 3
+  rescue SystemCallError => error
+    # The consent succeeded and nothing is stored: say so as the NDJSON error
+    # line the front thread reads, not as a stack trace it cannot relay.
+    puts JSON.generate("error" => "consented as #{login}, but the pairing could not be written (#{error.message}); fix the file and approve again")
+    exit 3
   end
 when "list"
   pairings.paired.each { |id, pairing| puts "#{id}\t@#{pairing["login"]} (#{pairing["id"]})\tpaired #{pairing["paired_at"]}" }
