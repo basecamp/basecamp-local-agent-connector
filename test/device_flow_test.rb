@@ -81,6 +81,15 @@ class DeviceFlowTest < Minitest::Test
     assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Unreachable) { flow.wait(flow.start) }
   end
 
+  def test_an_answer_with_neither_token_nor_error_fails_by_name
+    answer "device_code" => "dc", "user_code" => "X", "verification_uri" => "u", "expires_in" => 900, "interval" => 1
+    answer "message" => "Service Unavailable"
+
+    flow = flow()
+    error = assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Failed) { flow.wait(flow.start) }
+    assert_match(/neither a token nor an error/, error.message)
+  end
+
   def test_a_flow_that_cannot_start_says_why
     answer "error" => "unauthorized_client", "error_description" => "device flow is not enabled"
 

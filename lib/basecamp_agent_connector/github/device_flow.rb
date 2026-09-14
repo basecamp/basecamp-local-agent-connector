@@ -56,7 +56,10 @@ class BasecampAgentConnector::GitHub::DeviceFlow
       answer = poll(code)
 
       case answer["error"]
-      when nil then return identity(answer.fetch("access_token"))
+      when nil
+        raise Failed, "device flow answered with neither a token nor an error: #{answer.inspect[0, 200]}" if answer["access_token"].nil?
+
+        return identity(answer["access_token"])
       when "authorization_pending" then next
       when "slow_down" then interval += 5
       when "expired_token" then raise Failed, "the code expired before anyone entered it"
