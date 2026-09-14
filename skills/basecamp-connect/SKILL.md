@@ -39,9 +39,9 @@ The agent is identified by a **local `basecamp` CLI profile** of the same name
 The trust model is enforced by `bin/connect`, **not** by this skill: an event
 reaches STDOUT only if it is (1) authored by an **authorized user** — by default
 the operator alone (you — the CLI default profile, or `--operator <profile>`);
-`bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-domain`,
-`--allow-project`) can deliberately broaden this to named colleagues, an email
-domain, or the whole project membership — (2) **@mentions the agent user**,
+`bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-person`,
+`--allow-domain`, `--allow-project`) can deliberately broaden this to named
+colleagues, an email domain, or the whole project membership — (2) **@mentions the agent user**,
 **assigns** it a card/todo, is a new comment on a recording the agent
 **subscribes** to, **or** is a **boost on the agent's work**, and (3) is
 corroborated against the Basecamp API. The agent's own identity never
@@ -110,6 +110,7 @@ launching — the same confirmation the no-args path does.
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow marie@37signals.com  # + a named coworker
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow-domain 37signals.com # any 37signals author
+/basecamp-connect @Clawdito --project "BC5 Calendar" --allow-person 51659243 --corroborate-as agent  # a colleague by Person id, read as the agent
 /basecamp-connect --repo basecamp/bc3                                 # GitHub-only, no agent
 ```
 
@@ -121,9 +122,12 @@ global webhook) — pass a project as a name, URL, or ID. The connector
 guidance if not.
 
 **Who may trigger** defaults to the operator alone. Broaden it deliberately with
-the trust flags — `--allow <email>`, `--allow-domain <domain>`, `--allow-project`,
-or explicit `--trust <mode>` — and pass them straight through to `bin/connect`;
-the bridge enforces them and logs the active set. **`--allow` and `--allow-domain`
+the trust flags — `--allow <email>`, `--allow-person <id>`, `--allow-domain
+<domain>`, `--allow-project`, or explicit `--trust <mode>` — and pass them
+straight through to `bin/connect`; the bridge enforces them and logs the active
+set. "Trust Person 51659243" is `--allow-person 51659243`; "read it as the
+agent" or "corroborate as the agent" is `--corroborate-as agent`, which pairs
+with `--allow-person` (Person ids are visible to any profile, emails are not). **`--allow` and `--allow-domain`
 only widen trust when the operator is a Basecamp account admin**: both key on the
 author's email, and Basecamp masks other people's addresses from non-admins
 (`r••••••••@•••.•••`), so the comparison matches nobody. The operator's own
