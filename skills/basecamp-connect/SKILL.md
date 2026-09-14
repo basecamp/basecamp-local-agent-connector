@@ -974,11 +974,13 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
   push, and reply. A review event carries no `requester`, so the follow-up
-  commits keep the identity the branch already has: read the author of its
-  latest commit (`git log -1 --format='%an <%ae>' origin/<branch>`) and its
-  `Basecamp-Request:` trailer, and commit with that same `--author` and
-  trailer. The pairing was settled when the PR opened; the branch is its
-  record.
+  commits keep the identity the branch already has: read the author and the
+  `Basecamp-Request:` trailer of the branch's most recent commit that carries
+  that trailer (`git log -1 --format='%an <%ae>%n%(trailers:key=Basecamp-Request,valueonly)'
+  --grep='^Basecamp-Request:' origin/<branch>`), not simply its latest commit,
+  which a maintainer's push or a merge of the base may have added, and commit
+  with that same `--author` and trailer. The pairing was settled when the PR
+  opened; the trailered commits are its record.
 - **`approved`** — the operator's approval (`bin/connect` emits no other):
   land per the repo's policy and reply done.
 
