@@ -63,15 +63,22 @@ when "approve"
       puts JSON.generate("error" => "the GitHub account that consented is #{identity.login}, not #{login}; nothing stored")
       exit 3
     end
-    pairings.pair(person, login: identity.login, id: identity.id, approved_by: approved_by)
+    begin
+      pairings.pair(person, login: identity.login, id: identity.id, approved_by: approved_by)
+    rescue SystemCallError => error
+      # The consent succeeded and nothing is stored: say so as the NDJSON error
+      # line the front thread reads, not as a stack trace it cannot relay.
+      puts JSON.generate("error" => "consented as #{identity.login}, but the pairing could not be written (#{error.message}); fix the file and approve again")
+      exit 3
+    end
     puts JSON.generate("paired" => { "person_id" => person, "login" => identity.login, "id" => identity.id })
   rescue BasecampAgentConnector::GitHub::DeviceFlow::Failed => error
     puts JSON.generate("error" => error.message)
     exit 3
   rescue SystemCallError => error
-    # The consent succeeded and nothing is stored: say so as the NDJSON error
-    # line the front thread reads, not as a stack trace it cannot relay.
-    puts JSON.generate("error" => "consented as #{login}, but the pairing could not be written (#{error.message}); fix the file and approve again")
+    # Before the flow started: an unreadable OAuth config, say. No consent
+    # happened, so the line says only what failed.
+    puts JSON.generate("error" => "could not start the pairing: #{error.message}")
     exit 3
   end
 when "list"
