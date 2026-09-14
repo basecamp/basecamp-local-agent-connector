@@ -142,6 +142,28 @@ class EventTest < Minitest::Test
     refute emitted["recording"].key?("bookmark_url")
     assert_equal %w[email_address id name], emitted["creator"].keys.sort
     assert_equal 99001, emitted["event_id"]
+    assert_equal({ "person_id" => 100, "name" => "Operator" }, emitted["requester"])
+    assert_nil emitted["authorized_by"]
+  end
+
+  def test_with_pairing_adds_the_github_identity_to_the_requester
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("creator" => { "id" => 300, "name" => "Marie", "client" => false }))
+
+    paired = event.with_pairing("login" => "marie", "id" => 4242, "paired_at" => "2026-09-09")
+
+    assert_equal({ "person_id" => 300, "name" => "Marie", "client" => false, "github" => { "login" => "marie", "id" => 4242 } }, paired.requester)
+    assert_same event, event.with_pairing(nil)
+  end
+
+  def test_with_authorization_stamps_the_admitting_rule_onto_the_emitted_line
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload)
+
+    stamped = event.with_authorization("allowlist:person")
+
+    assert_nil event.authorized_by
+    assert_equal "allowlist:person", stamped.authorized_by
+    assert_equal "allowlist:person", stamped.to_emitted_hash["authorized_by"]
+    assert_equal event.id, stamped.id
   end
 
   def test_chat_line_payload_synthesizes_a_chat_kind_event

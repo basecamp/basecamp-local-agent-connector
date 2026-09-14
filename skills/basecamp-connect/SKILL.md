@@ -39,9 +39,9 @@ The agent is identified by a **local `basecamp` CLI profile** of the same name
 The trust model is enforced by `bin/connect`, **not** by this skill: an event
 reaches STDOUT only if it is (1) authored by an **authorized user** — by default
 the operator alone (you — the CLI default profile, or `--operator <profile>`);
-`bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-domain`,
-`--allow-project`) can deliberately broaden this to named colleagues, an email
-domain, or the whole project membership — (2) **@mentions the agent user**,
+`bin/connect`'s trust flags (`--trust`, `--allow`, `--allow-person`,
+`--allow-domain`, `--allow-project`) can deliberately broaden this to named
+colleagues, an email domain, or the whole project membership — (2) **@mentions the agent user**,
 **assigns** it a card/todo, is a new comment on a recording the agent
 **subscribes** to, **or** is a **boost on the agent's work**, and (3) is
 corroborated against the Basecamp API. The agent's own identity never
@@ -110,6 +110,7 @@ launching — the same confirmation the no-args path does.
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow marie@37signals.com  # + a named coworker
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow-domain 37signals.com # any 37signals author
+/basecamp-connect @Clawdito --project "BC5 Calendar" --allow-person 51659243 --corroborate-as agent  # a colleague by Person id, read as the agent
 /basecamp-connect --repo basecamp/bc3                                 # GitHub-only, no agent
 ```
 
@@ -121,10 +122,16 @@ global webhook) — pass a project as a name, URL, or ID. The connector
 guidance if not.
 
 **Who may trigger** defaults to the operator alone. Broaden it deliberately with
-the trust flags — `--allow <email>`, `--allow-domain <domain>`, `--allow-project`,
-or explicit `--trust <mode>` — and pass them straight through to `bin/connect`;
-the bridge enforces them and logs the active set. **`--allow` and `--allow-domain`
-only widen trust when the operator is a Basecamp account admin**: both key on the
+the trust flags — `--allow <email>`, `--allow-person <id>`, `--allow-domain
+<domain>`, `--allow-project`, or explicit `--trust <mode>` — and pass them
+straight through to `bin/connect`; the bridge enforces them and logs the active
+set. "Trust Person 51659243" is `--allow-person 51659243`; "read it as the
+agent" or "corroborate as the agent" is `--corroborate-as agent`, which pairs
+with `--allow-person` (Person ids are visible to any profile, emails are not).
+**`--allow` and `--allow-domain` only widen trust when the corroborating
+profile is a Basecamp account admin** — the operator's profile by default, the
+agent's under `--corroborate-as agent`, since that is the profile whose eyes
+read the recording: both key on the
 author's email, and Basecamp masks other people's addresses from non-admins
 (`r••••••••@•••.•••`), so the comparison matches nobody. The operator's own
 mentions still run — every mode authorizes the operator first, by email or Person
@@ -146,7 +153,8 @@ The skill remembers the last successful connection in
   "agent": "clawdito",
   "operator": null,
   "projects": [ { "id": 27, "name": "On Call" }, { "id": 41746046, "name": "BC5.1" } ],
-  "trust": { "mode": "domain", "allow": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false },
+  "trust": { "mode": "domain", "allow": [], "allow_person": [], "allow_domain": [ "37signals.com" ], "allow_assignments": false,
+             "corroborate_as": "operator" },
   "types": "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line",
   "chat_poll": 15,
   "boost_poll": 60,
@@ -181,8 +189,10 @@ The skill remembers the last successful connection in
   not overwrite it.
 - **Reconstructing the command from the store:** always emit **exactly one
   `--trust <mode>`** for the stored mode, followed by its value flags (`allow` →
-  `--allow`, `allow_domain` → `--allow-domain`, `allow_assignments` → the
-  assignment opt-in; `--trust project` needs no value flag). Emitting the mode
+  `--allow`, `allow_person` → `--allow-person`, `allow_domain` →
+  `--allow-domain`, `allow_assignments` → the assignment opt-in,
+  `corroborate_as` → `--corroborate-as`; `--trust project` needs no value
+  flag; a missing `corroborate_as` means `operator`). Emitting the mode
   explicitly makes `bare --trust domain` (empty `allow_domain`) reconstruct as
   `domain` — using the built-in default domain — rather than silently dropping
   to operator, and makes a value flag that disagrees with the stored mode (e.g.
@@ -326,6 +336,8 @@ Each STDOUT line is one trusted event as NDJSON:
 ```json
 {"event_id":99001,"kind":"comment_created","created_at":"...",
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@..."},
+ "requester":{"person_id":100,"name":"Jorge Manrubia"},
+ "authorized_by":"operator",
  "recording":{"id":456,"type":"Comment","app_url":"...","url":"...",
    "content":"<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…@Clawdito…</bc-attachment> do X</p>",
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}},
@@ -334,9 +346,13 @@ Each STDOUT line is one trusted event as NDJSON:
 
 `creator` is the **triggering author** — the person whose mention/assignment
 drove this event. In the default operator-only mode that is always you; under a
-broadened trust mode (`--allow`, `--allow-domain`, `--allow-project`) it may be
-an authorized coworker instead. Treat `creator` as *the requester* — that is who
-to @mention on failure — not as "the operator." The mention of the agent lives
+broadened trust mode (`--allow`, `--allow-person`, `--allow-domain`,
+`--allow-project`) it may be an authorized coworker instead. Treat `creator` as
+*the requester* — that is who to @mention on failure — not as "the operator."
+`requester` restates the author by account Person id, the key every identity
+decision downstream resolves on, and `authorized_by` names the trust rule that
+admitted them (`operator`, `allowlist:person`, …); a worker acting *as* the
+requester keys on `requester.person_id`, never on a name. The mention of the agent lives
 in `recording.content` as a mention attachment. `trigger` is the connector's
 verdict on **why** the event fired, settled on the re-fetched recording:
 `mentioned` (its content carries a mention attachment for the agent's Person
@@ -533,9 +549,11 @@ everything it needs to finish **without the front thread**:
   directive;
 - the **recording** URL/id and its parent URL;
 - the **agent profile name** (its reply identity);
-- the **requester's** name/id — i.e. the event `creator` (to @mention on
-  failure). This is the triggering author, who under a broadened trust mode is
-  not necessarily the operator;
+- the **`requester`** object as emitted (`person_id`, `name`, `client`, and
+  `github` once the person has paired) and **`authorized_by`** — the worker's
+  git author line and its "who asked" record come from these, and the
+  requester is who to @mention on failure. This is the triggering author, who
+  under a broadened trust mode is not necessarily the operator;
 - whether an **ack is still owed** (step a): the front thread's boost landed (not
   owed), failed to land (owed — the worker fallback-boosts), or was deliberately
   skipped because the reply is the ack (not owed).
@@ -597,7 +615,25 @@ Instruct that background agent to, in order:
    than one card table** — On Call has three, so a bare `cards columns --project
    27` resolves nothing there. If there's no Triage-like or no In-progress-like
    column, skip this silently — never invent columns.
-4. **Do the requested work** in the repo.
+4. **Do the requested work** in the repo, **as the requester where git is
+   concerned.** When the event's `requester.github` is present (the person
+   has paired — see *Pairing* below), every commit for this request is
+   authored by them and the committer stays this machine's identity:
+   ```bash
+   git commit --no-gpg-sign --author="<requester.github.login> <<requester.github.id>+<requester.github.login>@users.noreply.github.com>" -m "…
+
+   Basecamp-Request: <recording.app_url>"
+   ```
+   The author name is the GitHub login, not `requester.name`: a Basecamp
+   display name is free text and this is a shell line, while a login is
+   `[A-Za-z0-9-]` and GitHub shows the account either way. Never sign the
+   commit (`--no-gpg-sign` overrides a host's `commit.gpgSign`;
+   a signature would be this machine's key under their name), never add
+   `Signed-off-by` or `Co-authored-by`, never
+   post a status or `gh signoff` in their name. When `requester.github` is
+   absent the commit is authored by this machine as usual; the trailer and the
+   PR body line below still say who asked. The operator's own requests
+   (`authorized_by` is `operator`) change nothing.
 
    **Several items means several agents.** When one request covers independent
    work — six cards, a todo list, four unrelated bugs — spawn a subagent per
@@ -647,6 +683,39 @@ Because the background agent gathers its own context and posts its own reply, th
 front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
+
+### Pairing: a colleague's GitHub identity
+
+A mention that asks to **pair** — "pair me with GitHub @marie", "link my GitHub
+login marie" — is handled by the front thread, not dispatched:
+
+1. Reply as the agent on the recording: *"Pairing request from <name> for
+   GitHub @marie — waiting for the operator to approve (boost this reply)."*
+   Record it: `bin/pair request --person <creator.id> --login marie --reply
+   <the reply's app_url>`.
+2. When a `boost_created` event arrives whose `recording` is that reply and
+   whose `creator` is the operator (`authorized_by` is `operator`; any other
+   booster is ignored), run `bin/pair approve --reply <recording.app_url>
+   --approved-by <creator.id>` in the background and read its first NDJSON
+   line. The reply URL is the key: the boost names the reply, not the person,
+   and the pending request recorded in step 1 outlives a watcher restart. A
+   boost given while the connector was stopped is not: boosts before start
+   are history, never emitted, so ask the operator to boost again (or run the
+   `approve` command by hand).
+   If that first line is `{"error": …}` (no OAuth client id on this host,
+   GitHub refused to start the flow) there is no code and no second line:
+   reply with the reason and stop. Otherwise it carries `user_code`,
+   `verification_uri`, `person_id` and `login`: reply as the agent with the
+   code: *"Enter <user_code> at <verification_uri> within 15 minutes to
+   confirm you control @marie."* Then wait for the final line: `{"paired": …}`
+   → reply *"Paired: your requests now commit as @marie."*; `{"error": …}` →
+   reply with the reason and @mention the requester. The declared login must
+   be the account that consents; the tool refuses otherwise.
+3. From then on the connector stamps `requester.github` on that person's
+   events and step 4 above commits as them.
+
+`bin/pair list` and `bin/pair remove --person <id>` manage pairings; README →
+Pairing has the one-time OAuth App setup.
 
 ### Write replies as rich text
 
@@ -864,12 +933,20 @@ Some instructions are "open a PR for X." For these the background agent follows 
 stricter lifecycle and **must not report the work done until the branch is
 green** — getting CI green is part of finishing the task, not a follow-up:
 
-1. **Work in a fresh worktree off `main`** — `git worktree add -b <branch> <path>
-   main` in the resolved repo, so the task is isolated and `main` stays clean. Do
-   all the work there.
+1. **Work in a fresh worktree off the default branch** — `git fetch origin &&
+   git remote set-head origin --auto && git worktree add -b <branch> <path>
+   origin/HEAD` in the resolved repo (the default branch is `main` in some
+   repos and `master` in others, e.g. bc3 and haystack; `origin/HEAD` names it
+   without guessing; the fetch brings the tracking branch up to date and, in a
+   repo wired by `git remote add` rather than cloned, into existence, which
+   `set-head --auto` needs before it can point at it), so the task starts from
+   current code, isolated, with the default branch clean. Do all the work there.
 2. **Green locally first** — run `bin/ci` in the worktree and iterate until it
    passes. Never push red.
-3. **Push and open the PR.**
+3. **Push and open the PR.** The body's first line names who asked:
+   `Requested by <requester.name> in Basecamp: <recording.app_url>` — for the
+   operator's own requests too. The PR is opened by this machine's `gh`
+   identity; the line and the commit trailer are the record of the request.
 4. **Green remotely** — `gh pr checks <n> --watch --fail-fast`; if a check fails,
    fix it, push, and re-watch. Loop until every check is green (remote can fail
    what local passed).
@@ -906,7 +983,14 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
 - **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
-  push, and reply.
+  push, and reply. A review event carries no `requester`, so the follow-up
+  commits keep the identity the branch already has: read the author and the
+  `Basecamp-Request:` trailer of the branch's most recent commit that carries
+  that trailer (`git log -1 --format='%an <%ae>%n%(trailers:key=Basecamp-Request,valueonly)'
+  --grep='^Basecamp-Request:' origin/<branch>`), not simply its latest commit,
+  which a maintainer's push or a merge of the base may have added, and commit
+  with that same `--author` and trailer. The pairing was settled when the PR
+  opened; the trailered commits are its record.
 - **`approved`** — the operator's approval (`bin/connect` emits no other):
   land per the repo's policy and reply done.
 

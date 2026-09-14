@@ -14,10 +14,17 @@ class BasecampAgentConnector::Connector
   DEFAULT_TYPES = "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line"
   DEFAULT_EVENTS = "pull_request_review"
   TRUST_MODES = %w[operator allowlist project domain]
+  CORROBORATORS = %w[operator agent]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
-    :allow_duplicate)
+    :trust, :allowed_emails, :allowed_person_ids, :allowed_domains, :allow_assignments, :corroborate_as,
+    :chat_poll, :boost_poll, :webhook_check, :allow_duplicate) do
+    # The profile corroborating reads run under: nil is the CLI default (the
+    # operator's own); `agent` names the agent's profile.
+    def corroborating_profile
+      agent if corroborate_as == :agent
+    end
+  end
 
   def self.start(argv)
     return print_status if argv.include?("--status")
@@ -47,6 +54,7 @@ class BasecampAgentConnector::Connector
         puts "    repos:    #{run.repos.join(', ')}" if run.repos.any?
         puts "    paths:    #{run.paths.any? ? run.paths.join(', ') : "(none — chat-only, no webhooks)"}"
         puts "    boosts:   #{run.boosts ? "polling" : "off"}"
+        puts "    trust:    #{run.trust_description}"
       end
       puts "A webhook whose payload_url ends in one of those paths belongs to a LIVE run. Don't delete it."
     end
@@ -115,19 +123,21 @@ class BasecampAgentConnector::Connector
     port = nil
     trust = nil
     allowed_emails = []
+    allowed_person_ids = []
     allowed_domains = []
     allow_project = false
     allow_assignments = false
     allow_duplicate = false
+    corroborate_as = :operator
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
     webhook_check = BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
-        "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
-        "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
-        "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
+        "[--trust MODE] [--allow EMAIL]... [--allow-person ID]... [--allow-domain DOMAIN]... [--allow-project] " \
+        "[--allow-assignments-from-authorized] [--corroborate-as operator|agent] [--types TYPES] [--chat-poll SECONDS] " \
+        "[--boost-poll SECONDS] [--no-boosts] [--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
@@ -145,12 +155,16 @@ class BasecampAgentConnector::Connector
       end
       parser.on("--allow EMAIL", "Also trust this author email (repeatable or comma-separated; implies --trust allowlist)") \
         { |value| allowed_emails.concat(comma_list(value)) }
+      parser.on("--allow-person ID", "Also trust this author by account Person id (repeatable or comma-separated; implies --trust " \
+        "allowlist; works from any corroborating profile, admin or not)") { |value| allowed_person_ids.concat(person_id_list(value)) }
       parser.on("--allow-domain DOMAIN", "Trust any author whose email is at this domain (repeatable or comma-separated; " \
         "implies --trust domain; --trust domain alone defaults to #{BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN})") \
         { |value| allowed_domains.concat(comma_list(value)) }
       parser.on("--allow-project", "Trust any corroborated non-client author of a recording the operator can read (implies --trust project)") { allow_project = true }
       parser.on("--allow-assignments-from-authorized", "Let any authorized author trigger via assignment too " \
         "(default: assignments are operator-only in every mode)") { allow_assignments = true }
+      parser.on("--corroborate-as WHO", CORROBORATORS, "Whose profile re-fetches each event for corroboration: #{CORROBORATORS.join(", ")} " \
+        "(default: operator; `agent` reads what the agent user can read, which masks colleagues' emails)") { |value| corroborate_as = value.to_sym }
       parser.on("--types TYPES", "Comma-separated Basecamp event types (Chat::Line = Campfire coverage, via polling)") { |value| types = value }
       parser.on("--chat-poll SECONDS", Integer, "Campfire poll interval " \
         "(default: #{BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL}s; chat has no webhooks)") do |value|
@@ -185,35 +199,61 @@ class BasecampAgentConnector::Connector
     raise ArgumentError, "an agent is required to watch Basecamp projects, e.g. `connect @clawdito --project \"My Project\"`" if projects.any? && (agent.nil? || agent.empty?)
     raise ArgumentError, "--types has no event types to watch" if projects.any? && comma_list(types).empty?
 
-    trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
+    trust = resolve_trust(trust, emails: allowed_emails, person_ids: allowed_person_ids, domains: allowed_domains, project: allow_project)
+    warn_of_masked_emails(trust, corroborate_as: corroborate_as, emails: allowed_emails)
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
-      trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
+      trust: trust, allowed_emails: allowed_emails, allowed_person_ids: allowed_person_ids, allowed_domains: allowed_domains,
+      allow_assignments: allow_assignments, corroborate_as: corroborate_as,
       chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
-  # it (`--allow` => allowlist, `--allow-domain` => domain, `--allow-project`
-  # => project) and no flags at all means operator-only. Mixing flags that
-  # imply different modes, or a value flag contradicting `--trust`, is refused
-  # rather than guessed at.
-  def self.resolve_trust(explicit, emails:, domains:, project:)
+  # it (`--allow` / `--allow-person` => allowlist, `--allow-domain` => domain,
+  # `--allow-project` => project) and no flags at all means operator-only.
+  # Mixing flags that imply different modes, or a value flag contradicting
+  # `--trust`, is refused rather than guessed at.
+  def self.resolve_trust(explicit, emails:, domains:, project:, person_ids: [])
     implied = []
-    implied << :allowlist if emails.any?
+    implied << :allowlist if emails.any? || person_ids.any?
     implied << :domain if domains.any?
     implied << :project if project
 
-    raise ArgumentError, "pick one trust mode: --allow, --allow-domain, and --allow-project imply different modes" if implied.length > 1
+    raise ArgumentError, "pick one trust mode: --allow/--allow-person, --allow-domain, and --allow-project imply different modes" if implied.length > 1
     raise ArgumentError, "--trust #{explicit} conflicts with --allow#{"-domain" if implied == [ :domain ]}#{"-project" if implied == [ :project ]}" \
       if !explicit.nil? && implied.any? && implied != [ explicit ]
-    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL" if explicit == :allowlist && emails.empty?
+    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL or --allow-person ID" if explicit == :allowlist && emails.empty? && person_ids.empty?
 
     explicit || implied.first || :operator
   end
 
+  # Unless the agent's profile is an account admin, a recording it re-fetches
+  # shows every other author's email masked (`j••••@••••.•••`): an email-keyed
+  # trust rule can never match under it. Say so at startup rather than let the
+  # events drop in silence, which is how this failure otherwise presents.
+  def self.warn_of_masked_emails(trust, corroborate_as:, emails:)
+    return unless corroborate_as == :agent
+
+    if trust == :domain
+      warn "Warning: unless the agent profile is an account admin, --corroborate-as agent masks authors' emails and " \
+        "--trust domain can authorize nobody but the operator. Use --allow-person for colleagues."
+    elsif trust == :allowlist && emails.any?
+      warn "Warning: unless the agent profile is an account admin, --corroborate-as agent masks authors' emails and " \
+        "the --allow email entries (#{emails.join(", ")}) can never match. List those colleagues with --allow-person instead."
+    end
+  end
+
   def self.comma_list(value)
     value.split(",").map(&:strip).reject(&:empty?)
+  end
+
+  def self.person_id_list(value)
+    comma_list(value).map do |token|
+      raise ArgumentError, "--allow-person takes account Person ids (digits), not #{token.inspect}" unless token.match?(/\A\d+\z/)
+
+      token.to_i
+    end
   end
 
   def self.normalize_agent(agent)
@@ -290,13 +330,14 @@ class BasecampAgentConnector::Connector
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
+        corroborate_as: @options.corroborating_profile, pairings: BasecampAgentConnector::Pairings.new,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 
     def authorizer(operator, agent)
       BasecampAgentConnector::Basecamp::Authorizer.build \
         trust: @options.trust, operator: operator, agent: agent,
-        emails: @options.allowed_emails, domains: @options.allowed_domains,
+        emails: @options.allowed_emails, person_ids: @options.allowed_person_ids, domains: @options.allowed_domains,
         allow_assignments: @options.allow_assignments
     end
 
@@ -430,7 +471,8 @@ class BasecampAgentConnector::Connector
     def record_run
       @registry.record agent: @options.agent, operator: @options.operator,
         projects: @options.projects, repos: @options.repos,
-        paths: @bridges.flat_map(&:paths), boosts: polling_boosts?
+        paths: @bridges.flat_map(&:paths), boosts: polling_boosts?,
+        trust: trust_record
     rescue BasecampAgentConnector::RunRegistry::Error => error
       abort unrecordable_run_message(error)
     end
@@ -439,6 +481,28 @@ class BasecampAgentConnector::Connector
     # whatever --boost-poll says.
     def polling_boosts?
       @options.projects.any? && !@options.boost_poll.nil?
+    end
+
+    # Who this run trusts, so `--status` can say whether a person's request
+    # could have come through this connector.
+    def trust_record
+      {
+        "mode" => @options.trust.to_s,
+        "emails" => @options.allowed_emails,
+        "person_ids" => @options.allowed_person_ids,
+        "domains" => trusted_domains,
+        "assignments" => @options.allow_assignments,
+        "corroborate_as" => @options.corroborate_as.to_s
+      }
+    end
+
+    # Bare `--trust domain` admits the default domain without listing it.
+    def trusted_domains
+      if @options.trust == :domain && @options.allowed_domains.empty?
+        [ BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN ]
+      else
+        @options.allowed_domains
+      end
     end
 
 

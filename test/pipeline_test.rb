@@ -431,6 +431,76 @@ class PipelineTest < Minitest::Test
     assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
   end
 
+  def test_the_emitted_line_names_the_rule_that_admitted_the_author
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]))
+      .process(sample_payload("creator" => colleague))
+
+    emitted = JSON.parse(@output.string)
+    assert_equal "allowlist:person", emitted["authorized_by"]
+    assert_equal({ "person_id" => 300, "name" => "Marie", "client" => false }, emitted["requester"])
+  end
+
+  # A paired GitHub identity rides on the line so a worker can name the
+  # requester as git author; an unpaired requester carries none.
+  def test_the_emitted_line_carries_the_requesters_paired_github_identity
+    Dir.mktmpdir do |directory|
+      pairings = BasecampAgentConnector::Pairings.new(path: File.join(directory, "pairings.json"))
+      pairings.pair(300, login: "marie", id: 4242, approved_by: 100)
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+
+      pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]), pairings: pairings)
+        .process(sample_payload("creator" => colleague))
+
+      assert_equal({ "login" => "marie", "id" => 4242 }, JSON.parse(@output.string)["requester"]["github"])
+    end
+  end
+
+  def test_an_unpaired_requester_carries_no_github_identity
+    Dir.mktmpdir do |directory|
+      pairings = BasecampAgentConnector::Pairings.new(path: File.join(directory, "pairings.json"))
+      pipeline(corroborating_runner, pairings: pairings).process(sample_payload)
+
+      refute JSON.parse(@output.string)["requester"].key?("github")
+    end
+  end
+
+  def test_the_operators_own_event_is_stamped_operator
+    pipeline(corroborating_runner).process(sample_payload)
+
+    assert_equal "operator", JSON.parse(@output.string)["authorized_by"]
+  end
+
+  # The agent's profile is not an admin, so the corroborated creator arrives
+  # with a masked email. Person-keyed trust still admits; email-keyed cannot.
+  def test_a_person_listed_by_id_is_admitted_when_corroborated_as_the_agent
+    runner = FakeCommandRunner.new
+    masked = colleague.merge("email_address" => "m••••@•••••••.•••")
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => masked))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, person_ids: [ 300 ]), corroborate_as: "clawdito")
+      .process(sample_payload("creator" => colleague))
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal "allowlist:person", JSON.parse(@output.string)["authorized_by"]
+    assert_equal 1, runner.commands_matching(/\Abasecamp show .* --profile clawdito/).length
+  end
+
+  def test_a_person_listed_by_email_is_dropped_when_corroborated_as_the_agent
+    runner = FakeCommandRunner.new
+    masked = colleague.merge("email_address" => "m••••@•••••••.•••")
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => masked))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]), corroborate_as: "clawdito")
+      .process(sample_payload("creator" => colleague))
+
+    assert_empty @output.string
+    assert_match(/not authorized/, @logs.string)
+  end
+
   def test_allowlist_ignores_an_author_not_on_the_list
     runner = FakeCommandRunner.new
 
@@ -666,13 +736,14 @@ class PipelineTest < Minitest::Test
       runner
     end
 
-    def pipeline(runner, authorizer: authorizer(), webhook: false)
+    def pipeline(runner, authorizer: authorizer(), webhook: false, corroborate_as: nil, pairings: nil)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
-        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent, corroborate_as: corroborate_as),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: webhook,
-        logger: @logs
+        logger: @logs,
+        pairings: pairings
     end
 end

@@ -24,6 +24,72 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "marie@example.com", "sam@example.com", "ana@example.com" ], options.allowed_emails
   end
 
+  def test_allow_person_implies_allowlist_trust_keyed_on_person_ids
+    options = parse "@clawdito", "--project", "A", "--allow-person", "51659243", "--allow-person", "300, 400"
+
+    assert_equal :allowlist, options.trust
+    assert_equal [ 51659243, 300, 400 ], options.allowed_person_ids
+    assert_empty options.allowed_emails
+  end
+
+  def test_allow_person_and_allow_email_combine_into_one_allowlist
+    options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-person", "300"
+
+    assert_equal :allowlist, options.trust
+    assert_equal [ "marie@example.com" ], options.allowed_emails
+    assert_equal [ 300 ], options.allowed_person_ids
+  end
+
+  def test_refuses_a_non_numeric_person_id
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--allow-person", "marie"
+    end
+  end
+
+  def test_trust_allowlist_is_satisfied_by_person_ids_alone
+    assert_equal :allowlist, parse("@clawdito", "--project", "A", "--trust", "allowlist", "--allow-person", "300").trust
+  end
+
+  def test_refuses_allow_person_beside_allow_project
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--allow-person", "300", "--allow-project"
+    end
+  end
+
+  def test_corroborates_as_the_operator_by_default
+    options = parse "@clawdito", "--project", "A"
+
+    assert_equal :operator, options.corroborate_as
+    assert_nil options.corroborating_profile
+  end
+
+  def test_corroborate_as_agent_reads_under_the_agents_profile
+    options = parse "@clawdito", "--project", "A", "--corroborate-as", "agent", "--allow-person", "300"
+
+    assert_equal :agent, options.corroborate_as
+    assert_equal "clawdito", options.corroborating_profile
+  end
+
+  def test_refuses_an_unknown_corroborator
+    assert_raises OptionParser::InvalidArgument do
+      parse "@clawdito", "--project", "A", "--corroborate-as", "someone"
+    end
+  end
+
+  # Email-keyed trust under the agent's (non-admin) profile can never match a
+  # masked address; the failure would otherwise be silent drops.
+  def test_warns_when_email_keyed_trust_is_corroborated_as_the_agent
+    warnings = capture_stderr { parse "@clawdito", "--project", "A", "--corroborate-as", "agent", "--allow", "marie@example.com" }
+    assert_match(/can never match/, warnings)
+    assert_match(/--allow-person/, warnings)
+
+    warnings = capture_stderr { parse "@clawdito", "--project", "A", "--corroborate-as", "agent", "--trust", "domain" }
+    assert_match(/--trust domain can authorize nobody but the operator/, warnings)
+
+    assert_empty capture_stderr { parse "@clawdito", "--project", "A", "--corroborate-as", "agent", "--allow-person", "300" }
+    assert_empty capture_stderr { parse "@clawdito", "--project", "A", "--allow", "marie@example.com" }
+  end
+
   def test_allow_domain_implies_domain_trust
     options = parse "@clawdito", "--project", "A", "--allow-domain", "example.com"
 
@@ -437,6 +503,18 @@ class ConnectorTest < Minitest::Test
       assert_match(/1 connector\(s\) running/, output)
       assert_match(%r{/bc5/abc, /gh/def}, output)
       assert_match(/belongs to a LIVE run/, output)
+      assert_match(/trust:    operator$/, output)
+    end
+  end
+
+  def test_status_names_the_people_a_run_trusts
+    with_registry do |registry|
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: false,
+        trust: { "mode" => "allowlist", "emails" => [ "sam@example.com" ], "person_ids" => [ 300, 400 ], "corroborate_as" => "agent" })
+
+      output = capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry) }
+
+      assert_match(/trust:    allowlist \(\+ sam@example.com, Person 300, Person 400\); corroborated as the agent/, output)
     end
   end
 

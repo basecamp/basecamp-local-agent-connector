@@ -381,7 +381,7 @@ concrete allowed set so it is never implicit.
 | Mode | Who triggers | CLI | Keyed on |
 |------|--------------|-----|----------|
 | `operator` *(default)* | You only. No flags = exactly this. | — | your email **or** Person id |
-| `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's email |
+| `allowlist` | You + the named colleagues. | `--allow marie@37signals.com` and/or `--allow-person 51659243` (each repeatable or comma-separated; either implies the mode, or `--trust allowlist`) | the author's email (`--allow`) or Person id (`--allow-person`) |
 | `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default | the author's email |
 | `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` | the author's Person id |
 
@@ -403,9 +403,20 @@ closed and silently — the event is simply dropped as unauthorized, with no hin
 that a masked address is why. As an account admin you see real addresses and both
 modes work as written.
 
-`project` is keyed on the Person id, which every viewer can see, so it works
-regardless of admin status. It is also the loosest of the three — read the limit
-below before choosing it.
+`--allow-person` and `project` are keyed on the Person id, which every viewer
+can see, so they work regardless of admin status. A Person id is the same
+account-scoped id a webhook's `creator.id` and a mention carry; read a
+colleague's with `basecamp people list --json`. `project` is also the loosest
+of the modes — read the limit below before choosing it.
+
+**Who does the re-fetching also matters.** By default the corroborating reads
+run under the operator's profile. `--corroborate-as agent` runs them under the
+agent's own profile instead, so the trust decision is made from what the agent
+user sees. It does not change what arrives: webhooks are registered and
+Campfire polled as the operator, so you still have to be a member of every
+watched project. What changes is the author it judges — a non-admin agent sees
+every colleague's email masked — so combine it with `--allow-person`, never
+with `--allow` or `--trust domain` (the connector warns at startup if you do).
 
 Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can
@@ -439,6 +450,53 @@ the recording.
 
 ---
 
+## Pairing: the requester's GitHub identity
+
+Trust modes decide who may trigger the agent. Pairing decides one further
+thing: the GitHub identity a worker may **name as git author** when it commits
+for that person. Everything else stays the agent's — the agent posts on
+Basecamp, pushes, and opens the pull request, and records who asked in the PR
+body ("Requested by Marie Chef in Basecamp: <link>") and in a
+`Basecamp-Request:` commit trailer. Pairing makes the author line honest; it
+never lets anyone act *as* the person, so there is no token to keep.
+
+The ceremony, in Basecamp, once per person and host:
+
+1. **Marie asks**, in a comment the agent is watching: *"@Clawdito pair me with
+   GitHub @marie"*. The front thread records the request and replies as the
+   agent that it is waiting for the operator (`bin/pair request --person
+   51659243 --login marie --reply <that reply's URL>`).
+2. **The operator approves** by boosting that reply. The boost arrives as a
+   corroborated, operator-keyed event — the same trigger the connector already
+   verifies — so approval costs no new mechanism.
+3. **Marie proves control** of the login. `bin/pair approve --reply <that
+   reply's URL> --approved-by <operator id>` (or `--person 51659243`) runs
+   GitHub's device flow: it prints a
+   one-time code, the front thread relays it as the agent, Marie enters it in
+   her own browser. The tool stores the pairing only if the account that
+   consented is the login she declared, keeps just her login and numeric id,
+   and discards the token.
+4. From then on every emitted line for her carries `requester.github`, and a
+   worker commits her requests with
+   `--author="marie <4242+marie@users.noreply.github.com>"` — the login rather
+   than her display name, because the line is shell, and the address GitHub
+   links to her account through renames.
+
+Setup once per host: register a GitHub **OAuth App** (Settings → Developer
+settings → OAuth Apps; enable *Device flow*; no callback URL or secret is
+needed here) and store its client id with `bin/pair setup --client-id <id>`.
+`bin/pair list` shows pairings and pending requests, `bin/pair remove --person
+<id>` forgets one; they live
+in `~/.config/basecamp-connect/pairings.json` (0600) and take effect without a
+restart.
+
+An unpaired requester's work carries no author line of theirs: the commits
+are the host's, and the PR body and trailer still say who asked. Leaving the
+account is handled by corroboration (their recordings stop corroborating),
+not by GitHub.
+
+---
+
 ## Internal command: `bin/connect`
 
 The bridge. Run it directly to watch a project and print trusted events; the
@@ -458,6 +516,8 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
+| `--allow-person` | Author account Person id to trust (repeatable or comma-separated). Implies `--trust allowlist`. Works from any corroborating profile, admin or not. | — |
+| `--corroborate-as` | Whose profile re-fetches each event for corroboration: `operator` or `agent`. `agent` reads what the agent user can read (its projects, with colleagues' emails masked). | `operator` |
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
 | `--allow-project` | Trust any corroborated non-client author of a recording the operator's account can read. Implies `--trust project`. | off |
 | `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
@@ -522,11 +582,21 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 ```json
 {"event_id":99001,"kind":"comment_created","created_at":"…",
  "creator":{"id":100,"name":"Jorge Manrubia","email_address":"jorge@…"},
+ "requester":{"person_id":100,"name":"Jorge Manrubia","client":false,"github":{"login":"jorgemanrubia","id":12345}},
+ "authorized_by":"operator",
  "recording":{"id":456,"type":"Comment","app_url":"…","url":"…",
    "content":"<p>… <bc-attachment content-type=\"application/vnd.basecamp.mention\">…Clawdito…</bc-attachment> fix X</p>",
    "parent":{…},"bucket":{"id":222,"name":"BC5 Calendar"}},
  "trigger":{"mentioned":true,"subscribed":false}}
 ```
+
+`requester` is the author by the key a worker resolves identity on — the
+account Person id — plus the corroborated `client` flag and, once the person
+has [paired](#pairing-the-requesters-github-identity), the GitHub identity a
+worker may name as git author. `authorized_by` names the trust rule that
+admitted them: `operator`, `allowlist:email`, `allowlist:person`, `domain`, or
+`project`. A consumer acting *for* the requester keys on `requester.person_id`,
+never on the name or the email, which a non-admin profile sees masked.
 
 `trigger` is the connector's own verdict on why the event targets the agent,
 settled on the re-fetched recording: `mentioned` when its content carries a

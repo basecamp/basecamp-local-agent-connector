@@ -12,13 +12,21 @@
 # The pipeline consults `authorizes?` twice: on the claimed webhook payload as
 # a cheap pre-filter, and again on the verified event so the decision binds to
 # the authoritative creator fetched from Basecamp, not to forgeable POST text.
+#
+# `authorization` names *which* rule admitted an author — "operator",
+# "allowlist:email", "allowlist:person", "domain", "project" — and the
+# pipeline stamps that onto the emitted line as `authorized_by`, so a watcher
+# handing the event to a worker can tell an operator's request from a
+# colleague's without re-deriving the trust decision.
 class BasecampAgentConnector::Basecamp::Authorizer
   DEFAULT_TRUSTED_DOMAIN = "37signals.com"
 
-  def self.build(trust:, operator:, agent:, emails: [], domains: [], allow_assignments: false)
+  OPERATOR = "operator"
+
+  def self.build(trust:, operator:, agent:, emails: [], person_ids: [], domains: [], allow_assignments: false)
     case trust
     when :operator  then Operator.new(operator: operator, agent: agent, allow_assignments: allow_assignments)
-    when :allowlist then Allowlist.new(operator: operator, agent: agent, emails: emails, allow_assignments: allow_assignments)
+    when :allowlist then Allowlist.new(operator: operator, agent: agent, emails: emails, person_ids: person_ids, allow_assignments: allow_assignments)
     when :project   then Project.new(operator: operator, agent: agent, allow_assignments: allow_assignments)
     when :domain    then Domain.new(operator: operator, agent: agent, allow_assignments: allow_assignments,
                        domains: domains.empty? ? [ DEFAULT_TRUSTED_DOMAIN ] : domains)
@@ -33,12 +41,19 @@ class BasecampAgentConnector::Basecamp::Authorizer
   end
 
   def authorizes?(event)
+    !authorization(event).nil?
+  end
+
+  # The rule that admits this event's author, or nil when none does.
+  def authorization(event)
     if agent_authored?(event)
-      false
+      nil
+    elsif operator_authored?(event)
+      OPERATOR
     elsif event.assignment_changed? && !@allow_assignments
-      operator_authored?(event)
+      nil
     else
-      operator_authored?(event) || authorized_author?(event)
+      author_authorization(event)
     end
   end
 
@@ -57,8 +72,8 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
 
     # Overridden per mode; the operator alone authorizes in the base case.
-    def authorized_author?(event)
-      false
+    def author_authorization(event)
+      nil
     end
 end
 
@@ -69,20 +84,43 @@ class BasecampAgentConnector::Basecamp::Authorizer::Operator < BasecampAgentConn
     end
 end
 
+# Named colleagues, by email or by account Person id. The two keys differ in
+# reach: an email is visible only to the author and to account admins (see
+# Event#authored_by?), so email entries work only where the corroborating
+# profile is an admin. A Person id is visible to every viewer — it is the same
+# id space a webhook's `creator.id` and a mention SGID use — so a Person entry
+# works from any profile, including the agent's own (`--corroborate-as agent`).
 class BasecampAgentConnector::Basecamp::Authorizer::Allowlist < BasecampAgentConnector::Basecamp::Authorizer
-  def initialize(emails:, **rest)
+  EMAIL = "allowlist:email"
+  PERSON = "allowlist:person"
+
+  def initialize(emails: [], person_ids: [], **rest)
     super(**rest)
     @emails = emails
+    @person_ids = person_ids.map(&:to_i)
   end
 
   private
-    def authorized_author?(event)
+    def author_authorization(event)
+      if allowed_person?(event)
+        PERSON
+      elsif allowed_email?(event)
+        EMAIL
+      end
+    end
+
+    def allowed_person?(event)
+      !event.creator_id.nil? && @person_ids.include?(event.creator_id)
+    end
+
+    def allowed_email?(event)
       !event.creator_email.nil? && \
         @emails.any? { |email| event.creator_email.casecmp?(email) }
     end
 
     def mode_description
-      "allowlist — operator (#{@operator.email}) + #{@emails.join(", ")}"
+      allowed = @emails + @person_ids.map { |id| "Person #{id}" }
+      "allowlist — operator (#{@operator.email}) + #{allowed.join(", ")}"
     end
 end
 
@@ -94,9 +132,11 @@ end
 # non-boolean flag is treated as untrusted rather than assumed employee, so a
 # recording representation that omits it cannot slip a client author through.
 class BasecampAgentConnector::Basecamp::Authorizer::Project < BasecampAgentConnector::Basecamp::Authorizer
+  PROJECT = "project"
+
   private
-    def authorized_author?(event)
-      !event.creator_id.nil? && event.creator["client"] == false
+    def author_authorization(event)
+      PROJECT if !event.creator_id.nil? && event.creator["client"] == false
     end
 
     def mode_description
@@ -105,14 +145,16 @@ class BasecampAgentConnector::Basecamp::Authorizer::Project < BasecampAgentConne
 end
 
 class BasecampAgentConnector::Basecamp::Authorizer::Domain < BasecampAgentConnector::Basecamp::Authorizer
+  DOMAIN = "domain"
+
   def initialize(domains:, **rest)
     super(**rest)
     @domains = domains.map { |domain| domain.downcase.delete_prefix("@") }
   end
 
   private
-    def authorized_author?(event)
-      @domains.include?(author_domain(event))
+    def author_authorization(event)
+      DOMAIN if @domains.include?(author_domain(event))
     end
 
     def author_domain(event)
