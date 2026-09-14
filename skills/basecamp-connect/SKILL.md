@@ -127,8 +127,11 @@ the trust flags — `--allow <email>`, `--allow-person <id>`, `--allow-domain
 straight through to `bin/connect`; the bridge enforces them and logs the active
 set. "Trust Person 51659243" is `--allow-person 51659243`; "read it as the
 agent" or "corroborate as the agent" is `--corroborate-as agent`, which pairs
-with `--allow-person` (Person ids are visible to any profile, emails are not). **`--allow` and `--allow-domain`
-only widen trust when the operator is a Basecamp account admin**: both key on the
+with `--allow-person` (Person ids are visible to any profile, emails are not).
+**`--allow` and `--allow-domain` only widen trust when the corroborating
+profile is a Basecamp account admin** — the operator's profile by default, the
+agent's under `--corroborate-as agent`, since that is the profile whose eyes
+read the recording: both key on the
 author's email, and Basecamp masks other people's addresses from non-admins
 (`r••••••••@•••.•••`), so the comparison matches nobody. The operator's own
 mentions still run — every mode authorizes the operator first, by email or Person
@@ -699,12 +702,15 @@ login marie" — is handled by the front thread, not dispatched:
    boost given while the connector was stopped is not: boosts before start
    are history, never emitted, so ask the operator to boost again (or run the
    `approve` command by hand).
-   Reply as the agent with the code: *"Enter <user_code> at <verification_uri>
-   within 15 minutes to confirm you control @marie."* Then wait for the final
-   line: `{"paired": …}` → reply *"Paired: your requests now commit as
-   @marie."*; `{"error": …}` → reply with the reason and @mention the
-   requester. The declared login must be the account that consents; the tool
-   refuses otherwise.
+   If that first line is `{"error": …}` (no OAuth client id on this host,
+   GitHub refused to start the flow) there is no code and no second line:
+   reply with the reason and stop. Otherwise it carries `user_code`,
+   `verification_uri`, `person_id` and `login`: reply as the agent with the
+   code: *"Enter <user_code> at <verification_uri> within 15 minutes to
+   confirm you control @marie."* Then wait for the final line: `{"paired": …}`
+   → reply *"Paired: your requests now commit as @marie."*; `{"error": …}` →
+   reply with the reason and @mention the requester. The declared login must
+   be the account that consents; the tool refuses otherwise.
 3. From then on the connector stamps `requester.github` on that person's
    events and step 4 above commits as them.
 
