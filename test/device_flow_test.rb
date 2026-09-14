@@ -59,6 +59,28 @@ class DeviceFlowTest < Minitest::Test
     assert_equal [ 1, 1 ], @sleeps
   end
 
+  # Once the person has consented there is no code left to poll, so the
+  # identity read rides through a fault instead of losing the ceremony.
+  def test_the_identity_read_retries_across_a_fault
+    answer "device_code" => "dc", "user_code" => "X", "verification_uri" => "u", "expires_in" => 900, "interval" => 1
+    answer "access_token" => "gho_once"
+    answer BasecampAgentConnector::GitHub::DeviceFlow::Unreachable.new("could not reach api.github.com")
+    answer "login" => "marie", "id" => 4242
+
+    flow = flow()
+    assert_equal "marie", flow.wait(flow.start).login
+    assert_equal [ 1, 2 ], @sleeps
+  end
+
+  def test_the_identity_read_gives_up_after_the_retries
+    answer "device_code" => "dc", "user_code" => "X", "verification_uri" => "u", "expires_in" => 900, "interval" => 1
+    answer "access_token" => "gho_once"
+    3.times { answer BasecampAgentConnector::GitHub::DeviceFlow::Unreachable.new("down") }
+
+    flow = flow()
+    assert_raises(BasecampAgentConnector::GitHub::DeviceFlow::Unreachable) { flow.wait(flow.start) }
+  end
+
   def test_a_flow_that_cannot_start_says_why
     answer "error" => "unauthorized_client", "error_description" => "device flow is not enabled"
 

@@ -38,7 +38,7 @@ class BasecampAgentConnector::GitHub::DeviceFlow
   end
 
   def start
-    answer = @http.call("https://github.com/login/device/code", { "client_id" => @client_id })
+    answer = retrying { @http.call("https://github.com/login/device/code", { "client_id" => @client_id }) }
     raise Failed, "device flow could not start: #{answer["error_description"] || answer["error"] || answer.inspect}" if answer["device_code"].nil?
 
     Code.new device_code: answer["device_code"], user_code: answer["user_code"], verification_uri: answer["verification_uri"],
@@ -79,10 +79,29 @@ class BasecampAgentConnector::GitHub::DeviceFlow
     end
 
     def identity(token)
-      user = @http.call("https://api.github.com/user", nil, token: token)
+      user = retrying { @http.call("https://api.github.com/user", nil, token: token) }
       raise Failed, "GitHub did not identify the token's user: #{user.inspect}" if user["login"].nil?
 
       Identity.new login: user["login"], id: user["id"]
+    end
+
+    # The one-shot calls — starting the flow, and reading the identity once
+    # the person has consented — get a few tries across a fault, because the
+    # second has no code left to poll: losing it loses the whole ceremony.
+    RETRIES = 3
+    RETRY_WAIT = 2
+
+    def retrying
+      attempt = 0
+      begin
+        yield
+      rescue Unreachable
+        attempt += 1
+        raise if attempt >= RETRIES
+
+        @sleeper.call(RETRY_WAIT)
+        retry
+      end
     end
 
     # A form-encoded POST (RFC 8628's wire format for the device endpoints), or
