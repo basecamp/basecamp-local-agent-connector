@@ -90,6 +90,14 @@ class DeviceFlowTest < Minitest::Test
     assert_match(/neither a token nor an error/, error.message)
   end
 
+  def test_a_non_object_json_answer_is_malformed_at_the_transport
+    flow = BasecampAgentConnector::GitHub::DeviceFlow.new(client_id: "Iv1.abc")
+    fake = Struct.new(:body)
+    assert_equal "malformed", flow.send(:post_json_answer, fake.new("[]"))["error"]
+    assert_equal "malformed", flow.send(:post_json_answer, fake.new("null"))["error"]
+    assert_equal({ "a" => 1 }, flow.send(:post_json_answer, fake.new('{"a":1}')))
+  end
+
   def test_a_flow_that_cannot_start_says_why
     answer "error" => "unauthorized_client", "error_description" => "device flow is not enabled"
 

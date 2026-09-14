@@ -107,6 +107,16 @@ class BasecampAgentConnector::GitHub::DeviceFlow
       end
     end
 
+    # Every caller indexes the answer with string keys, so anything that is
+    # not a JSON object — unparsable, an array, null — is malformed here at
+    # the transport and never reaches them.
+    def post_json_answer(response)
+      parsed = JSON.parse(response.body)
+      parsed.is_a?(Hash) ? parsed : { "error" => "malformed", "error_description" => response.body.to_s[0, 200] }
+    rescue JSON::ParserError
+      { "error" => "malformed", "error_description" => response.body.to_s[0, 200] }
+    end
+
     # A form-encoded POST (RFC 8628's wire format for the device endpoints), or
     # a GET when the body is nil, answered as JSON.
     def post_json(url, body, token: nil)
@@ -117,9 +127,7 @@ class BasecampAgentConnector::GitHub::DeviceFlow
       request["Authorization"] = "Bearer #{token}" unless token.nil?
       request.set_form_data(body) unless body.nil?
       response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 10, read_timeout: 30) { |http| http.request(request) }
-      JSON.parse(response.body)
-    rescue JSON::ParserError
-      { "error" => "malformed", "error_description" => response&.body.to_s[0, 200] }
+      post_json_answer(response)
     rescue SystemCallError, SocketError, IOError, Timeout::Error, OpenSSL::SSL::SSLError => error
       # `bin/pair approve` promises the front thread an {"error"} line, never a
       # stack trace, so the network's failures surface the way GitHub's do.
