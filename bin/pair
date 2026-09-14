@@ -56,7 +56,7 @@ when "approve"
   begin
     flow = BasecampAgentConnector::GitHub::DeviceFlow.new(client_id: BasecampAgentConnector::GitHub::DeviceFlow.client_id)
     code = flow.start
-    puts JSON.generate("user_code" => code.user_code, "verification_uri" => code.verification_uri, "expires_in" => code.expires_in)
+    puts JSON.generate("person_id" => person, "login" => login, "user_code" => code.user_code, "verification_uri" => code.verification_uri, "expires_in" => code.expires_in)
     $stdout.flush
     identity = flow.wait(code)
     unless identity.login.casecmp?(login)
