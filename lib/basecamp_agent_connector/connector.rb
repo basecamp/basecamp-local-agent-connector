@@ -228,7 +228,7 @@ class BasecampAgentConnector::Connector
     explicit || implied.first || :operator
   end
 
-  # The agent's profile is not an account admin, so a recording it re-fetches
+  # Unless the agent's profile is an account admin, a recording it re-fetches
   # shows every other author's email masked (`j••••@••••.•••`): an email-keyed
   # trust rule can never match under it. Say so at startup rather than let the
   # events drop in silence, which is how this failure otherwise presents.
@@ -236,11 +236,11 @@ class BasecampAgentConnector::Connector
     return unless corroborate_as == :agent
 
     if trust == :domain
-      warn "Warning: --corroborate-as agent masks authors' emails, so --trust domain can authorize nobody but the operator. " \
-        "Use --allow-person for colleagues."
+      warn "Warning: unless the agent profile is an account admin, --corroborate-as agent masks authors' emails and " \
+        "--trust domain can authorize nobody but the operator. Use --allow-person for colleagues."
     elsif trust == :allowlist && emails.any?
-      warn "Warning: --corroborate-as agent masks authors' emails, so the --allow email entries (#{emails.join(", ")}) can never match. " \
-        "List those colleagues with --allow-person instead."
+      warn "Warning: unless the agent profile is an account admin, --corroborate-as agent masks authors' emails and " \
+        "the --allow email entries (#{emails.join(", ")}) can never match. List those colleagues with --allow-person instead."
     end
   end
 
