@@ -134,7 +134,7 @@ class ReviewPipelineTest < Minitest::Test
     pipeline(corroborating_runner(review)).process(body: body, signature: sign(body, @secret))
 
     assert_empty @output.string
-    assert_match(/dropped review 7001: commented by the operator \(octocat\) with every line 🤖-marked/, @logs.string)
+    assert_match(/dropped review 7001: commented by the operator \(octocat\), body and every inline comment 🤖-marked/, @logs.string)
   end
 
   def test_drops_the_operators_comment_review_whose_inline_comments_are_all_agent_marked
@@ -145,7 +145,17 @@ class ReviewPipelineTest < Minitest::Test
     pipeline(runner).process(body: body, signature: sign(body, @secret))
 
     assert_empty @output.string
-    assert_match(/every line 🤖-marked/, @logs.string)
+    assert_match(/body and every inline comment 🤖-marked/, @logs.string)
+  end
+
+  # A review with nothing written in it is nobody's word, so it travels.
+  def test_emits_the_operators_empty_comment_review
+    review = review_hash("state" => "commented", "body" => "")
+    body = JSON.generate(review_payload("review" => review))
+
+    pipeline(corroborating_runner(review)).process(body: body, signature: sign(body, @secret))
+
+    assert_equal 7001, JSON.parse(@output.string)["review_id"]
   end
 
   # The one this must never get wrong: the operator reviewing their own PR by

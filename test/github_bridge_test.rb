@@ -53,8 +53,8 @@ class GithubBridgeTest < Minitest::Test
   end
 
   # End to end over the route: a signed delivery of a review the operator's
-  # login submitted with every line 🤖-marked — the dispatched agent's own
-  # reply — is answered and dropped, never emitted.
+  # login submitted with its body 🤖-marked and no unmarked inline comment —
+  # the dispatched agent's own reply — is answered and dropped, never emitted.
   def test_handler_drops_the_operators_agent_marked_comment_review
     review = review_hash("state" => "commented", "body" => "🤖 addressed in 3f2a1c9")
     runner = FakeCommandRunner.new
@@ -68,7 +68,7 @@ class GithubBridgeTest < Minitest::Test
 
     deliver bridge, review_payload("review" => review), secret: logged_hmac_secret(logs)
 
-    assert_match(/dropped review 7001: commented by the operator \(octocat\) with every line 🤖-marked/, wait_for_log(logs, /dropped review/))
+    assert_match(/dropped review 7001: commented by the operator \(octocat\), body and every inline comment 🤖-marked/, wait_for_log(logs, /dropped review/))
     assert_empty output.string
   end
 

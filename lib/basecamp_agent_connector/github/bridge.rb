@@ -10,8 +10,8 @@ require "securerandom"
 # `operator` is the GitHub login whose approvals are actionable; every other
 # reviewer's approval is dropped, since an emitted approval lets the dispatched
 # agent land the PR. It is also the login the dispatched agent posts under, so
-# a `commented` review by it whose every line is 🤖-marked is dropped as the
-# agent's own reply — see `ReviewPipeline`.
+# a `commented` review by it whose body and every inline comment start with 🤖
+# is dropped as the agent's own reply — see `ReviewPipeline`.
 class BasecampAgentConnector::GitHub::Bridge
   def initialize(repos:, events:, operator:, github_cli:, emitter:, logger: $stderr)
     @repos = repos

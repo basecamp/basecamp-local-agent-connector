@@ -91,9 +91,9 @@ class BasecampAgentConnector::GitHub::ReviewEvent
   end
 
   # True when this review carries text and every piece of it — the body and
-  # each inline comment — is agent-marked. One unmarked line is a person
-  # writing, so the whole review is theirs. A review with no text at all is
-  # nobody's word and answers false.
+  # each inline comment, each taken whole — starts with the marker. One that
+  # does not is a person writing, so the whole review is theirs. A review with
+  # no text at all is nobody's word and answers false.
   def agent_authored?
     written = ([ review_body ] + comments.map { |comment| comment["body"] }).map { |text| text.to_s.strip }.reject(&:empty?)
     written.any? && written.all? { |text| text.start_with?(AGENT_PREFIX) }

@@ -138,9 +138,10 @@ A few things worth knowing about what you can ask for:
   someone else's approval is dropped, while their requested changes and comments
   still come through. The one thing filtered out is the agent talking to
   itself: it posts under **your** account, so a comment review from your login
-  whose every written line carries the 🤖 prefix agents put on their PR comments
-  is its own reply, and never reaches you. Any line that doesn't start with 🤖
-  brings the whole review through, agent lines and all.
+  whose body and every inline comment start with the 🤖 prefix agents put on
+  their PR comments is its own reply, and never reaches you. If the body or any
+  one of those comments doesn't start with 🤖, the whole review comes through,
+  agent parts and all.
 - **Two shapes are valid, and that's the whole requirement.** An agent and at
   least one project, for watching Basecamp; or a repo on its own, for a
   GitHub-only run — no agent, no project. You can also have both at once.
@@ -459,7 +460,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `@AGENT` | Agent user / local `basecamp` profile to watch for and reply as. Leading `@` optional; lowercased to the profile name. **Required**, validated at startup. | — |
 | `--project` | Basecamp project name, URL, or ID. **Required**, repeatable. | — |
 | `--operator` | Profile whose user is allowed to trigger. Also the profile every call not made as the agent runs under — corroborating fetches, chat polling, webhook registration. | CLI default profile |
-| `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose every line (body and each inline comment) starts with 🤖 is the dispatched agent's own reply and is dropped — any unmarked text, and it passes like anyone else's. | the login `gh` is authenticated as |
+| `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose body and every inline comment start with 🤖 is the dispatched agent's own reply and is dropped — anything written in it without the marker, and it passes like anyone else's. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |

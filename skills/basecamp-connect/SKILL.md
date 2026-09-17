@@ -371,8 +371,8 @@ watching for new mentions, acknowledge each one, and dispatch it.
   as `Trust: approvals from @<login> only; …`. `changes_requested` and
   `commented` lines arrive from any reviewer: feedback to address, never a
   reason to merge — with one exception, dropped before this stream: a
-  `commented` review by the operator's own login whose every line (body and
-  each inline comment) starts with 🤖. Agents post under the operator's
+  `commented` review by the operator's own login whose body and every inline
+  comment start with 🤖. Agents post under the operator's
   account, so that marker, not the account, is what makes it the agent's own
   reply; a review carrying any unmarked text is a person's and always arrives,
   as do approvals and `changes_requested`. Dispatch one background agent in

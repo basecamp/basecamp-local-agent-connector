@@ -108,18 +108,19 @@ can**, so the marker is the signal and the login only narrows where to look.
 1. its reviewer is the operator's GitHub login,
 2. its state is `commented`, and
 3. it carries text, and every piece of that text — the body and each inline
-   comment — starts with 🤖. (Blank ones count for nothing either way; a review
-   with nothing written in it is nobody's word and travels.)
+   comment, each taken whole — starts with 🤖. (Blank ones count for nothing
+   either way; a review with nothing written in it is nobody's word and
+   travels.)
 
-A line that does not start with 🤖 means a person is writing, and the whole
-review travels, the agent's lines with it. Losing a human's review comment
-would be far worse than the noise this removes, so the rule fails toward
-emitting:
+Anything written in it that does not start with 🤖 means a person is writing,
+and the whole review travels, the agent's parts with it. Losing a human's
+review comment would be far worse than the noise this removes, so the rule
+fails toward emitting:
 
 | Review | Verdict |
 |---|---|
-| operator, `commented`, every line 🤖-marked | **dropped** (logged to STDERR) — the agent's own reply |
-| operator, `commented`, any unmarked text | **emitted** — a person wrote it, mixed reviews included |
+| operator, `commented`, body and every inline comment 🤖-marked | **dropped** (logged to STDERR) — the agent's own reply |
+| operator, `commented`, anything written without the marker | **emitted** — a person wrote it, mixed reviews included |
 | operator, `approved` | **emitted** — the trust signal the loop rests on; dropping it would strand every PR waiting to land |
 | operator, `changes_requested` | **emitted** — work to do, however it is marked |
 | anyone else, `approved` | dropped — see [Trust](#trust) |
@@ -130,12 +131,12 @@ API**: the delivery carries the body but none of the inline comments, and an
 unmarked inline comment is a person's feedback that must not be dropped
 unseen. For the same reason the re-fetch reads **every page** of them, and a
 comment list GitHub would not hand over at all blocks the drop rather than
-passing for an empty one — "there are no inline comments" and "the list could
-not be read" are different facts, and only the first can support dropping
-anything. A drop prints its reason to STDERR like every other drop:
+passing for an empty one — "there are no inline comments" and "the list
+could not be read" are different facts, and only the first can support
+dropping anything. A drop prints its reason to STDERR like every other drop:
 
 ```
-dropped review 7001: commented by the operator (octocat) with every line 🤖-marked — the dispatched agent's own reply, not a person's
+dropped review 7001: commented by the operator (octocat), body and every inline comment 🤖-marked — the dispatched agent's own reply, not a person's
 ```
 
 There is no flag to turn this off, and it needs none: nothing a person writes is
