@@ -52,6 +52,26 @@ class GithubBridgeTest < Minitest::Test
     assert_match(/^Trust: approvals from @octocat only; changes_requested and commented reviews from any reviewer$/, logs.string)
   end
 
+  def test_register_logs_that_the_operators_own_comment_reviews_are_dropped
+    runner = FakeCommandRunner.new
+    runner.stub "/hooks", stdout: '{"id":888}'
+    logs = StringIO.new
+
+    bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
+
+    assert_match(/Dropping @octocat's own commented reviews .+--include-self-reviews keeps them/, logs.string)
+  end
+
+  def test_register_says_so_when_the_operators_own_comment_reviews_are_kept
+    runner = FakeCommandRunner.new
+    runner.stub "/hooks", stdout: '{"id":888}'
+    logs = StringIO.new
+
+    bridge(runner, logger: logs, include_self_reviews: true).register(base_url: "https://host.ts.net")
+
+    assert_match(/Emitting @octocat's own commented reviews too \(--include-self-reviews\)/, logs.string)
+  end
+
   def test_teardown_deletes_registered_webhooks
     runner = FakeCommandRunner.new
     runner.stub "/hooks -X POST", stdout: '{"id":888}'
@@ -65,11 +85,12 @@ class GithubBridgeTest < Minitest::Test
   end
 
   private
-    def bridge(runner, repos: [ "acme/a" ], logger: StringIO.new)
+    def bridge(runner, repos: [ "acme/a" ], logger: StringIO.new, include_self_reviews: false)
       BasecampAgentConnector::GitHub::Bridge.new \
         repos: repos,
         events: [ "pull_request_review" ],
         operator: "octocat",
+        include_self_reviews: include_self_reviews,
         github_cli: build_github_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: StringIO.new),
         logger: logger

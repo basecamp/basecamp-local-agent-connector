@@ -74,6 +74,10 @@ class BasecampAgentConnector::GitHub::ReviewEvent
     review_state == "approved"
   end
 
+  def commented?
+    review_state == "commented"
+  end
+
   # GitHub logins are case-insensitive.
   def reviewed_by?(login)
     !reviewer.nil? && !login.nil? && reviewer.casecmp?(login)

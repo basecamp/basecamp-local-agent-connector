@@ -16,6 +16,7 @@ alongside (or instead of) Basecamp `--project`:
 bin/connect @Clawdito --project "BC5 Calendar" --repo basecamp/bc3   # both at once
 bin/connect --repo basecamp/bc3 --repo acme/widgets                  # GitHub only
 bin/connect --repo acme/widgets --gh-operator marie                  # approvals by @marie, not this machine's gh login
+bin/connect --repo acme/widgets --include-self-reviews                # keep the operator's own comment reviews (dropped by default)
 ```
 
 It registers a `pull_request_review` webhook on each repo (against the shared
@@ -80,16 +81,49 @@ GitHub login** — every other reviewer's approval is dropped (logged to STDERR,
 never emitted), exactly as the Basecamp side drops an unauthorized author
 rather than emitting a flagged event. `changes_requested` and `commented`
 reviews are feedback to address, not authority to merge, so they pass from any
-reviewer. The gate runs twice: on the delivery body as a cheap pre-filter, and
-again on the review re-fetched from the API, so the decision binds to the
-`user.login` GitHub recorded, not to the POST body. Logins compare
-case-insensitively, as GitHub does.
+reviewer — with the one exception below. The gate runs twice: on the delivery
+body as a cheap pre-filter, and again on the review re-fetched from the API, so
+the decision binds to the `user.login` GitHub recorded, not to the POST body.
+Logins compare case-insensitively, as GitHub does.
 
 The operator's login is the one this machine's `gh` is authenticated as
 (`gh api user`), resolved once at startup; `--gh-operator <login>` names
 another login instead, without consulting `gh`. The bridge logs the active set
 with the other startup lines: `Trust: approvals from @<login> only; …`. A
 signed-out `gh` with no `--gh-operator` aborts startup.
+
+## The operator's own comment reviews (the agent talking to itself)
+
+The dispatched agent has no GitHub account of its own: it commits, comments and
+replies to review threads under **the operator's** account. So a `commented`
+review whose reviewer is the operator's login is, in practice, the agent
+answering a thread on its own PR. Emitting it wakes the operator's session to
+read itself talking — on a real day of running this, most of the events in a
+long session were exactly that.
+
+`ReviewPipeline` therefore drops a review that is **both** authored by the
+operator's login **and** in state `commented`. Only that pair:
+
+| Reviewer | State | Verdict |
+|---|---|---|
+| operator | `approved` | **emitted** — the trust signal the loop rests on; dropping it would strand every PR waiting to land |
+| operator | `changes_requested` | **emitted** — work to do, whoever typed it |
+| operator | `commented` | **dropped** (logged to STDERR), unless `--include-self-reviews` |
+| anyone else | `approved` | dropped — see [Trust](#trust) |
+| anyone else | `changes_requested` / `commented` | **emitted** — Copilot's review of each push arrives here |
+
+Both rules are one decision in one place (`ReviewPipeline#drop_reason`), so they
+run together on the pre-filter and again on the re-fetched review, and a drop
+prints a reason to STDERR like every other drop:
+
+```
+dropped review 7001: commented by the operator (octocat) — the dispatched agent reviews as the operator, so this is the agent talking to itself; pass --include-self-reviews to emit these
+```
+
+`--include-self-reviews` turns the drop off for an operator who does review
+their own PRs by hand and wants those comments dispatched; the bridge logs
+which way it is set at startup, next to the trust line. Nothing about Basecamp
+events changes.
 
 ## Connector plumbing (parallels the Basecamp side)
 
@@ -122,7 +156,8 @@ The flow, per delivery:
 4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
    state, repo, PR number, reviewer, body, inline comments) — `GitHub::ReviewVerifier` +
    `Emitter`. An `approved` review is emitted only when the re-fetched
-   reviewer is the operator's GitHub login — `GitHub::ReviewPipeline`.
+   reviewer is the operator's GitHub login, and the operator's own `commented`
+   review is dropped as the agent's own reply — `GitHub::ReviewPipeline`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.
 
@@ -147,7 +182,8 @@ orchestrator/worker split as the Basecamp flow):
 
 - **`changes_requested` / `commented`** → re-fetch the full review, address it in
   the task's worktree, re-green (`bin/ci` local + `gh pr checks --watch` remote),
-  push, and reply.
+  push, and reply. The agent's own replies never come back as events: a
+  `commented` review from the operator's login is dropped.
 - **`approved`** → land per the repo's policy, reply done. Only the operator's
   approvals reach the agent; the connector drops everyone else's.
 

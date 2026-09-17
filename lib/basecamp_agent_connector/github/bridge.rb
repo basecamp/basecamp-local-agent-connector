@@ -9,14 +9,17 @@ require "securerandom"
 #
 # `operator` is the GitHub login whose approvals are actionable; every other
 # reviewer's approval is dropped, since an emitted approval lets the dispatched
-# agent land the PR.
+# agent land the PR. That same login's bare `commented` reviews are dropped as
+# the agent's own noise unless `include_self_reviews` says otherwise — see
+# `ReviewPipeline`.
 class BasecampAgentConnector::GitHub::Bridge
-  def initialize(repos:, events:, operator:, github_cli:, emitter:, logger: $stderr)
+  def initialize(repos:, events:, operator:, github_cli:, emitter:, include_self_reviews: false, logger: $stderr)
     @repos = repos
     @events = events
     @operator = operator
     @github_cli = github_cli
     @emitter = emitter
+    @include_self_reviews = include_self_reviews
     @logger = logger
     @path_secret = SecureRandom.hex(16)
     @hmac_secret = SecureRandom.hex(32)
@@ -44,6 +47,7 @@ class BasecampAgentConnector::GitHub::Bridge
     log "Listening for #{@events.join(', ')} on #{@repos.length} repo(s) at #{endpoint}"
     log "To watch another repo on the fly, register a webhook to #{endpoint} (secret #{@hmac_secret})."
     log "Trust: approvals from @#{@operator} only; changes_requested and commented reviews from any reviewer"
+    log self_review_note
   end
 
   # Answers 200 at once (nil, to the server) and verifies off the request
@@ -66,10 +70,22 @@ class BasecampAgentConnector::GitHub::Bridge
   end
 
   private
+    # The dispatched agent reviews under the operator's own GitHub account, so
+    # the operator's bare comment reviews are the agent talking to itself.
+    def self_review_note
+      if @include_self_reviews
+        "Emitting @#{@operator}'s own commented reviews too (--include-self-reviews)"
+      else
+        "Dropping @#{@operator}'s own commented reviews (the dispatched agent reviews as you); " \
+          "--include-self-reviews keeps them"
+      end
+    end
+
     def pipeline
       @pipeline ||= BasecampAgentConnector::GitHub::ReviewPipeline.new \
         secret: @hmac_secret,
         operator: @operator,
+        include_self_reviews: @include_self_reviews,
         verifier: BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: @github_cli),
         emitter: @emitter
     end

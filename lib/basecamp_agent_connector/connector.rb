@@ -15,7 +15,7 @@ class BasecampAgentConnector::Connector
   DEFAULT_EVENTS = "pull_request_review"
   TRUST_MODES = %w[operator allowlist project domain]
 
-  Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
+  Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :include_self_reviews, :port,
     :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
     :allow_duplicate)
 
@@ -110,6 +110,7 @@ class BasecampAgentConnector::Connector
     repos = []
     operator = nil
     gh_operator = nil
+    include_self_reviews = false
     types = DEFAULT_TYPES
     events = DEFAULT_EVENTS
     port = nil
@@ -125,6 +126,7 @@ class BasecampAgentConnector::Connector
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
+        "[--include-self-reviews] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
         "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
@@ -137,6 +139,8 @@ class BasecampAgentConnector::Connector
 
         gh_operator = login
       end
+      parser.on("--include-self-reviews", "Emit the operator's own commented reviews too " \
+        "(default: drop them — the dispatched agent reviews as the operator, so they are its own replies)") { include_self_reviews = true }
       parser.on("--trust MODE", TRUST_MODES, "Who may trigger the agent: #{TRUST_MODES.join(", ")} (default: operator only; " \
         "value flags below imply their mode)") do |value|
         raise ArgumentError, "--trust given twice with different modes (#{trust} then #{value})" if !trust.nil? && trust != value.to_sym
@@ -188,7 +192,7 @@ class BasecampAgentConnector::Connector
     trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
-      gh_operator: gh_operator, port: port,
+      gh_operator: gh_operator, include_self_reviews: include_self_reviews, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
       chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
   end
@@ -303,6 +307,7 @@ class BasecampAgentConnector::Connector
     def github_bridge
       BasecampAgentConnector::GitHub::Bridge.new \
         repos: @options.repos, events: @options.events, operator: resolve_github_operator,
+        include_self_reviews: @options.include_self_reviews,
         github_cli: github_cli, emitter: emitter
     end
 
