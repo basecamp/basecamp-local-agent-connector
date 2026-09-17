@@ -370,8 +370,14 @@ watching for new mentions, acknowledge each one, and dispatch it.
   <login>` passed through to `bin/connect`; the connector logs it at startup
   as `Trust: approvals from @<login> only; …`. `changes_requested` and
   `commented` lines arrive from any reviewer: feedback to address, never a
-  reason to merge. Dispatch one background agent in that repo to handle it
-  per *Review / approval loop* below, and return to the monitor.
+  reason to merge — with one exception, dropped before this stream: a
+  `commented` review by the operator's own login whose body and every inline
+  comment start with 🤖. Agents post under the operator's
+  account, so that marker, not the account, is what makes it the agent's own
+  reply; a review carrying any unmarked text is a person's and always arrives,
+  as do approvals and `changes_requested`. Dispatch one background agent in
+  that repo to handle it per *Review / approval loop* below, and return to the
+  monitor.
 - A line carrying `recording` is a **Basecamp event** — the checklist below.
   Drop it outright if its `creator` is the agent — the only checkable key: the
   emitted `recording` carries no author, and a `boost_created` line's
@@ -906,7 +912,9 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
 - **`changes_requested` / `commented`** — re-fetch the *whole* review (body +
   inline comments) from the API (the webhook is a trigger + pointer, exactly like
   the Basecamp side), address the feedback in the worktree, re-green (steps 2–4),
-  push, and reply.
+  push, and reply. Prefix every PR comment and review reply with 🤖 (the
+  convention for agent-written comments): `bin/connect` reads that marker to
+  drop the agent's own replies instead of dispatching them back at you.
 - **`approved`** — the operator's approval (`bin/connect` emits no other):
   land per the repo's policy and reply done.
 

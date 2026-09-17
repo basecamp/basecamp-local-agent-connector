@@ -11,6 +11,28 @@ class ReviewVerifierTest < Minitest::Test
     refute_nil verified
     assert_equal "fetched body", verified.review_body
     assert_equal 1, verified.comments.length
+    assert verified.comments_complete?
+  end
+
+  # An empty list and an unanswered fetch look alike on the wire; only the
+  # first is the list GitHub holds.
+  def test_marks_the_comment_list_incomplete_when_github_would_not_answer
+    runner = FakeCommandRunner.new
+    runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review_hash))
+    runner.stub "reviews/7001/comments", exit_status: 1, stderr: "502 Bad Gateway"
+
+    verified = verifier(runner).verify(event(review_payload))
+
+    assert_empty verified.comments
+    refute verified.comments_complete?
+  end
+
+  def test_marks_an_empty_comment_list_complete
+    runner = FakeCommandRunner.new
+    runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review_hash))
+    runner.stub "reviews/7001/comments", stdout: "[]"
+
+    assert verifier(runner).verify(event(review_payload)).comments_complete?
   end
 
   def test_rejects_when_the_review_is_not_found

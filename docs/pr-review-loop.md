@@ -80,16 +80,86 @@ GitHub login** — every other reviewer's approval is dropped (logged to STDERR,
 never emitted), exactly as the Basecamp side drops an unauthorized author
 rather than emitting a flagged event. `changes_requested` and `commented`
 reviews are feedback to address, not authority to merge, so they pass from any
-reviewer. The gate runs twice: on the delivery body as a cheap pre-filter, and
-again on the review re-fetched from the API, so the decision binds to the
-`user.login` GitHub recorded, not to the POST body. Logins compare
-case-insensitively, as GitHub does.
+reviewer — with the one exception below (the agent's own 🤖-marked replies). The gate runs twice: on the delivery
+body as a cheap pre-filter, and again on the review re-fetched from the API, so
+the decision binds to the `user.login` GitHub recorded, not to the POST body.
+Logins compare case-insensitively, as GitHub does.
 
 The operator's login is the one this machine's `gh` is authenticated as
 (`gh api user`), resolved once at startup; `--gh-operator <login>` names
 another login instead, without consulting `gh`. The bridge logs the active set
 with the other startup lines: `Trust: approvals from @<login> only; …`. A
 signed-out `gh` with no `--gh-operator` aborts startup.
+
+## The agent's own replies (it posts under the operator's account)
+
+A dispatched agent has no GitHub account of its own: it commits, comments and
+replies to review threads under **the operator's**. So when it answers a review
+thread on the PR it just opened, GitHub fires a `pull_request_review` with state
+`commented` and the operator's login, the connector emits it, and the operator's
+session wakes up to read the agent talking to itself. On a real day of running
+this, that was most of the events in a long session.
+
+The account cannot tell those apart from the operator's own review comments —
+they share it. **The 🤖 prefix the convention puts on agent-written PR comments
+can**, so the marker is the signal and the login only narrows where to look.
+`ReviewPipeline` drops a review when all three hold:
+
+1. its reviewer is the operator's GitHub login,
+2. its state is `commented`, and
+3. it carries text, and every piece of that text — the body and each inline
+   comment, each taken whole — starts with 🤖. (Blank ones count for nothing
+   either way; a review with nothing written in it is nobody's word and
+   travels.)
+
+Anything written in it that does not start with 🤖 means a person is writing,
+and the whole review travels, the agent's parts with it. Losing a human's
+review comment would be far worse than the noise this removes, so the rule
+fails toward emitting:
+
+| Review | Verdict |
+|---|---|
+| operator, `commented`, body and every inline comment 🤖-marked | **dropped** (logged to STDERR) — the agent's own reply |
+| operator, `commented`, anything written without the marker | **emitted** — a person wrote it, mixed reviews included |
+| operator, `approved` | **emitted** — the trust signal the loop rests on; dropping it would strand every PR waiting to land |
+| operator, `changes_requested` | **emitted** — work to do, however it is marked |
+| anyone else, `approved` | dropped — see [Trust](#trust) |
+| anyone else, any feedback state | **emitted** — Copilot's review of each push arrives here, 🤖 or not |
+
+Unlike the approval gate, this one runs **only on the review re-fetched from the
+API**: the delivery carries the body but none of the inline comments, and an
+unmarked inline comment is a person's feedback that must not be dropped
+unseen. For the same reason the re-fetch reads **every page** of them, and a
+comment list GitHub would not hand over at all blocks the drop rather than
+passing for an empty one — "there are no inline comments" and "the list
+could not be read" are different facts, and only the first can support
+dropping anything. A drop prints its reason to STDERR like every other drop:
+
+```
+dropped review 7001: commented by the operator (octocat), body and every inline comment 🤖-marked — the dispatched agent's own reply, not a person's (https://github.com/acme/widgets/pull/12#pullrequestreview-7001)
+```
+
+The URL is there so a drop is recoverable by hand. The marker is read per
+piece of text, not per line: a body is one piece with one author, so a review
+body that opens with 🤖 counts as the agent's however many paragraphs follow.
+Reading it line by line would be the wrong trade — agents write multi-line
+replies with a single leading marker, so nothing would ever be dropped — and
+the case it would guard against, a person writing their own review with 🤖 as
+the very first thing in it, is both rare and visible in the log.
+
+There is no flag to turn this off, and it needs none: nothing a person writes is
+ever dropped, so an escape hatch would only restore the agent's own replies.
+
+The marker convention lives with the agents, not in this repo, and the drop
+leans on it without enforcing it — which is why every way it can be absent
+costs noise and never a comment. An agent that marks nothing, a `--gh-operator`
+naming a login other than the one the local agents post under, a marker behind
+a quote or a bold span rather than first: in each case the drop simply never
+fires and the event arrives as it did before. The one thing it will not do is
+guess that unseen text was the agent's: a comment list GitHub would not hand
+over blocks the drop too.
+
+Nothing about Basecamp events changes.
 
 ## Connector plumbing (parallels the Basecamp side)
 
@@ -122,7 +192,8 @@ The flow, per delivery:
 4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
    state, repo, PR number, reviewer, body, inline comments) — `GitHub::ReviewVerifier` +
    `Emitter`. An `approved` review is emitted only when the re-fetched
-   reviewer is the operator's GitHub login — `GitHub::ReviewPipeline`.
+   reviewer is the operator's GitHub login, and an all-🤖 `commented` review by
+   that login is dropped as the agent's own reply — `GitHub::ReviewPipeline`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.
 
@@ -147,7 +218,8 @@ orchestrator/worker split as the Basecamp flow):
 
 - **`changes_requested` / `commented`** → re-fetch the full review, address it in
   the task's worktree, re-green (`bin/ci` local + `gh pr checks --watch` remote),
-  push, and reply.
+  push, and reply. The agent's own 🤖-marked replies do not come back as
+  events; a review with any unmarked text does, whoever wrote it.
 - **`approved`** → land per the repo's policy, reply done. Only the operator's
   approvals reach the agent; the connector drops everyone else's.
 

@@ -9,7 +9,9 @@ require "securerandom"
 #
 # `operator` is the GitHub login whose approvals are actionable; every other
 # reviewer's approval is dropped, since an emitted approval lets the dispatched
-# agent land the PR.
+# agent land the PR. It is also the login the dispatched agent posts under, so
+# a `commented` review by it whose body and every inline comment start with 🤖
+# is dropped as the agent's own reply — see `ReviewPipeline`.
 class BasecampAgentConnector::GitHub::Bridge
   def initialize(repos:, events:, operator:, github_cli:, emitter:, logger: $stderr)
     @repos = repos
@@ -43,7 +45,8 @@ class BasecampAgentConnector::GitHub::Bridge
     @webhooks.register_all(repos: @repos, url: endpoint, secret: @hmac_secret, events: @events)
     log "Listening for #{@events.join(', ')} on #{@repos.length} repo(s) at #{endpoint}"
     log "To watch another repo on the fly, register a webhook to #{endpoint} (secret #{@hmac_secret})."
-    log "Trust: approvals from @#{@operator} only; changes_requested and commented reviews from any reviewer"
+    log "Trust: approvals from @#{@operator} only; changes_requested from any reviewer; commented from any reviewer, " \
+      "except @#{@operator}'s own #{BasecampAgentConnector::GitHub::ReviewEvent::AGENT_PREFIX}-marked replies"
   end
 
   # Answers 200 at once (nil, to the server) and verifies off the request
@@ -71,7 +74,8 @@ class BasecampAgentConnector::GitHub::Bridge
         secret: @hmac_secret,
         operator: @operator,
         verifier: BasecampAgentConnector::GitHub::ReviewVerifier.new(github_cli: @github_cli),
-        emitter: @emitter
+        emitter: @emitter,
+        logger: @logger
     end
 
     def log(message)
