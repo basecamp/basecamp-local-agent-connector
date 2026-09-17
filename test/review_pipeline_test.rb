@@ -135,6 +135,7 @@ class ReviewPipelineTest < Minitest::Test
 
     assert_empty @output.string
     assert_match(/dropped review 7001: commented by the operator \(octocat\), body and every inline comment 🤖-marked/, @logs.string)
+    assert_includes @logs.string, "(https://github.com/acme/widgets/pull/12#pullrequestreview-7001)"
   end
 
   def test_drops_the_operators_comment_review_whose_inline_comments_are_all_agent_marked

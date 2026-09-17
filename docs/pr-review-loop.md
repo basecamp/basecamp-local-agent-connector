@@ -136,8 +136,16 @@ could not be read" are different facts, and only the first can support
 dropping anything. A drop prints its reason to STDERR like every other drop:
 
 ```
-dropped review 7001: commented by the operator (octocat), body and every inline comment 🤖-marked — the dispatched agent's own reply, not a person's
+dropped review 7001: commented by the operator (octocat), body and every inline comment 🤖-marked — the dispatched agent's own reply, not a person's (https://github.com/acme/widgets/pull/12#pullrequestreview-7001)
 ```
+
+The URL is there so a drop is recoverable by hand. The marker is read per
+piece of text, not per line: a body is one piece with one author, so a review
+body that opens with 🤖 counts as the agent's however many paragraphs follow.
+Reading it line by line would be the wrong trade — agents write multi-line
+replies with a single leading marker, so nothing would ever be dropped — and
+the case it would guard against, a person writing their own review with 🤖 as
+the very first thing in it, is both rare and visible in the log.
 
 There is no flag to turn this off, and it needs none: nothing a person writes is
 ever dropped, so an escape hatch would only restore the agent's own replies.

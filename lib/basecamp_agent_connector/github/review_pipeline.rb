@@ -125,8 +125,10 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
       end
     end
 
+    # The URL rides along so a drop is recoverable by hand: whoever reads the
+    # log can open the review the connector decided not to dispatch.
     def log_dropped(event, reason)
-      log "dropped review #{event.id}: #{reason}"
+      log "dropped review #{event.id}: #{reason}#{" (#{event.review_url})" if event.review_url}"
     end
 
     def log(message)
