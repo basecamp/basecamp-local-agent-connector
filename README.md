@@ -138,9 +138,9 @@ A few things worth knowing about what you can ask for:
   someone else's approval is dropped, while their requested changes and comments
   still come through. The one thing filtered out is the agent talking to
   itself: it posts under **your** account, so a comment review from your login
-  whose every line carries the 🤖 prefix agents put on their PR comments is its
-  own reply, and never reaches you. Write one unprefixed word and the whole
-  review comes through.
+  whose every written line carries the 🤖 prefix agents put on their PR comments
+  is its own reply, and never reaches you. Any line that doesn't start with 🤖
+  brings the whole review through, agent lines and all.
 - **Two shapes are valid, and that's the whole requirement.** An agent and at
   least one project, for watching Basecamp; or a repo on its own, for a
   GitHub-only run — no agent, no project. You can also have both at once.

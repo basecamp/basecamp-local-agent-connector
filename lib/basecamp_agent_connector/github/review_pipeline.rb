@@ -77,13 +77,15 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
     # real day of running this.
     #
     # The account cannot tell those apart from the operator's own review
-    # comments, because agent and operator share it. **The 🤖 prefix our
-    # convention puts on every agent-written PR comment is the signal**; the
-    # login only narrows where to look. So a review is dropped when all three
-    # hold: the operator's login, state `commented`, and every piece of text
-    # in it agent-marked. One unmarked line is a person writing, and the whole
-    # review travels — losing a human's review comment would be far worse than
-    # the noise this removes. An approval still passes whatever it says: it is
+    # comments, because agent and operator share it. **The 🤖 prefix the
+    # convention puts on agent-written PR comments is the signal**; the login
+    # only narrows where to look. So a review is dropped when all three hold:
+    # the operator's login, state `commented`, and every line written in it
+    # agent-marked. A line that does not start with the marker is a person
+    # writing, and the whole review travels — losing a human's review comment
+    # would be far worse than the noise this removes, so every way the marker
+    # can be missing costs noise rather than a comment. An approval still
+    # passes whatever it says: it is
     # the signal the whole loop rests on, and dropping it would strand every
     # PR waiting to land. So does `changes_requested`, which asks for work
     # however it is marked.

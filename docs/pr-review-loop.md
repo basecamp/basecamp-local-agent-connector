@@ -101,18 +101,20 @@ session wakes up to read the agent talking to itself. On a real day of running
 this, that was most of the events in a long session.
 
 The account cannot tell those apart from the operator's own review comments —
-they share it. **The 🤖 prefix our convention puts on every agent-written PR
-comment is what can**, so the marker is the signal and the login only narrows
-where to look. `ReviewPipeline` drops a review when all three hold:
+they share it. **The 🤖 prefix the convention puts on agent-written PR comments
+can**, so the marker is the signal and the login only narrows where to look.
+`ReviewPipeline` drops a review when all three hold:
 
 1. its reviewer is the operator's GitHub login,
 2. its state is `commented`, and
-3. every piece of text in it — the body and each inline comment — is empty or
-   starts with 🤖.
+3. it carries text, and every piece of that text — the body and each inline
+   comment — starts with 🤖. (Blank ones count for nothing either way; a review
+   with nothing written in it is nobody's word and travels.)
 
-One unmarked line means a person is writing, and the whole review travels, the
-agent's lines with it. Losing a human's review comment would be far worse than
-the noise this removes, so the rule fails toward emitting:
+A line that does not start with 🤖 means a person is writing, and the whole
+review travels, the agent's lines with it. Losing a human's review comment
+would be far worse than the noise this removes, so the rule fails toward
+emitting:
 
 | Review | Verdict |
 |---|---|
@@ -138,10 +140,17 @@ dropped review 7001: commented by the operator (octocat) with every line 🤖-ma
 
 There is no flag to turn this off, and it needs none: nothing a person writes is
 ever dropped, so an escape hatch would only restore the agent's own replies.
-(Where `--gh-operator` names a login other than the one the local agents post
-under, the drop simply never fires — the agent's replies come through as before,
-and that reviewer's own comments are never touched.) Nothing about Basecamp
-events changes.
+
+The marker convention lives with the agents, not in this repo, and the drop
+leans on it without enforcing it — which is why every way it can be absent
+costs noise and never a comment. An agent that marks nothing, a `--gh-operator`
+naming a login other than the one the local agents post under, a marker behind
+a quote or a bold span rather than first: in each case the drop simply never
+fires and the event arrives as it did before. The one thing it will not do is
+guess that unseen text was the agent's: a comment list GitHub would not hand
+over blocks the drop too.
+
+Nothing about Basecamp events changes.
 
 ## Connector plumbing (parallels the Basecamp side)
 

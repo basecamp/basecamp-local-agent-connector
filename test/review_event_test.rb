@@ -68,6 +68,7 @@ class ReviewEventTest < Minitest::Test
     refute agent_authored?(body: "this naming still reads backwards")
     refute agent_authored?(body: "🤖 addressed", comments: [ { "body" => "why not extract this?" } ])
     refute agent_authored?(body: "look at 🤖 in the middle")
+    assert agent_authored?(body: "\n  🤖 marked past the leading whitespace")
   end
 
   def test_a_review_with_nothing_written_is_nobodys_word
