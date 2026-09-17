@@ -223,6 +223,21 @@ class ReviewPipelineTest < Minitest::Test
     assert_equal "Copilot", emitted["reviewer"]
   end
 
+  # A body reading like the agent's is not enough on its own: if GitHub would
+  # not hand over the inline comments, one of them may be a person's, so the
+  # review travels.
+  def test_emits_an_agent_marked_review_whose_inline_comments_could_not_be_read
+    review = review_hash("state" => "commented", "body" => "🤖 addressed in 3f2a1c9")
+    runner = FakeCommandRunner.new
+    runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review.merge("state" => "COMMENTED")))
+    runner.stub "reviews/7001/comments", exit_status: 1, stderr: "502 Bad Gateway"
+    body = JSON.generate(review_payload("review" => review))
+
+    pipeline(runner).process(body: body, signature: sign(body, @secret))
+
+    assert_equal 7001, JSON.parse(@output.string)["review_id"]
+  end
+
   # The delivery carries the body but none of the inline comments, and one
   # unmarked comment is a person writing — so this drop waits for the review
   # the API hands back whole, unlike the approval gate above.

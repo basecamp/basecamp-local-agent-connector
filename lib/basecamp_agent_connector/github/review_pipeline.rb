@@ -91,8 +91,11 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
     # Narrow enough to need no escape hatch: nothing a person writes is ever
     # dropped, so there is nothing for a flag to turn back on but the agent's
     # own replies.
+    # `comments_complete?` is part of the test, not a technicality: a review
+    # whose inline comments GitHub would not hand over might carry an unmarked
+    # one, and this must never guess in that direction.
     def agent_reply_reason(event)
-      if event.commented? && event.reviewed_by?(@operator) && event.agent_authored?
+      if event.commented? && event.reviewed_by?(@operator) && event.comments_complete? && event.agent_authored?
         "commented by the operator (#{@operator}) with every line #{BasecampAgentConnector::GitHub::ReviewEvent::AGENT_PREFIX}-marked — " \
           "the dispatched agent's own reply, not a person's"
       end

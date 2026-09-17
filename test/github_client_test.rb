@@ -60,6 +60,16 @@ class GithubClientTest < Minitest::Test
     assert_equal "changes_requested", review.fetch("state")
   end
 
+  def test_review_comments_reads_every_page
+    runner = FakeCommandRunner.new
+    runner.stub "reviews/7001/comments", stdout: JSON.generate([ [ { "body" => "one" } ], [ { "body" => "two" } ] ])
+
+    comments = build_github_cli(runner).review_comments(repo: "acme/widgets", pull_number: 12, id: 7001)
+
+    assert_equal [ "one", "two" ], comments.map { |comment| comment["body"] }
+    assert_equal [ [ "gh", "api", "--paginate", "--slurp", "repos/acme/widgets/pulls/12/reviews/7001/comments" ] ], runner.commands
+  end
+
   def test_raises_on_command_failure
     runner = FakeCommandRunner.new
     runner.stub "pulls/12/reviews/7001", exit_status: 1, stderr: "Not Found"

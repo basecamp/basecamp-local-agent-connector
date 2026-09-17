@@ -83,6 +83,13 @@ class BasecampAgentConnector::GitHub::ReviewEvent
     review_state == "commented"
   end
 
+  # Whether `comments` is the list GitHub actually holds, rather than what a
+  # failed fetch left behind — see `ReviewVerifier#fetch_comments`. A webhook
+  # delivery carries no inline comments at all, so it answers false.
+  def comments_complete?
+    @payload["comments_complete"] == true
+  end
+
   # True when this review carries text and every piece of it — the body and
   # each inline comment — is agent-marked. One unmarked line is a person
   # writing, so the whole review is theirs. A review with no text at all is

@@ -43,8 +43,11 @@ class BasecampAgentConnector::GitHub::Client
     json "api", "repos/#{repo}/pulls/#{pull_number}/reviews/#{id}"
   end
 
+  # Every inline comment on the review, paginated: a review is read as one
+  # unit, and an unmarked comment on page two is exactly as much a person's
+  # feedback as one on page one.
   def review_comments(repo:, pull_number:, id:)
-    json "api", "repos/#{repo}/pulls/#{pull_number}/reviews/#{id}/comments"
+    Array(json("api", "--paginate", "--slurp", "repos/#{repo}/pulls/#{pull_number}/reviews/#{id}/comments")).flatten
   end
 
   private

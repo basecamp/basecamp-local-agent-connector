@@ -126,7 +126,11 @@ the noise this removes, so the rule fails toward emitting:
 Unlike the approval gate, this one runs **only on the review re-fetched from the
 API**: the delivery carries the body but none of the inline comments, and an
 unmarked inline comment is a person's feedback that must not be dropped
-unseen. A drop prints its reason to STDERR like every other drop:
+unseen. For the same reason the re-fetch reads **every page** of them, and a
+comment list GitHub would not hand over at all blocks the drop rather than
+passing for an empty one — "there are no inline comments" and "the list could
+not be read" are different facts, and only the first can support dropping
+anything. A drop prints its reason to STDERR like every other drop:
 
 ```
 dropped review 7001: commented by the operator (octocat) with every line 🤖-marked — the dispatched agent's own reply, not a person's
