@@ -1,6 +1,11 @@
 class BasecampAgentConnector::GitHub::ReviewEvent
   ACTIONABLE_STATES = %w[approved changes_requested commented]
 
+  # The prefix an agent puts on every PR comment and review reply it writes.
+  # Agents post under the operator's own GitHub account, so this marker — not
+  # the account — is what tells the agent's words from the operator's own.
+  AGENT_PREFIX = "🤖"
+
   def self.from_payload(payload)
     new(payload)
   end
@@ -76,6 +81,15 @@ class BasecampAgentConnector::GitHub::ReviewEvent
 
   def commented?
     review_state == "commented"
+  end
+
+  # True when this review carries text and every piece of it — the body and
+  # each inline comment — is agent-marked. One unmarked line is a person
+  # writing, so the whole review is theirs. A review with no text at all is
+  # nobody's word and answers false.
+  def agent_authored?
+    written = ([ review_body ] + comments.map { |comment| comment["body"] }).map { |text| text.to_s.strip }.reject(&:empty?)
+    written.any? && written.all? { |text| text.start_with?(AGENT_PREFIX) }
   end
 
   # GitHub logins are case-insensitive.

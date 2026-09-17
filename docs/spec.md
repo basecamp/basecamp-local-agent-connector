@@ -395,11 +395,12 @@ indistinguishable from a missed one (connector PR #17).
    no boost, no bucket lookup — it is dispatched straight to the review loop in
    the repo named by `repo`, and an `approved` review is dispatched as an
    approval that may land the PR only when `reviewer` is the operator's GitHub
-   login. The connector enforces that gate itself
-   (`GitHub::ReviewPipeline#drop_reason`): any other reviewer's approval never
-   reaches this stream, and neither does a `commented` review by the operator's
-   own login, which is the dispatched agent — posting under that account —
-   replying to a thread on its own PR. A line carrying `recording` is a Basecamp
+   login. The connector enforces that gate itself (`GitHub::ReviewPipeline`):
+   any other reviewer's approval never reaches this stream, and neither does a
+   `commented` review by the operator's own login whose every line is
+   🤖-marked — the dispatched agent, posting under that account, replying to a
+   thread on its own PR. Any unmarked text makes it a person's review, and it
+   arrives. A line carrying `recording` is a Basecamp
    event; one whose `creator` is the agent is dropped before anything else.
    `creator` is the only checkable key — the emitted `recording` carries no
    author, and a `boost_created` line's `recording` is the agent's own work by

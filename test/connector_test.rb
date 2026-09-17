@@ -145,11 +145,6 @@ class ConnectorTest < Minitest::Test
     assert_equal "octocat", parse("--repo", "acme/a", "--gh-operator", "@octocat").gh_operator
   end
 
-  def test_drops_the_operators_own_comment_reviews_unless_told_to_include_them
-    refute parse("--repo", "acme/a").include_self_reviews
-    assert parse("--repo", "acme/a", "--include-self-reviews").include_self_reviews
-  end
-
   def test_refuses_an_empty_github_operator_login
     assert_raises ArgumentError do
       parse "--repo", "acme/a", "--gh-operator", " "

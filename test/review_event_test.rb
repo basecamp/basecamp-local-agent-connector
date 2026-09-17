@@ -58,6 +58,23 @@ class ReviewEventTest < Minitest::Test
     refute event.reviewed_by?("octocat")
   end
 
+  # The marker, not the account, is what makes a review the agent's: agents
+  # post under the operator's own login.
+  def test_agent_authored_needs_every_written_line_marked
+    assert agent_authored?(body: "🤖 addressed in 3f2a1c9")
+    assert agent_authored?(body: "", comments: [ { "body" => "🤖 renamed" } ])
+    assert agent_authored?(body: "🤖 one", comments: [ { "body" => "🤖 two" } ])
+
+    refute agent_authored?(body: "this naming still reads backwards")
+    refute agent_authored?(body: "🤖 addressed", comments: [ { "body" => "why not extract this?" } ])
+    refute agent_authored?(body: "look at 🤖 in the middle")
+  end
+
+  def test_a_review_with_nothing_written_is_nobodys_word
+    refute agent_authored?(body: nil)
+    refute agent_authored?(body: "   ")
+  end
+
   def test_emitted_hash_carries_review_and_comments
     payload = review_payload("comments" => [ { "path" => "lib/x.rb", "line" => 3, "body" => "rename this" } ])
 
@@ -68,4 +85,10 @@ class ReviewEventTest < Minitest::Test
     assert_equal "changes_requested", emitted["state"]
     assert_equal 1, emitted["comments"].length
   end
+
+  private
+    def agent_authored?(body:, comments: [])
+      payload = review_payload("review" => review_hash("state" => "commented", "body" => body), "comments" => comments)
+      BasecampAgentConnector::GitHub::ReviewEvent.from_payload(payload).agent_authored?
+    end
 end

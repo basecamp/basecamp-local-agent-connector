@@ -3,19 +3,17 @@ require "json"
 # Turns one signed `pull_request_review` delivery into one emitted review:
 # verify the HMAC, filter, dedup, re-fetch the review from the API, emit.
 #
-# Which reviewer/state pairs travel is `drop_reason`'s single decision — the
-# trust boundary (only the operator's approvals) and the self-review drop
-# (never the operator's own bare comments) both live there. That gate runs
-# twice: on the claimed delivery as a cheap pre-filter, and again on the
-# verified review so the decision binds to the reviewer GitHub actually
-# recorded, not to the delivery body.
+# What may travel is decided in `claimed_drop_reason` / `verified_drop_reason`:
+# the trust boundary (only the operator's approvals) and the agent's-own-reply
+# drop. The trust boundary runs twice — on the claimed delivery as a cheap
+# pre-filter, and again on the verified review, so it binds to the reviewer
+# GitHub actually recorded rather than to the delivery body.
 class BasecampAgentConnector::GitHub::ReviewPipeline
-  def initialize(secret:, operator:, verifier:, emitter:, include_self_reviews: false, logger: $stderr)
+  def initialize(secret:, operator:, verifier:, emitter:, logger: $stderr)
     @secret = secret
     @operator = operator
     @verifier = verifier
     @emitter = emitter
-    @include_self_reviews = include_self_reviews
     @logger = logger
     @seen_review_ids = Set.new
   end
@@ -29,7 +27,7 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
     event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(JSON.parse(body))
 
     if actionable?(event)
-      if (reason = drop_reason(event))
+      if (reason = claimed_drop_reason(event))
         log_dropped(event, reason)
       elsif fresh?(event)
         emit_if_verified(event)
@@ -48,35 +46,56 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
       event.actionable_action? && event.actionable_state?
     end
 
-    # The one place a review's reviewer and state decide whether it travels:
-    # nil to let it through, otherwise the reason it is dropped, which is also
-    # what STDERR says.
+    # Both gates return nil to let a review through, or the reason it is
+    # dropped — which is also what STDERR says.
     #
+    # The claimed delivery can only be judged on reviewer and state, so the
+    # trust boundary alone runs here.
+    def claimed_drop_reason(event)
+      unapproved_reason(event)
+    end
+
+    # The verified review carries the body *and* every inline comment, which
+    # is what the agent's-own-reply drop has to read.
+    def verified_drop_reason(event)
+      unapproved_reason(event) || agent_reply_reason(event)
+    end
+
     # Approvals are the trust boundary: an emitted `approved` review is what
     # lets the dispatched agent land the PR, so only the operator's approvals
-    # pass.
-    #
-    # A bare `commented` review by the operator is the mirror case, and it is
-    # noise rather than trust: the dispatched agent commits and comments on
-    # GitHub under the operator's own account, so a comment review from that
-    # login is, in practice, the agent answering a review thread on its own PR
-    # — emitting it wakes a session to read itself talking, which was most of
-    # the events in a real day of running this. The operator's *approval* is
-    # kept regardless, because it is the signal the whole loop rests on and
-    # dropping it would strand every PR waiting to land; so is the operator's
-    # `changes_requested`, which asks for work no matter who typed it. Every
-    # other reviewer passes in every state, Copilot included.
-    def drop_reason(event)
+    # pass. Feedback states carry no such authority and pass from anyone.
+    def unapproved_reason(event)
       if event.approved? && !event.reviewed_by?(@operator)
         "approved by #{event.reviewer.inspect}, not by the operator (#{@operator})"
-      elsif self_comment?(event)
-        "commented by the operator (#{@operator}) — the dispatched agent reviews as the operator, " \
-          "so this is the agent talking to itself; pass --include-self-reviews to emit these"
       end
     end
 
-    def self_comment?(event)
-      !@include_self_reviews && event.commented? && event.reviewed_by?(@operator)
+    # The mirror case, and it is noise rather than trust: a dispatched agent
+    # commits and comments on GitHub under the operator's own account, so when
+    # it answers a review thread on its own PR the connector emits a review
+    # that wakes a session to read itself talking — most of the events in a
+    # real day of running this.
+    #
+    # The account cannot tell those apart from the operator's own review
+    # comments, because agent and operator share it. **The 🤖 prefix our
+    # convention puts on every agent-written PR comment is the signal**; the
+    # login only narrows where to look. So a review is dropped when all three
+    # hold: the operator's login, state `commented`, and every piece of text
+    # in it agent-marked. One unmarked line is a person writing, and the whole
+    # review travels — losing a human's review comment would be far worse than
+    # the noise this removes. An approval still passes whatever it says: it is
+    # the signal the whole loop rests on, and dropping it would strand every
+    # PR waiting to land. So does `changes_requested`, which asks for work
+    # however it is marked.
+    #
+    # Narrow enough to need no escape hatch: nothing a person writes is ever
+    # dropped, so there is nothing for a flag to turn back on but the agent's
+    # own replies.
+    def agent_reply_reason(event)
+      if event.commented? && event.reviewed_by?(@operator) && event.agent_authored?
+        "commented by the operator (#{@operator}) with every line #{BasecampAgentConnector::GitHub::ReviewEvent::AGENT_PREFIX}-marked — " \
+          "the dispatched agent's own reply, not a person's"
+      end
     end
 
     def fresh?(event)
@@ -93,7 +112,7 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
 
       if verified.nil?
         log "dropped review #{event.id}: not corroborated by GitHub"
-      elsif (reason = drop_reason(verified))
+      elsif (reason = verified_drop_reason(verified))
         log_dropped(verified, reason)
       else
         @emitter.emit(verified)
