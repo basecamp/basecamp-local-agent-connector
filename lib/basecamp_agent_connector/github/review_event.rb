@@ -55,6 +55,13 @@ class BasecampAgentConnector::GitHub::ReviewEvent
     pull_request["number"]
   end
 
+  # The login GitHub recorded as the pull request's author. nil when the
+  # delivery carries no `pull_request.user` at all — a shape GitHub does not
+  # send, and one the author gate must not read as "somebody else".
+  def pull_author
+    pull_request.dig("user", "login")
+  end
+
   def repository
     @payload["repository"] || {}
   end
@@ -102,6 +109,13 @@ class BasecampAgentConnector::GitHub::ReviewEvent
   # GitHub logins are case-insensitive.
   def reviewed_by?(login)
     !reviewer.nil? && !login.nil? && reviewer.casecmp?(login)
+  end
+
+  # Whether the pull request under review is that login's own. Answers false
+  # when either login is missing, so an unknown author is nobody's — the gate
+  # reading this tells the two apart itself.
+  def authored_by?(login)
+    !pull_author.nil? && !login.nil? && pull_author.casecmp?(login)
   end
 
   def to_emitted_hash

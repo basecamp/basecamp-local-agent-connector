@@ -133,11 +133,14 @@ A few things worth knowing about what you can ask for:
   two email-keyed modes add nobody. Read [Trust modes](#trust-modes) before
   relying on any of them.
 - **GitHub PR reviews ride the same server.** Ask for a repo ("plus PR reviews on
-  basecamp/bc3") and review events arrive on the same funnel. Only **your**
-  approvals (the login `gh` is signed in as) reach the agent as `approved`;
-  someone else's approval is dropped, while their requested changes and comments
-  still come through. The one thing filtered out is the agent talking to
-  itself: it posts under **your** account, so a comment review from your login
+  basecamp/bc3") and review events arrive on the same funnel. A webhook watches
+  the whole repo, so **only reviews on pull requests you opened reach the
+  agent** — a review on a colleague's PR is somebody else's work, with no branch
+  of yours behind it, and is dropped. Of the reviews that are on your PRs, only
+  **your** approvals (the login `gh` is signed in as) reach the agent as
+  `approved`; someone else's approval is dropped, while their requested changes
+  and comments still come through. The other thing filtered out is the agent
+  talking to itself: it posts under **your** account, so a comment review from your login
   whose body and every inline comment start with the 🤖 prefix agents put on
   their PR comments is its own reply, and never reaches you. If the body or any
   one of those comments doesn't start with 🤖, the whole review comes through,
@@ -460,7 +463,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `@AGENT` | Agent user / local `basecamp` profile to watch for and reply as. Leading `@` optional; lowercased to the profile name. **Required**, validated at startup. | — |
 | `--project` | Basecamp project name, URL, or ID. **Required**, repeatable. | — |
 | `--operator` | Profile whose user is allowed to trigger. Also the profile every call not made as the agent runs under — corroborating fetches, chat polling, webhook registration. | CLI default profile |
-| `--gh-operator` | GitHub login whose PR approvals are actionable (with `--repo`). Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose body and every inline comment start with 🤖 is the dispatched agent's own reply and is dropped — anything written in it without the marker, and it passes like anyone else's. | the login `gh` is authenticated as |
+| `--gh-operator` | GitHub login the review loop is about (with `--repo`): reviews on pull requests opened by anyone else are dropped, and only this login's `approved` reviews are actionable. Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose body and every inline comment start with 🤖 is the dispatched agent's own reply and is dropped — anything written in it without the marker, and it passes like anyone else's. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
 | `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
 | `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
@@ -480,9 +483,9 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    `Run basecamp auth login --profile <agent>…`. Resolves the operator identity
    (refreshing an expired token once). Warns if agent == operator. With
    `--repo`, also resolves the operator's GitHub login (`gh api user`, or
-   `--gh-operator`) — the only reviewer whose PR approvals are emitted, and the
-   login whose all-🤖 comment reviews are dropped as the agent's own replies —
-   and aborts with `Run gh auth login, or pass --gh-operator LOGIN` if it
+   `--gh-operator`) — the author of the pull requests whose reviews are
+   emitted, the only reviewer whose approvals are emitted, and the login whose all-🤖
+   comment reviews are dropped as the agent's own replies — and aborts with `Run gh auth login, or pass --gh-operator LOGIN` if it
    can't.
 2. **Open the endpoint.** Starts a WEBrick server on `127.0.0.1:<port>` that only
    accepts `POST /bc5/<random-secret>`; everything else is 404. One server + one

@@ -4,10 +4,11 @@ require "json"
 # verify the HMAC, filter, dedup, re-fetch the review from the API, emit.
 #
 # What may travel is decided in `claimed_drop_reason` / `verified_drop_reason`:
-# the trust boundary (only the operator's approvals) and the agent's-own-reply
-# drop. The trust boundary runs twice — on the claimed delivery as a cheap
-# pre-filter, and again on the verified review, so it binds to the reviewer
-# GitHub actually recorded rather than to the delivery body.
+# reviews on somebody else's pull request, the trust boundary (only the
+# operator's approvals) and the agent's-own-reply drop. The trust boundary
+# runs twice — on the claimed delivery as a cheap pre-filter, and again on
+# the verified review, so it binds to the reviewer GitHub actually recorded
+# rather than to the delivery body.
 class BasecampAgentConnector::GitHub::ReviewPipeline
   def initialize(secret:, operator:, verifier:, emitter:, logger: $stderr)
     @secret = secret
@@ -49,16 +50,52 @@ class BasecampAgentConnector::GitHub::ReviewPipeline
     # Both gates return nil to let a review through, or the reason it is
     # dropped — which is also what STDERR says.
     #
-    # The claimed delivery can only be judged on reviewer and state, so the
-    # trust boundary alone runs here.
+    # The claimed delivery already names the pull request's author and the
+    # reviewer, so both of those gates run here, before the API round trip.
     def claimed_drop_reason(event)
-      unapproved_reason(event)
+      other_authors_pull_request_reason(event) || unapproved_reason(event)
     end
 
     # The verified review carries the body *and* every inline comment, which
     # is what the agent's-own-reply drop has to read.
     def verified_drop_reason(event)
       unapproved_reason(event) || agent_reply_reason(event)
+    end
+
+    # The sibling of the drop below, and the wider one: a review on a pull
+    # request somebody else opened is not this operator's work at all. The
+    # connector watches whole repos, so every review anyone leaves on anyone's
+    # PR in bc3 arrives here — eleven from other teams in one burst on the day
+    # this was written — and each one woke a session to read a stranger's
+    # feedback on a stranger's branch. The loop this feeds only ever acts on
+    # the PRs the dispatched agent itself opened: it addresses the feedback in
+    # that PR's worktree and lands the PR. There is no worktree, no branch and
+    # no authority behind a review of somebody else's work.
+    #
+    # Unconditional, not a flag. The one case for the other side — the
+    # operator was asked to review a colleague's PR — is the operator doing
+    # the reviewing, and a review *they* wrote is still not work arriving for
+    # their agent; the events it would let through are the colleague's replies
+    # on their own branch, which the agent cannot act on either. An escape
+    # hatch would buy back only noise, so there is nothing narrower worth
+    # building. If acting on another author's PR ever becomes real work, it
+    # wants a dispatch path of its own, not this one.
+    #
+    # The author is read off the delivery rather than re-fetched. The trust
+    # boundary below re-checks the reviewer against the review the API hands
+    # back because an emitted approval is merge authority; this gate is noise
+    # removal, it can only ever drop, and the body it reads is HMAC-signed by
+    # GitHub. `ReviewVerifier` copies `pull_request` from the delivery
+    # verbatim, so checking again after the fetch would re-read the same bytes
+    # — and checking before it saves the round trip entirely.
+    #
+    # An unknown author travels, like everything else here: a delivery with no
+    # `pull_request.user` is a shape GitHub does not send, and guessing it is
+    # a stranger's would drop a real review unseen.
+    def other_authors_pull_request_reason(event)
+      if !event.pull_author.nil? && !event.authored_by?(@operator)
+        "on a pull request opened by #{event.pull_author.inspect}, not by the operator (#{@operator})"
+      end
     end
 
     # Approvals are the trust boundary: an emitted `approved` review is what

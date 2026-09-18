@@ -15,7 +15,7 @@ alongside (or instead of) Basecamp `--project`:
 ```bash
 bin/connect @Clawdito --project "BC5 Calendar" --repo basecamp/bc3   # both at once
 bin/connect --repo basecamp/bc3 --repo acme/widgets                  # GitHub only
-bin/connect --repo acme/widgets --gh-operator marie                  # approvals by @marie, not this machine's gh login
+bin/connect --repo acme/widgets --gh-operator marie                  # @marie's PRs and approvals, not this machine's gh login
 ```
 
 It registers a `pull_request_review` webhook on each repo (against the shared
@@ -73,6 +73,12 @@ on API re-fetch). So this side gets **both**: verify the signature on receipt,
 then corroborate by re-fetching the review via the API. Only the operator's
 repos and only the operator's approvals are actionable.
 
+A webhook is registered per **repo**, not per pull request, so every review
+anyone leaves on anyone's PR in a watched repo arrives here. Only the ones on
+the **operator's own** pull requests travel — see [Other people's pull
+requests](#other-peoples-pull-requests). What follows is about the reviews that
+survive that.
+
 The signature proves GitHub sent the delivery, not that the reviewer may merge.
 An emitted `approved` review is what lets the dispatched agent land the PR, so
 `ReviewPipeline` admits an approval only when its reviewer is the **operator's
@@ -86,10 +92,49 @@ the decision binds to the `user.login` GitHub recorded, not to the POST body.
 Logins compare case-insensitively, as GitHub does.
 
 The operator's login is the one this machine's `gh` is authenticated as
-(`gh api user`), resolved once at startup; `--gh-operator <login>` names
-another login instead, without consulting `gh`. The bridge logs the active set
-with the other startup lines: `Trust: approvals from @<login> only; …`. A
-signed-out `gh` with no `--gh-operator` aborts startup.
+(`gh api user`), resolved once at startup by `Connector#resolve_github_operator`;
+`--gh-operator <login>` names another login instead, without consulting `gh`.
+That one value answers every "who is the operator on GitHub" question the
+pipeline asks — whose approvals are trusted, whose pull requests the loop is
+about, whose 🤖-marked comment reviews are its agent's own — so there is no
+second place to keep in step. The bridge logs the active set with the other
+startup lines: `Trust: reviews on @<login>'s own pull requests only; approvals
+from @<login> only; …`. A signed-out `gh` with no `--gh-operator` aborts
+startup.
+
+## Other people's pull requests
+
+The webhook is per repo, so a repo like `basecamp/bc3` delivers every review on
+every open PR in it — eleven from other teams in a single burst, the day this
+was written. A review of a pull request the operator did not open is not work
+for their agent: the loop here addresses feedback in the worktree of a PR the
+agent itself opened and lands that PR, and there is no worktree, no branch and
+no authority behind somebody else's. So `ReviewPipeline` drops a review whose
+`pull_request.user.login` is not the operator's, whoever reviewed it and
+whatever state it is in.
+
+Three details:
+
+- **Unconditional, no flag.** The case for the other direction — the operator
+  was asked to review a colleague's PR — is the operator doing the *reviewing*,
+  and their own review is not work arriving for their agent either; what the
+  flag would let through is the colleague's replies on the colleague's branch,
+  which the agent equally cannot act on. If acting on another author's PR ever
+  becomes real work, it wants a dispatch path of its own rather than this one.
+- **Read off the delivery, not re-fetched.** The approval gate re-checks the
+  reviewer against the review the API hands back because an emitted approval is
+  merge authority. This gate is noise removal: it can only ever drop, the body
+  it reads is HMAC-signed by GitHub, and `ReviewVerifier` copies
+  `pull_request` from the delivery verbatim — so a second check after the fetch
+  would re-read the same bytes, while checking before it saves the round trip
+  entirely. A drop here never asks GitHub anything.
+- **An unknown author travels.** A delivery with no `pull_request.user` is a
+  shape GitHub does not send, and reading it as a stranger's would drop a real
+  review unseen. Logins compare case-insensitively, as everywhere else here.
+
+```
+dropped review 7001: on a pull request opened by "a-colleague", not by the operator (octocat) (https://github.com/acme/widgets/pull/12#pullrequestreview-7001)
+```
 
 ## The agent's own replies (it posts under the operator's account)
 
@@ -125,6 +170,10 @@ fails toward emitting:
 | operator, `changes_requested` | **emitted** — work to do, however it is marked |
 | anyone else, `approved` | dropped — see [Trust](#trust) |
 | anyone else, any feedback state | **emitted** — Copilot's review of each push arrives here, 🤖 or not |
+
+Every row above is a review of the operator's own pull request; a review of
+anyone else's is dropped before any of this — see [Other people's pull
+requests](#other-peoples-pull-requests).
 
 Unlike the approval gate, this one runs **only on the review re-fetched from the
 API**: the delivery carries the body but none of the inline comments, and an
@@ -191,9 +240,11 @@ The flow, per delivery:
    reject otherwise — `GitHub::WebhookSignature`.
 4. **Re-fetch + emit** the whole review as one NDJSON event (review id, action,
    state, repo, PR number, reviewer, body, inline comments) — `GitHub::ReviewVerifier` +
-   `Emitter`. An `approved` review is emitted only when the re-fetched
-   reviewer is the operator's GitHub login, and an all-🤖 `commented` review by
-   that login is dropped as the agent's own reply — `GitHub::ReviewPipeline`.
+   `Emitter`. A review of a pull request the operator did not open is dropped
+   without asking GitHub anything, an `approved` review is emitted only when
+   the re-fetched reviewer is the operator's GitHub login, and an all-🤖
+   `commented` review by that login is dropped as the agent's own reply —
+   `GitHub::ReviewPipeline`.
 5. **Tear down** the repo webhook on `SIGINT`/`SIGTERM`, like the Basecamp
    webhooks and the funnel.
 

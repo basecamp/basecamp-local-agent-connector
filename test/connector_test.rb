@@ -212,7 +212,7 @@ class ConnectorTest < Minitest::Test
     _out, err = start_connector [ "--repo", "acme/a", "--port", "4567" ], runner
 
     assert_equal 1, runner.commands_matching(/\Agh api user\z/).length
-    assert_match(/^Trust: approvals from @octocat only/, err)
+    assert_match(/^Trust: reviews on @octocat's own pull requests only; approvals from @octocat only/, err)
   end
 
   def test_start_trusts_the_given_github_operator_without_asking_gh
@@ -221,7 +221,7 @@ class ConnectorTest < Minitest::Test
     _out, err = start_connector [ "--repo", "acme/a", "--gh-operator", "marie", "--port", "4567" ], runner
 
     assert_empty runner.commands_matching(/\Agh api user\z/)
-    assert_match(/^Trust: approvals from @marie only/, err)
+    assert_match(/^Trust: reviews on @marie's own pull requests only; approvals from @marie only/, err)
   end
 
   def test_start_aborts_when_gh_is_signed_out_and_no_github_operator_is_given
