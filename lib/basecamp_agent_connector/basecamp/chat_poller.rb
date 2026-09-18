@@ -41,6 +41,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     @clock = clock
     @rooms_by_project = {}
     @refreshed_at = {}
+    @chatless_projects = Set.new
     @seen_line_ids = {}
     # Floored to the whole second because line timestamps may carry only
     # second precision: comparing a sub-second start against a truncated
@@ -104,15 +105,20 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   # Discovery is per project: a project whose listing fails keeps its stale
   # rooms covered and is retried on the next poll (logged each time — missing
   # coverage should stay visible), while healthy projects refresh on their own
-  # REDISCOVER_AFTER cadence, untouched by a neighbor's failures.
+  # REDISCOVER_AFTER cadence, untouched by a neighbor's failures. The one
+  # listing failure that is not retried is a project with no Campfire at all
+  # — see chat_disabled?; such a project leaves the poll entirely, rooms and
+  # all, so a neighbour's Campfire is the only thing left to cover.
   def rooms
     @projects.flat_map { |project| rooms_for(project) || [] }
   end
 
   private
     def rooms_for(project)
-      refresh(project) if due_for_discovery?(project) && !@rate_limited
-      @rooms_by_project[project]
+      unless @chatless_projects.include?(project)
+        refresh(project) if due_for_discovery?(project) && !@rate_limited
+        @rooms_by_project[project]
+      end
     end
 
     def due_for_discovery?(project)
@@ -137,8 +143,51 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       end
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       note_rate_limit(error)
-      log "could not list chats for project #{project}: #{error.message}"
+
+      if chat_disabled?(error)
+        drop(project)
+      else
+        log "could not list chats for project #{project}: #{error.message}"
+      end
+
       nil
+    end
+
+    # The one listing failure worth remembering. Every other one — a network
+    # blip, a 500, a lost keyring probe, an over-budget account, an access
+    # check that says no today — tells us nothing about whether the project
+    # has a Campfire, so the project keeps its slot and is asked again next
+    # tick. Dropping on any of those would silently stop watching a real
+    # Campfire for the rest of the run, which is far worse than the noise
+    # dropping saves.
+    #
+    # Chat being switched off is the exception: the CLI answers `not_found`
+    # ("chat room not found: <project>", hint "Chat room is disabled for this
+    # project"), and asking again never turns that into a room. Two things
+    # have to hold. The failure has to be Basecamp's answer rather than the
+    # CLI failing to get one — that is exactly the Error/TransientError line
+    # the client already draws, and it is also where a `retryable: true`
+    # envelope ends up, so the flag needs no reading here. And the code has
+    # to be `not_found` precisely: `forbidden` is access that can be granted
+    # back, and `api_error` covers bc3's 5xx as well as its verdicts.
+    #
+    # The drop lasts the run. Chat can be switched back on mid-run, but that
+    # is a person changing a project setting — not something worth a failed
+    # API call and a log line every 15 seconds to notice. Re-checking on the
+    # REDISCOVER_AFTER cadence would only make the same doomed call less
+    # often, and making it silently would hide the coverage failures this
+    # loop logs on purpose. Restarting the connector re-checks every project,
+    # and the line below says so.
+    def chat_disabled?(error)
+      !error.is_a?(BasecampAgentConnector::Basecamp::Client::TransientError) && error.code == "not_found"
+    end
+
+    def drop(project)
+      @chatless_projects << project
+      @rooms_by_project.delete(project)
+      @refreshed_at.delete(project)
+      log "project #{project} has no Campfire (chat is disabled there), so it will not be polled for chat " \
+        "again this run; restart the connector to re-check it"
     end
 
     # The loop is the only chat thread there is; an exception that escapes a

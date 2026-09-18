@@ -589,7 +589,9 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
 - **Event types** — `--types` (default `Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line`).
   `Chat::Line` is Campfire coverage: Basecamp delivers no chat webhooks, so the
   connector polls each watched project's chats and runs new lines through the
-  same trust gate as webhook events.
+  same trust gate as webhook events. A watched project with chat disabled says
+  so once and is then left out of the poll for the rest of the run; restart to
+  re-check it.
 - **Boost polling** — `--boost-poll` interval in seconds (default 60), or
   `--no-boosts` to disable the boost trigger. Boosts have no webhooks, so the
   connector polls the agent's own received-boosts feed — an account-wide,
