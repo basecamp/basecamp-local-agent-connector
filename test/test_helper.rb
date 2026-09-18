@@ -4,9 +4,28 @@ require "basecamp_agent_connector"
 require "minitest/autorun"
 require "minitest/mock"
 require "base64"
+require "fileutils"
 require "json"
 require "openssl"
 require "stringio"
+require "tmpdir"
+
+# The run registry's default directory is the operator's own
+# ~/.config/basecamp-connect/runs, and the records in it are live state: which
+# connectors are running on this machine, and which funnel paths a dead one
+# abandoned. This suite starts real connectors, so left on that default it
+# reads those records, writes one of its own under the test process's pid, and
+# — on any sweep that gets as far as succeeding — discards the entry naming a
+# dead run's webhooks, which is the only record of them there is. It also makes
+# the suite's result depend on whether the operator happens to have a connector
+# running: with one alive there is nothing abandoned to sweep and the suite is
+# green; the moment one dies without tearing down, five connector tests walk
+# into sweep calls their fakes never stubbed. The whole test process gets a
+# throwaway directory instead, so no test can reach the real one by forgetting
+# to pass a registry.
+BasecampAgentConnector::RunRegistry.send :remove_const, :DEFAULT_DIRECTORY
+BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY = Dir.mktmpdir("basecamp-connect-test-runs")
+Minitest.after_run { FileUtils.remove_entry BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY, true }
 
 class FakeCommandRunner
   attr_reader :commands

@@ -2,6 +2,16 @@ require "test_helper"
 require "tmpdir"
 
 class RunRegistryTest < Minitest::Test
+  # The tripwire for the isolation test_helper installs. A registry built
+  # without a directory must never land on the operator's own, because the
+  # suite starts real connectors: one would record itself there under the test
+  # process's pid, and a sweep that succeeded would discard the entry naming a
+  # dead connector's abandoned webhooks — the only record of them there is.
+  def test_the_default_directory_is_never_the_operators_own
+    refute_equal File.expand_path("~/.config/basecamp-connect/runs"),
+      BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY
+  end
+
   def test_records_and_lists_this_run
     in_registry do |registry|
       registry.record(**run_attributes)
