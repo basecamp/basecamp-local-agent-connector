@@ -568,6 +568,72 @@ class ChatPollerTest < Minitest::Test
     assert_equal 2, runner.commands_matching(/chat list --project B/).length
   end
 
+  # The live noise this rule removes: one of twelve watched projects had chat
+  # disabled, and every 15s tick relisted it and logged the same six-line
+  # refusal — 16 of them in the first 8 minutes of a run that goes overnight.
+  def test_a_project_whose_chat_is_disabled_is_dropped_after_one_failure_and_said_once
+    runner = FakeCommandRunner.new
+    runner.stub "chat list --project A", exit_status: 2, stdout: chat_disabled_envelope("A")
+    runner.stub "chat list --project B", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope
+    poller = poller(runner, projects: [ "A", "B" ])
+
+    3.times { poller.poll }
+
+    assert_equal 1, runner.commands_matching(/chat list --project A/).length
+    assert_equal 1, @logs.string.lines.grep(/project A has no Campfire/).length
+    assert_match(/will not be polled for chat again this run/, @logs.string)
+    refute_match(/could not list chats/, @logs.string)
+  end
+
+  def test_a_dropped_project_leaves_a_working_campfire_alone
+    runner = FakeCommandRunner.new
+    runner.stub "chat list --project A", exit_status: 2, stdout: chat_disabled_envelope("A")
+    runner.stub "chat list --project B", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope, once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    runner.stub "chat line ", stdout: envelope(chat_line)
+    poller = poller(runner, projects: [ "A", "B" ])
+
+    poller.poll
+    poller.poll
+
+    assert_equal 2, runner.commands_matching(/chat messages --project B/).length
+    assert_equal 1, @output.string.lines.length
+    assert_equal 91001, JSON.parse(@output.string)["event_id"]
+  end
+
+  # A 500 says nothing about whether the project has a Campfire, so the
+  # project stays in the poll however many ticks it takes to answer.
+  def test_a_transient_listing_failure_keeps_the_project_in_the_poll
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "chat list", stdout: error_envelope("api_error", "Server error (500)"), exit_status: 1
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope
+    poller = poller(runner)
+
+    poller.poll
+    assert_match(/could not list chats/, @logs.string)
+    refute_match(/no Campfire/, @logs.string)
+
+    poller.poll
+    assert_equal 1, runner.commands_matching(/chat messages/).length
+  end
+
+  # Neither does a refusal that is not a missing chat room: access denied
+  # today can be granted back, so the project is asked again every tick.
+  def test_a_refusal_that_is_not_a_missing_chat_room_keeps_the_project_in_the_poll
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", exit_status: 4, stdout: error_envelope("forbidden", "Access denied", retryable: false)
+    poller = poller(runner)
+
+    3.times { poller.poll }
+
+    assert_equal 3, runner.commands_matching(/chat list/).length
+    assert_equal 3, @logs.string.lines.grep(/could not list chats/).length
+    refute_match(/no Campfire/, @logs.string)
+  end
+
   def test_a_prestart_line_reentering_the_window_is_not_dispatched
     started = Time.utc(2026, 6, 28, 13, 0, 0)
     old_mention = chat_line("id" => 90000)
@@ -604,6 +670,14 @@ class ChatPollerTest < Minitest::Test
   end
 
   private
+    # What the CLI answers for a project whose chat room is switched off
+    # (verified live against project 45144734): a refusal Basecamp reached a
+    # verdict on, stamped not_found and not retryable.
+    def chat_disabled_envelope(project)
+      error_envelope "not_found", "chat room not found: #{project}",
+        retryable: false, hint: "Chat room is disabled for this project"
+    end
+
     # Baseline poll sees an empty room; the next poll finds the mention line,
     # corroborated by a matching `chat line` fetch.
     def corroborating_runner
