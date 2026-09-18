@@ -483,8 +483,8 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    `Run basecamp auth login --profile <agent>…`. Resolves the operator identity
    (refreshing an expired token once). Warns if agent == operator. With
    `--repo`, also resolves the operator's GitHub login (`gh api user`, or
-   `--gh-operator`) — the author whose pull requests reviews are emitted for,
-   the only reviewer whose approvals are emitted, and the login whose all-🤖
+   `--gh-operator`) — the author of the pull requests whose reviews are
+   emitted, the only reviewer whose approvals are emitted, and the login whose all-🤖
    comment reviews are dropped as the agent's own replies — and aborts with `Run gh auth login, or pass --gh-operator LOGIN` if it
    can't.
 2. **Open the endpoint.** Starts a WEBrick server on `127.0.0.1:<port>` that only
