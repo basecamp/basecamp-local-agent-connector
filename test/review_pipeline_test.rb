@@ -272,6 +272,68 @@ class ReviewPipelineTest < Minitest::Test
     assert_equal "commented", JSON.parse(@output.string)["state"]
   end
 
+  # The connector watches whole repos, so other teams' pull requests arrive on
+  # the same funnel. A review on one is not this operator's work: there is no
+  # worktree behind it and nothing for the agent to do.
+  # The runner would corroborate the review happily; the point is that it is
+  # never asked, because the delivery already says whose pull request it is.
+  def test_drops_a_review_on_another_authors_pull_request_without_asking_github
+    review = review_hash("state" => "commented", "user" => { "login" => "someone-else" })
+    runner = corroborating_runner(review)
+    body = JSON.generate(review_payload("review" => review, "pull_request" => pull_request_hash("user" => { "login" => "a-colleague" })))
+
+    pipeline(runner).process(body: body, signature: sign(body, @secret))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+    assert_match(/dropped review 7001: on a pull request opened by "a-colleague", not by the operator \(octocat\)/, @logs.string)
+    assert_includes @logs.string, "(https://github.com/acme/widgets/pull/12#pullrequestreview-7001)"
+  end
+
+  # Including the review the operator writes themselves on a colleague's PR:
+  # their own words, and still not work arriving for their agent.
+  def test_drops_the_operators_own_review_of_another_authors_pull_request
+    runner = corroborating_runner
+    body = JSON.generate(review_payload("pull_request" => pull_request_hash("user" => { "login" => "a-colleague" })))
+
+    pipeline(runner).process(body: body, signature: sign(body, @secret))
+
+    assert_empty @output.string
+    assert_match(/on a pull request opened by "a-colleague"/, @logs.string)
+  end
+
+  def test_matches_the_pull_request_author_case_insensitively
+    body = JSON.generate(review_payload("pull_request" => pull_request_hash("user" => { "login" => "OctoCat" })))
+
+    pipeline(corroborating_runner).process(body: body, signature: sign(body, @secret))
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  # The case this must never break: somebody else reviewing the PR the agent
+  # opened is the whole point of the loop.
+  def test_emits_another_reviewers_review_of_the_operators_own_pull_request
+    review = review_hash("state" => "changes_requested", "user" => { "login" => "Copilot" })
+    body = JSON.generate(review_payload("review" => review))
+
+    pipeline(corroborating_runner(review)).process(body: body, signature: sign(body, @secret))
+
+    emitted = JSON.parse(@output.string)
+    assert_equal "Copilot", emitted["reviewer"]
+    assert_equal 12, emitted["pull_number"]
+    assert_empty @logs.string
+  end
+
+  # A delivery with no author at all is a shape GitHub does not send; reading
+  # it as a stranger's would drop a real review unseen.
+  def test_emits_a_review_whose_pull_request_author_is_unknown
+    body = JSON.generate(review_payload("pull_request" => pull_request_hash("user" => nil)))
+
+    pipeline(corroborating_runner).process(body: body, signature: sign(body, @secret))
+
+    assert_equal 7001, JSON.parse(@output.string)["review_id"]
+  end
+
   private
     # GitHub's REST API answers with the state upcased (`APPROVED`), unlike the
     # lowercase webhook delivery, so the corroboration stub takes the API's shape.

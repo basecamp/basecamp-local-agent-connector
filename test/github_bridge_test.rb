@@ -49,7 +49,29 @@ class GithubBridgeTest < Minitest::Test
 
     bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
 
-    assert_match(/^Trust: approvals from @octocat only; changes_requested from any reviewer; commented from any reviewer, except @octocat's own 🤖-marked replies$/, logs.string)
+    assert_match(/^Trust: reviews on @octocat's own pull requests only; approvals from @octocat only; changes_requested from any reviewer; commented from any reviewer, except @octocat's own 🤖-marked replies$/, logs.string)
+  end
+
+  # End to end over the route: another team's pull request in a watched repo,
+  # reviewed by one of their own. Answered, dropped, and GitHub never asked.
+  def test_handler_drops_a_review_on_another_authors_pull_request
+    review = review_hash("state" => "commented", "user" => { "login" => "someone-else" })
+    runner = FakeCommandRunner.new
+    runner.stub "/hooks", stdout: '{"id":888}'
+    runner.stub(%r{reviews/7001$}, stdout: JSON.generate(review.merge("state" => "COMMENTED")))
+    runner.stub "reviews/7001/comments", stdout: "[]"
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, emitter: BasecampAgentConnector::Emitter.new(output: output))
+    bridge.register(base_url: "https://host.ts.net")
+
+    deliver bridge, review_payload("review" => review, "pull_request" => pull_request_hash("user" => { "login" => "a-colleague" })),
+      secret: logged_hmac_secret(logs)
+
+    assert_match(/dropped review 7001: on a pull request opened by "a-colleague", not by the operator \(octocat\)/,
+      wait_for_log(logs, /dropped review/))
+    assert_empty output.string
+    assert_empty runner.commands_matching(%r{reviews/7001})
   end
 
   # End to end over the route: a signed delivery of a review the operator's

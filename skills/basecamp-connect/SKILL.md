@@ -368,7 +368,10 @@ watching for new mentions, acknowledge each one, and dispatch it.
   before it reaches this stream. That login is the one this machine's `gh` is
   signed in as (`gh api user`), read once at startup, or `--gh-operator
   <login>` passed through to `bin/connect`; the connector logs it at startup
-  as `Trust: approvals from @<login> only; …`. `changes_requested` and
+  as `Trust: reviews on @<login>'s own pull requests only; approvals from
+  @<login> only; …` — the first clause being the wider drop: the webhook
+  watches the whole repo, and a review of a pull request somebody else opened
+  never reaches this stream, whoever wrote it. `changes_requested` and
   `commented` lines arrive from any reviewer: feedback to address, never a
   reason to merge — with one exception, dropped before this stream: a
   `commented` review by the operator's own login whose body and every inline

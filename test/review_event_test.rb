@@ -58,6 +58,29 @@ class ReviewEventTest < Minitest::Test
     refute event.reviewed_by?("octocat")
   end
 
+  def test_reads_the_pull_request_author
+    assert_equal "octocat", BasecampAgentConnector::GitHub::ReviewEvent.from_payload(review_payload).pull_author
+  end
+
+  def test_authored_by_matches_the_login_case_insensitively
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(
+      review_payload("pull_request" => pull_request_hash("user" => { "login" => "OctoCat" })))
+
+    assert event.authored_by?("octocat")
+    refute event.authored_by?("someone-else")
+    refute event.authored_by?(nil)
+  end
+
+  # Neither the operator's nor anyone else's: the gate reading this decides
+  # what an unknown author means, and it lets the review through.
+  def test_authored_by_is_false_without_an_author
+    event = BasecampAgentConnector::GitHub::ReviewEvent.from_payload(
+      review_payload("pull_request" => pull_request_hash("user" => nil)))
+
+    assert_nil event.pull_author
+    refute event.authored_by?("octocat")
+  end
+
   # The marker, not the account, is what makes a review the agent's: agents
   # post under the operator's own login.
   def test_agent_authored_needs_every_written_line_marked

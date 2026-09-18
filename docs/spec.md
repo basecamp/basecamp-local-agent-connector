@@ -396,7 +396,10 @@ indistinguishable from a missed one (connector PR #17).
    the repo named by `repo`, and an `approved` review is dispatched as an
    approval that may land the PR only when `reviewer` is the operator's GitHub
    login. The connector enforces that gate itself (`GitHub::ReviewPipeline`):
-   any other reviewer's approval never reaches this stream, and neither does a
+   any other reviewer's approval never reaches this stream. Neither does a
+   review of a pull request somebody else opened — the webhook watches the
+   whole repo, so other teams' PRs come down the same wire, and a review of one
+   is not this operator's work. Neither does a
    `commented` review by the operator's own login whose body and every inline
    comment start with 🤖 — the dispatched agent, posting under that account,
    replying to a thread on its own PR. Anything written in it without the

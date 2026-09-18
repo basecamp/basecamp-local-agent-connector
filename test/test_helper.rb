@@ -278,13 +278,23 @@ module PayloadHelpers
     BasecampAgentConnector::GitHub::Client.new(command_runner: command_runner)
   end
 
-  # A GitHub `pull_request_review` webhook payload.
+  # A GitHub `pull_request_review` webhook payload. The pull request is the
+  # operator's own, which is the case the whole review loop is about: a PR the
+  # dispatched agent opened, coming back with feedback on it.
   def review_payload(overrides = {})
     {
       "action" => "submitted",
       "review" => review_hash,
-      "pull_request" => { "number" => 12, "html_url" => "https://github.com/acme/widgets/pull/12" },
+      "pull_request" => pull_request_hash,
       "repository" => { "full_name" => "acme/widgets" }
+    }.merge(overrides)
+  end
+
+  def pull_request_hash(overrides = {})
+    {
+      "number" => 12,
+      "html_url" => "https://github.com/acme/widgets/pull/12",
+      "user" => { "login" => "octocat" }
     }.merge(overrides)
   end
 
