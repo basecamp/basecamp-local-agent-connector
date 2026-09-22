@@ -89,6 +89,26 @@ class CursorDispatcherTest < Minitest::Test
     refute_includes prompt, "&quot;"
   end
 
+  # Someone else's rich text, spliced: a naive one-pass tag strip reassembles
+  # `<scr<x>ipt>` into a tag it just claimed to have removed.
+  def test_tag_stripping_leaves_nothing_that_looks_like_a_tag
+    spliced = fixture_event
+    spliced["recording"] = spliced["recording"].merge("content" => "<p>do it <scr<x>ipt>alert(1)</scr<x>ipt> now</p>")
+
+    prompt = @dispatcher.request_body(spliced).dig("prompt", "text")
+
+    assert_includes prompt, "do it"
+    assert_includes prompt, "now"
+    refute_includes prompt, "script"
+  end
+
+  def test_tag_stripping_keeps_an_unclosed_bracket_as_text
+    unclosed = fixture_event
+    unclosed["recording"] = unclosed["recording"].merge("content" => "<p>ship it if 3 < 5")
+
+    assert_includes @dispatcher.request_body(unclosed).dig("prompt", "text"), "3 < 5"
+  end
+
   def test_agent_id_is_stable_per_event_so_a_replayed_line_cannot_run_twice
     first = @dispatcher.request_body(fixture_event)["agentId"]
 

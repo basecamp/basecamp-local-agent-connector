@@ -244,8 +244,28 @@ class BasecampAgentConnector::Cursor::Dispatcher
       html = event.dig("recording", "content").to_s
       text = html.gsub(BasecampAgentConnector::Basecamp::Event::BC_ATTACHMENT_TAG, " ")
       text = text.gsub(%r{</(?:p|div|li|h[1-6])>}i, "\n").gsub(%r{<br\s*/?>}i, "\n")
-      text = text.gsub(/<[^>]*>/, "")
-      CGI.unescapeHTML(text).gsub(/[ \t]+/, " ").gsub(/\n{3,}/, "\n\n").strip
+      CGI.unescapeHTML(strip_tags(text)).gsub(/[ \t]+/, " ").gsub(/\n{3,}/, "\n\n").strip
+    end
+
+    # A scan rather than `gsub(/<[^>]*>/, "")`. Two reasons, both about the
+    # input being someone else's rich text: that pattern backtracks quadratically
+    # on a run of `<` with no `>`, and a single pass over a pattern like that
+    # leaves whatever the removals splice back together. This consumes each
+    # `<`…`>` span exactly once, left to right, and a `<` that never closes is
+    # text like any other.
+    def strip_tags(html)
+      text = +""
+      index = 0
+
+      while (opened = html.index("<", index))
+        text << html[index...opened]
+        closed = html.index(">", opened)
+        return text << html[opened..] if closed.nil?
+
+        index = closed + 1
+      end
+
+      text << html[index..]
     end
 
     def post_agent(body)
