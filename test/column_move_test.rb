@@ -172,6 +172,47 @@ class ColumnMovePipelineTest < Minitest::Test
     assert_match(/not corroborated|does not target/, @log.string)
   end
 
+  # The forgery a current-column check alone lets through: nothing is moved,
+  # the POST just claims a move into the column the card already sits in. The
+  # card's history has no such event, so it is dropped.
+  def test_a_move_the_cards_history_never_recorded_is_dropped
+    process column_move_payload, history: []
+
+    assert_empty @output.string
+    assert_match(/not corroborated/, @log.string)
+  end
+
+  def test_an_event_that_is_not_an_adoption_is_dropped
+    process column_move_payload, history: [ adoption("action" => "content_changed") ]
+
+    assert_empty @output.string
+  end
+
+  def test_an_adoption_into_a_different_column_than_claimed_is_dropped
+    process column_move_payload, history: [ adoption("details" => { "new_parent_id" => 999, "parent_id_was" => 554 }) ]
+
+    assert_empty @output.string
+  end
+
+  # The POST's author is a claim. The history's is a fact, and the second
+  # authorization runs on it.
+  def test_a_move_the_history_says_somebody_else_made_is_dropped
+    someone = { "id" => 777, "name" => "Someone Else", "email_address" => "someone@example.com" }
+
+    process column_move_payload, history: [ adoption("creator" => someone) ]
+
+    assert_empty @output.string
+    assert_match(/not authorized/, @log.string)
+  end
+
+  # The columns on both sides come from the history too, so a POST cannot
+  # invent a `parent_id_was` to turn a card that never moved into a move.
+  def test_the_columns_acted_on_come_from_the_history_not_the_post
+    process column_move_payload, history: [ adoption("details" => { "new_parent_id" => 555, "parent_id_was" => 555 }) ]
+
+    assert_empty @output.string
+  end
+
   # The author of a move is whoever dragged the card, which is not generally
   # whoever created it — so corroborating on the creator, as a mention does,
   # would drop every move of somebody else's card.
@@ -202,9 +243,12 @@ class ColumnMovePipelineTest < Minitest::Test
   end
 
   private
-    def process(payload, column_moves: true, column_move_except: [], recording: nil)
+    # `history` is the card's event history as bc3 reports it. By default it
+    # holds the adoption the payload claims, as a genuine move would.
+    def process(payload, column_moves: true, column_move_except: [], recording: nil, history: [ adoption ])
       runner = FakeCommandRunner.new
       runner.stub "basecamp show", stdout: envelope(recording || payload["recording"] || moved_card)
+      runner.stub "recordings/789/events.json", stdout: envelope(history)
 
       BasecampAgentConnector::Basecamp::Pipeline.new(
         authorizer: authorizer, agent: agent_identity,
@@ -215,5 +259,15 @@ class ColumnMovePipelineTest < Minitest::Test
 
     def emitted
       JSON.parse(@output.string.lines.first.to_s)
+    end
+
+    # The event a real move leaves in the card's history, matching
+    # column_move_payload: same id, by the operator, 554 → 555.
+    def adoption(overrides = {})
+      {
+        "id" => 99005, "action" => "adopted", "created_at" => "2026-09-21T19:41:35Z",
+        "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+        "details" => { "new_parent_id" => 555, "parent_id_was" => 554, "notified_recipient_ids" => [] }
+      }.merge(overrides)
     end
 end

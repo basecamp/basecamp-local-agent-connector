@@ -493,10 +493,12 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    assignees; the assigner's identity is not independently corroborated, so
    there the secret URL path — a fresh 128-bit token per run — is the gate that
    stops a forged operator-assignment, not corroboration. For a **column move**
-   it means the card is re-fetched and must **currently sit in the column the
-   event claims it was moved into** — a forged POST cannot move a real card,
-   and a move since undone or superseded fails the same test, which is right:
-   the card is no longer where the event says it is.
+   it means the move itself is found in **the card's own event history**: the
+   webhook's id must be a real adoption there, into the claimed column, and the
+   author and columns acted on are read from that record, not the POST. So a
+   forged move — even one claiming the column the card already sits in — has
+   nothing to match. The card must also still be in that column, since a move
+   since undone or superseded no longer describes the board.
 
 For a mention, the content acted on is the **authoritative copy fetched from
 Basecamp**, never the raw POST body.

@@ -139,6 +139,13 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
+  # A recording's history, newest first: what happened to it, who did it, and
+  # the details of each change. The CLI has no dedicated command for it, so go
+  # through its raw API passthrough, as for the received-boosts feed.
+  def recording_events(bucket:, recording:)
+    Array json("api", "get", "/buckets/#{bucket}/recordings/#{recording}/events.json")
+  end
+
   # The receipt boost, posted as the agent: the requester's evidence that the
   # mention registered before any slow work starts.
   #

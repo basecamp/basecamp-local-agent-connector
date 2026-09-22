@@ -389,10 +389,20 @@ progresses, and those moves die on the same branch that stops the reply loop.
 
 **Corroboration.** Neither of the existing checks applies. A move's author is
 whoever dragged the card, not the card's creator, and the agent need not be an
-assignee for the move to be real. So the Verifier re-fetches the card and
-requires it to *currently sit in the column the event claims* — a forged POST
-cannot move a real card, and a move since undone or superseded fails too, which
-is correct: the card is no longer where the event says.
+assignee for the move to be real. Nor is the card's current column enough: a
+forger need not move anything, only claim a move into the column the card
+already sits in, with any `parent_id_was`.
+
+What bc3 does keep is the move itself. A card's history
+(`/buckets/:bucket/recordings/:id/events.json`) records each adoption with its
+id, author and both columns, and the webhook's id *is* that event's id —
+verified against a real delivery. So the Verifier requires this exact event to
+exist, be an `adopted` action and land in the claimed column, and the card to
+still sit there. The authoritative event then takes its author and `details`
+from that record rather than the POST, so the pipeline's second authorization
+and its "did the column actually change" check both run on what Basecamp
+recorded. That makes a move better corroborated than an assignment, whose
+assigner only the POST names.
 
 **Targeting, and why it is split.** The pipeline does not ask whether the card
 is the agent's; an assignee check there would drop moves on cards the agent is
