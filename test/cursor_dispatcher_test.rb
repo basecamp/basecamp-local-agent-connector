@@ -192,6 +192,20 @@ class CursorDispatcherTest < Minitest::Test
     end
   end
 
+  # Valid JSON of the wrong shape — a proxy's error string, an array — blows
+  # up on `dig`, outside this class's error hierarchy.
+  def test_a_body_that_is_not_an_object_is_contained_like_any_other_failure
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(create_body: '"gateway timeout"') do |port, _requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(File.read(FIXTURE)))
+    end
+
+    assert_includes @log.string, "not an object"
+    assert_includes basecamp.comments.first[:content], "UNDISPATCHED"
+  end
+
   def test_a_finished_run_leaves_the_card_to_the_agent
     basecamp = FakeBasecamp.new
 
@@ -251,7 +265,7 @@ class CursorDispatcherTest < Minitest::Test
       flunk "condition never came true within #{timeout}s" unless yield
     end
 
-    def with_mock_cursor(create_status: 200, run_status: "FINISHED", run_gate: nil)
+    def with_mock_cursor(create_status: 200, run_status: "FINISHED", run_gate: nil, create_body: nil)
       requests = []
       recording = Mutex.new
       port = free_port
@@ -266,7 +280,7 @@ class CursorDispatcherTest < Minitest::Test
         run_gate.pop if run_gate && request.request_method == "GET"
         response.status = request.request_method == "POST" ? create_status : 200
         response["Content-Type"] = "application/json"
-        response.body = JSON.generate(mock_body(request, run_status))
+        response.body = create_body || JSON.generate(mock_body(request, run_status))
       end
 
       thread = Thread.new { server.start }

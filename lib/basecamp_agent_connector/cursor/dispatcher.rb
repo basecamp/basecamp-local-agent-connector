@@ -84,10 +84,14 @@ class BasecampAgentConnector::Cursor::Dispatcher
         next
       end
 
-      watches << dispatch(event) if dispatchable?(event)
+      watch = dispatch(event) if dispatchable?(event)
+      watches << watch if watch
+      # This stream is meant to run for months. Every finished watch left in
+      # the list is a thread object nobody will ever look at again.
+      watches.reject! { |thread| !thread.alive? }
     end
 
-    watches.compact.each(&:join)
+    watches.each(&:join)
   end
 
   # True only for an event the Verifier already vouched for. `trigger.mentioned`
@@ -319,11 +323,19 @@ class BasecampAgentConnector::Cursor::Dispatcher
         raise Error, detail
       end
 
-      begin
+      parsed = begin
         JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
       rescue JSON::ParserError => error
         raise Error, "Cursor #{request.method} #{uri.path} answered #{response.code} with unparseable JSON: #{error.message}"
       end
+
+      # Valid JSON of the wrong shape — a proxy's error string, an array —
+      # would otherwise blow up on `dig` outside this class's error hierarchy,
+      # where the per-event rescue cannot contain it.
+      raise Error, "Cursor #{request.method} #{uri.path} answered #{response.code} with a #{parsed.class}, not an object" \
+        unless parsed.is_a?(Hash)
+
+      parsed
     end
 
     def redact(text)
