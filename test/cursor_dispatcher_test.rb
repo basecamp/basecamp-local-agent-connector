@@ -32,10 +32,27 @@ class CursorDispatcherTest < Minitest::Test
   end
 
   def test_dispatches_a_mention_in_the_card_itself
-    on_the_card = fixture_event
-    on_the_card["recording"] = on_the_card["recording"].merge("type" => "Kanban::Card").except("parent")
+    assert @dispatcher.dispatchable?(mention_in_the_card)
+  end
 
-    assert @dispatcher.dispatchable?(on_the_card)
+  # A card's `parent` is the card TABLE. Following it the way a comment's
+  # parent is followed would send the agent to the board.
+  def test_a_mention_in_the_card_itself_points_at_the_card_not_the_board
+    prompt = @dispatcher.request_body(mention_in_the_card).dig("prompt", "text")
+
+    assert_includes prompt, "https://app.basecamp.com/2914079/buckets/48699913/card_tables/cards/10327460010"
+    refute_includes prompt, "card_tables/10327430345"
+  end
+
+  def test_a_failed_run_on_a_card_mention_reports_on_the_card_not_the_board
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(run_status: "ERROR") do |port, _requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(JSON.generate(mention_in_the_card) + "\n"))
+    end
+
+    assert_equal 10327460010, basecamp.comments.first[:recording]
   end
 
   def test_asks_for_a_no_repo_agent
@@ -210,6 +227,20 @@ class CursorDispatcherTest < Minitest::Test
     # A stand-in for api.cursor.com shaped by the Cloud Agents OpenAPI spec:
     # the create carries the agent AND its first run, and the run reads back
     # terminal so the poll ends on its first pass.
+    # A mention typed into the card's own description, as the webhook delivers
+    # it: the recording IS the card, and its parent is the card table.
+    def mention_in_the_card
+      event = fixture_event
+      event["recording"] = event["recording"].merge(
+        "id" => 10327460010,
+        "type" => "Kanban::Card",
+        "title" => "PoC test card (safe to trash)",
+        "app_url" => "https://app.basecamp.com/2914079/buckets/48699913/card_tables/cards/10327460010",
+        "parent" => { "id" => 10327430345, "type" => "Kanban::Table",
+          "app_url" => "https://app.basecamp.com/2914079/buckets/48699913/card_tables/10327430345" })
+      event
+    end
+
     def second_event_line
       JSON.generate(fixture_event("event_id" => 10327460009)) + "\n"
     end

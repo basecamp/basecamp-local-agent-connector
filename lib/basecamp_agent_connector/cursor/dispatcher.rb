@@ -212,11 +212,20 @@ class BasecampAgentConnector::Cursor::Dispatcher
       title[0, 100]
     end
 
-    # Where the reply goes. A mention on a comment points at the comment's
-    # parent — the card someone is reading — while a mention in the card's own
-    # description is already on the card.
+    # Where the reply goes. A comment's parent is the card someone is reading;
+    # a card's parent is the card TABLE, so a mention in the card's own
+    # description has to use the recording itself or the agent gets sent to
+    # the board.
+    def card(event)
+      if event.dig("recording", "type") == COMMENT_TYPE
+        event.dig("recording", "parent")
+      else
+        event["recording"]
+      end
+    end
+
     def card_url(event)
-      event.dig("recording", "parent", "app_url") || event.dig("recording", "app_url")
+      card(event)["app_url"]
     end
 
     def creator_name(event)
@@ -283,7 +292,7 @@ class BasecampAgentConnector::Cursor::Dispatcher
     end
 
     def card_id(event)
-      event.dig("recording", "parent", "id") || event.dig("recording", "id")
+      card(event)["id"]
     end
 
     # Everything that can go wrong on the wire — DNS, connection, TLS, a read
