@@ -139,6 +139,13 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
+  # A comment on a recording, posted as the profile's user. One attempt: a
+  # create whose answer was lost may well have posted, and a retry would say
+  # the same thing twice on someone's card.
+  def create_comment(recording:, project:, content:)
+    json "comments", "create", recording.to_s, content, "--project", project.to_s, attempts: 1
+  end
+
   # One attempt: a create whose answer was lost may still have created, and
   # asking again would register a second webhook whose id nobody keeps for
   # teardown. Webhooks#create_with_retries retries the registration.

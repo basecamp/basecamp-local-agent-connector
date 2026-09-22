@@ -19,6 +19,10 @@ require "uri"
 class BasecampAgentConnector::Cursor::Dispatcher
   class Error < StandardError; end
 
+  # Cursor's answer to a re-POST of an `agentId` it already has. Not a
+  # failure: it is the idempotency guarantee working.
+  class AlreadyDispatched < Error; end
+
   DEFAULT_API_BASE = "https://api.cursor.com"
 
   MCP_URL = "https://mcp.basecamp.com/mcp"
@@ -28,21 +32,26 @@ class BasecampAgentConnector::Cursor::Dispatcher
   # tool, so this name is what the prompt can refer to.
   MCP_SERVER_NAME = "basecamp"
 
-  # Mentions arrive on a comment or on the card itself; anything else (a
-  # message, a document, a chat line) is a different job than "put these on a
-  # list", so it is left for the local watcher.
-  DISPATCHABLE_RECORDING_TYPES = [ "Comment", "Kanban::Card" ].freeze
+  CARD_TYPE = "Kanban::Card"
+
+  COMMENT_TYPE = "Comment"
 
   TERMINAL_RUN_STATUSES = [ "FINISHED", "ERROR", "CANCELLED", "EXPIRED" ].freeze
+
+  # Not one of Cursor's statuses — ours, for a run that was still moving when
+  # the watch gave up. The run itself carries on in Cursor.
+  TIMED_OUT_STATUS = "TIMED_OUT"
 
   DEFAULT_POLL_INTERVAL = 5
 
   DEFAULT_POLL_TIMEOUT = 600
 
   def initialize(api_key:, mcp_token:, api_base: DEFAULT_API_BASE, mcp_url: MCP_URL,
-    poll_interval: DEFAULT_POLL_INTERVAL, poll_timeout: DEFAULT_POLL_TIMEOUT, log: $stderr, clock: Time)
+    basecamp: nil, poll_interval: DEFAULT_POLL_INTERVAL, poll_timeout: DEFAULT_POLL_TIMEOUT,
+    log: $stderr, clock: Time)
     @api_key = api_key
     @mcp_token = mcp_token
+    @basecamp = basecamp
     @api_base = api_base.to_s.sub(%r{/\z}, "")
     @mcp_url = mcp_url
     @poll_interval = poll_interval
@@ -73,19 +82,39 @@ class BasecampAgentConnector::Cursor::Dispatcher
   # is its verdict, settled against the re-fetched recording — re-deriving it
   # here from the forgeable content would be a second, weaker answer to a
   # question that is already answered.
+  #
+  # Beyond that, only a card or a comment ON a card. A comment on a message, a
+  # document or a to-do is also type `Comment`, and the prompt this dispatcher
+  # writes assumes there is a card to read and reply on, so those stay with the
+  # local watcher rather than reaching a cloud agent with the wrong URL.
   def dispatchable?(event)
     return false unless event.dig("trigger", "mentioned")
 
-    DISPATCHABLE_RECORDING_TYPES.include?(event.dig("recording", "type"))
+    case event.dig("recording", "type")
+    when CARD_TYPE    then true
+    when COMMENT_TYPE then event.dig("recording", "parent", "type") == CARD_TYPE
+    else false
+    end
   end
 
+  # Never raises: this sits downstream of a long-running watcher, and one
+  # event's bad day must not cost every later event its dispatch.
   def dispatch(event)
     created = post_agent(request_body(event))
     agent_id = created.dig("agent", "id")
     run_id = created.dig("run", "id")
     warn_line "dispatched #{event["event_id"]} -> agent #{agent_id} run #{run_id}"
 
-    await_run(agent_id, run_id)
+    run = await_run(agent_id, run_id)
+    report_back(event, run) unless run["status"] == "FINISHED"
+    run
+  rescue AlreadyDispatched
+    warn_line "event #{event["event_id"]} was dispatched before; leaving that run alone"
+    nil
+  rescue Error => error
+    warn_line "event #{event["event_id"]} could not be dispatched: #{error.message}"
+    report_back(event, { "status" => "UNDISPATCHED" })
+    nil
   end
 
   # The whole request, ready to POST. Public because it is the artifact worth
@@ -193,18 +222,40 @@ class BasecampAgentConnector::Cursor::Dispatcher
       deadline = @clock.now + @poll_timeout
 
       loop do
-        run = perform(Net::HTTP::Get.new(URI.join(@api_base + "/", "v1/agents/#{agent_id}/runs/#{run_id}")))
-        status = run.dig("run", "status") || run["status"]
+        body = perform(Net::HTTP::Get.new(URI.join(@api_base + "/", "v1/agents/#{agent_id}/runs/#{run_id}")))
+        run = body["run"] || body
 
-        return run if TERMINAL_RUN_STATUSES.include?(status)
+        return run if TERMINAL_RUN_STATUSES.include?(run["status"])
 
         if @clock.now >= deadline
-          warn_line "run #{run_id} still #{status} after #{@poll_timeout}s; giving up on the watch"
-          return run
+          warn_line "run #{run_id} still #{run["status"]} after #{@poll_timeout}s; giving up on the watch"
+          return run.merge("status" => TIMED_OUT_STATUS)
         end
 
         sleep @poll_interval
       end
+    end
+
+    # The agent replies for itself when the run finishes — it is the one that
+    # knows what it did. This is the only other voice, and it exists because a
+    # card that gets mentioned and then goes permanently silent is worse than a
+    # duplicate comment. It says what happened and stops there; whether
+    # anything was half-created is the card reader's to check.
+    def report_back(event, run)
+      warn_line "run #{run["id"]} for event #{event["event_id"]} ended #{run["status"]}"
+      return if @basecamp.nil?
+
+      @basecamp.create_comment \
+        recording: card_id(event),
+        project: event.dig("recording", "bucket", "id"),
+        content: "I handed this to a Cursor cloud agent and the run ended #{run["status"]}. " \
+          "It may have got partway, so check the to-do list before asking again."
+    rescue StandardError => error
+      warn_line "could not post the fallback comment: #{error.message}"
+    end
+
+    def card_id(event)
+      event.dig("recording", "parent", "id") || event.dig("recording", "id")
     end
 
     def perform(request)
@@ -214,10 +265,14 @@ class BasecampAgentConnector::Cursor::Dispatcher
       uri = request.uri
       response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
 
-      # The body can carry the token back in an echoed error; redact before it
-      # reaches an exception message that will end up in a log.
-      raise Error, "Cursor #{request.method} #{uri.path} failed: #{response.code} #{redact(response.body)}" \
-        unless response.is_a?(Net::HTTPSuccess)
+      unless response.is_a?(Net::HTTPSuccess)
+        # The body can carry the token back in an echoed error; redact before
+        # it reaches an exception message that will end up in a log.
+        detail = "Cursor #{request.method} #{uri.path} failed: #{response.code} #{redact(response.body)}"
+
+        raise AlreadyDispatched, detail if response.is_a?(Net::HTTPConflict)
+        raise Error, detail
+      end
 
       JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
     end

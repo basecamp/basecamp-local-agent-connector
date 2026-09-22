@@ -27,7 +27,11 @@ end
 dispatcher = BasecampAgentConnector::Cursor::Dispatcher.new(
   api_key: print_only ? "$CURSOR_API_KEY" : api_key,
   mcp_token: print_only ? "$BASECAMP_MCP_TOKEN" : mcp_token,
-  api_base: ENV.fetch("CURSOR_API_BASE", BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE)
+  api_base: ENV.fetch("CURSOR_API_BASE", BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE),
+  # The fallback voice for a run that never reported back, as the agent the
+  # mention named. BASECAMP_PROFILE is the CLI's own knob; unset means its
+  # default profile, same as everywhere else.
+  basecamp: BasecampAgentConnector::Basecamp::Client.new(profile: ENV["BASECAMP_PROFILE"])
 )
 
 if print_only

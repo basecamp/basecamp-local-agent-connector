@@ -48,7 +48,9 @@ agent's VM.
 `bc-<uuid>` shape Cursor requires). Re-POSTing the same id is refused with
 `409 agent_id_conflict`, so a replayed line cannot start the same work twice —
 which matters, because re-arming a watcher over a stream replays events and
-in-process bookkeeping would not survive a restart anyway.
+in-process bookkeeping would not survive a restart anyway. That 409 is read as
+"already dispatched" and skipped, not as a failure; nothing one event does
+stops the next one being dispatched.
 
 To see the exact body for an event without sending anything:
 
@@ -73,9 +75,10 @@ settled against the re-fetched recording and the agent's Person id before the
 event was emitted; re-deriving it here from `recording.content` would be a
 second, weaker answer to a question already answered.
 
-Beyond that, only `Comment` and `Kanban::Card` recordings. A mention on a
-message or a document is a different kind of request than "put these on a
-list", and it stays with the local watcher.
+Beyond that, only a card or a comment **on a card**. A comment on a message,
+a document or a to-do is type `Comment` too, and the prompt written here
+assumes there is a card to read and to reply on — so those stay with the local
+watcher rather than reaching a cloud agent pointed at the wrong URL.
 
 ## Learning the outcome
 
@@ -92,8 +95,11 @@ a connection open per event and tells the card nothing it won't learn anyway.
 ## Who replies
 
 The agent does, on the card, through `basecamp_comments_write` /
-`create_comment`. The dispatcher only speaks up when the run ends `ERROR` or
-`EXPIRED`, or the poll times out.
+`create_comment`. The dispatcher speaks only when the run ends anything other
+than `FINISHED` — `ERROR`, `EXPIRED`, `CANCELLED`, a poll that timed out, or a
+create that never got through to Cursor at all. It then posts one line on the
+card as the agent (via the `basecamp` CLI, `BASECAMP_PROFILE` picking the
+identity), saying how the run ended and that the list is worth checking.
 
 That way round because it is one identity end to end — the MCP token is the
 agent's, so the to-dos and the reply come from the same account that was

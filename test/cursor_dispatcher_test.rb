@@ -21,6 +21,23 @@ class CursorDispatcherTest < Minitest::Test
     refute @dispatcher.dispatchable?(message)
   end
 
+  # A comment on a message, a document or a to-do is type `Comment` too, and
+  # the prompt assumes there is a card to read and reply on.
+  def test_leaves_a_comment_whose_parent_is_not_a_card_alone
+    on_a_message = fixture_event
+    on_a_message["recording"] = on_a_message["recording"].merge(
+      "parent" => { "id" => 1, "type" => "Message", "app_url" => "https://example.com/messages/1" })
+
+    refute @dispatcher.dispatchable?(on_a_message)
+  end
+
+  def test_dispatches_a_mention_in_the_card_itself
+    on_the_card = fixture_event
+    on_the_card["recording"] = on_the_card["recording"].merge("type" => "Kanban::Card").except("parent")
+
+    assert @dispatcher.dispatchable?(on_the_card)
+  end
+
   def test_asks_for_a_no_repo_agent
     assert_equal [], @dispatcher.request_body(fixture_event)["repos"]
   end
@@ -87,10 +104,72 @@ class CursorDispatcherTest < Minitest::Test
     end
   end
 
+  # Cursor answers a re-POSTed agentId with 409. That is the idempotency
+  # guarantee working, not a failure, and it must not take the watcher's
+  # downstream process with it.
+  def test_a_replayed_event_is_a_no_op_and_the_stream_keeps_moving
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(create_status: 409) do |port, requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(File.read(FIXTURE) * 2))
+
+      assert_equal 2, requests.length
+      assert_includes @log.string, "dispatched before"
+      assert_empty basecamp.comments
+    end
+  end
+
+  def test_a_failed_run_says_so_on_the_card
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(run_status: "ERROR") do |port, _requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(File.read(FIXTURE)))
+    end
+
+    assert_equal 1, basecamp.comments.length
+    assert_equal 10327460000, basecamp.comments.first[:recording]
+    assert_equal 48699913, basecamp.comments.first[:project]
+    assert_includes basecamp.comments.first[:content], "ERROR"
+  end
+
+  def test_a_cursor_outage_says_so_on_the_card_instead_of_stopping
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(create_status: 500) do |port, _requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(File.read(FIXTURE)))
+    end
+
+    assert_includes basecamp.comments.first[:content], "UNDISPATCHED"
+  end
+
+  def test_a_finished_run_leaves_the_card_to_the_agent
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor do |port, _requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp)
+      dispatcher.run(StringIO.new(File.read(FIXTURE)))
+    end
+
+    assert_empty basecamp.comments
+  end
+
+  class FakeBasecamp
+    attr_reader :comments
+
+    def initialize = @comments = []
+
+    def create_comment(recording:, project:, content:)
+      @comments << { recording: recording, project: project, content: content }
+    end
+  end
+
   private
-    def build_dispatcher(api_base: BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE)
+    def build_dispatcher(api_base: BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE, basecamp: nil)
       BasecampAgentConnector::Cursor::Dispatcher.new \
-        api_key: "cursor-key", mcp_token: "mcp-token", api_base: api_base,
+        api_key: "cursor-key", mcp_token: "mcp-token", api_base: api_base, basecamp: basecamp,
         poll_interval: 0, poll_timeout: 5, log: @log
     end
 
@@ -101,7 +180,7 @@ class CursorDispatcherTest < Minitest::Test
     # A stand-in for api.cursor.com shaped by the Cloud Agents OpenAPI spec:
     # the create carries the agent AND its first run, and the run reads back
     # terminal so the poll ends on its first pass.
-    def with_mock_cursor
+    def with_mock_cursor(create_status: 200, run_status: "FINISHED")
       requests = []
       port = free_port
       server = WEBrick::HTTPServer.new \
@@ -110,9 +189,9 @@ class CursorDispatcherTest < Minitest::Test
       server.mount_proc("/") do |request, response|
         requests << { method: request.request_method, path: request.path,
           body: request.body, authorization: request["Authorization"] }
-        response.status = 200
+        response.status = request.request_method == "POST" ? create_status : 200
         response["Content-Type"] = "application/json"
-        response.body = JSON.generate(mock_body(request))
+        response.body = JSON.generate(mock_body(request, run_status))
       end
 
       thread = Thread.new { server.start }
@@ -126,7 +205,7 @@ class CursorDispatcherTest < Minitest::Test
       end
     end
 
-    def mock_body(request)
+    def mock_body(request, run_status)
       agent = { "id" => "bc-mock", "status" => "ACTIVE", "env" => {},
         "url" => "https://cursor.com/agents/bc-mock",
         "createdAt" => "2026-09-22T10:31:05Z", "updatedAt" => "2026-09-22T10:31:05Z" }
@@ -136,7 +215,7 @@ class CursorDispatcherTest < Minitest::Test
       if request.request_method == "POST"
         { "agent" => agent, "run" => run.merge("status" => "RUNNING") }
       else
-        { "run" => run.merge("status" => "FINISHED", "durationMs" => 35_000,
+        { "run" => run.merge("status" => run_status, "durationMs" => 35_000,
           "result" => "Created 3 to-dos and commented on the card.") }
       end
     end
