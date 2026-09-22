@@ -104,6 +104,10 @@ class BasecampAgentConnector::Cursor::Dispatcher
   # writes assumes there is a card to read and reply on, so those stay with the
   # local watcher rather than reaching a cloud agent with the wrong URL.
   def dispatchable?(event)
+    # A line can be valid JSON and still not be an event: a bare string or an
+    # array has no `dig` that takes string keys, and the raise would leave the
+    # reading loop rather than the line.
+    return false unless event.is_a?(Hash)
     return false unless event.dig("trigger", "mentioned")
 
     case event.dig("recording", "type")

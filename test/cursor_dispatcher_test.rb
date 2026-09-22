@@ -14,6 +14,15 @@ class CursorDispatcherTest < Minitest::Test
     refute @dispatcher.dispatchable?(fixture_event("trigger" => { "mentioned" => false, "subscribed" => true }))
   end
 
+  # Valid JSON, not an event. A bare scalar or an array has no `dig` that takes
+  # a string key, and the raise would leave the reading loop, not the line.
+  def test_a_line_that_is_valid_json_but_not_an_object_is_skipped
+    refute @dispatcher.dispatchable?("just a string")
+    refute @dispatcher.dispatchable?([ "trigger", "mentioned" ])
+
+    @dispatcher.run(StringIO.new("\"just a string\"\n[1,2,3]\n"))
+  end
+
   def test_leaves_recordings_that_are_not_a_card_or_its_comment_alone
     message = fixture_event
     message["recording"] = message["recording"].merge("type" => "Message")

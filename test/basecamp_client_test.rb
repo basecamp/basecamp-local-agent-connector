@@ -51,6 +51,31 @@ class BasecampClientTest < Minitest::Test
     assert_match(/malformed JSON/, error.message)
   end
 
+  def test_create_comment_passes_the_recording_the_body_and_the_project
+    runner = FakeCommandRunner.new
+    runner.stub "comments create", stdout: envelope("id" => 777)
+
+    comment = build_cli(runner).create_comment(recording: 456, project: 222, content: "the run ended ERROR")
+
+    assert_equal 777, comment.fetch("id")
+    assert_equal [ "basecamp", "comments", "create", "456", "the run ended ERROR", "--project", "222", "-j" ], runner.commands.first
+  end
+
+  # Same reasoning as a webhook create, on someone's card: an answer that was
+  # lost may well have posted, and asking again says it twice.
+  def test_create_comment_is_not_retried_on_a_transient_failure
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "comments create"
+    delays = []
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      build_cli(runner, wait: ->(seconds) { delays << seconds }).create_comment(recording: 456, project: 222, content: "hi")
+    end
+
+    assert_equal 1, runner.commands.length
+    assert_empty delays
+  end
+
   def test_create_webhook_passes_project_and_types
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
