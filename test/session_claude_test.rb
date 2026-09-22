@@ -7,6 +7,10 @@ class SessionClaudeTest < Minitest::Test
   BACKGROUNDED = "backgrounded · \e[36m1e9694b6\e[39m · Re: a card\n" \
     "\e[2m  claude attach 1e9694b6    open in this terminal\e[22m\n"
 
+  # The same line for a session whose id begins with a hex letter.
+  HEX_LEADING_BACKGROUNDED = "backgrounded · \e[36mc082afb6\e[39m · Re: a card\n" \
+    "\e[2m  claude attach c082afb6    open in this terminal\e[22m\n"
+
   def setup
     @runner = FakeCommandRunner.new
     @claude = Claude.new(command_runner: @runner, wait: ->(_seconds) { })
@@ -47,6 +51,23 @@ class SessionClaudeTest < Minitest::Test
 
     assert_equal "1e9694b6-a647-4f69-909c-a48dd37a4a2a",
       @claude.spawn(name: "A card", prompt: "do it", cwd: "/work/bc3").session_id
+  end
+
+  # Every fixture above starts with a digit, which is what hid this: a short id
+  # beginning with a hex letter is itself non-digit, so a `\D+` separator ate
+  # its first character and the id came back one short -- matching no session,
+  # leaving the card unresumable and its follow-up comments undelivered.
+  def test_a_short_id_beginning_with_a_hex_letter_is_read_back_whole
+    @runner.stub "claude --background", stdout: HEX_LEADING_BACKGROUNDED
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "c082afb6", "sessionId" => "c082afb6-7f50-45f6-b3e9-ba723392afe7",
+        "name" => "Re: a card", "state" => "working", "status" => "busy" }
+    ])
+
+    spawned = @claude.spawn(name: "A card", prompt: "do it", cwd: "/work/bc3")
+
+    assert_equal "c082afb6", spawned.short_id
+    assert_equal "c082afb6-7f50-45f6-b3e9-ba723392afe7", spawned.session_id
   end
 
   # The session is running and will reply; it just cannot be continued yet.
@@ -150,6 +171,37 @@ class SessionClaudeTest < Minitest::Test
     refute @claude.busy?("uuid-absent")
   end
 
+  # The CLI leaves `state` at `working` when a session dies mid-turn, so state
+  # alone cannot answer this: believing it holds every later message for a
+  # session that will never finish, and the card it belongs to goes deaf.
+  def test_a_working_session_whose_process_is_gone_is_not_busy
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+        "state" => "working", "status" => "idle", "pid" => reaped_pid }
+    ])
+
+    refute @claude.busy?("uuid-1")
+  end
+
+  def test_a_working_session_that_is_still_running_is_busy
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+        "state" => "working", "status" => "busy", "pid" => Process.pid }
+    ])
+
+    assert @claude.busy?("uuid-1")
+  end
+
+  # Nothing to wait for, so nothing to hold a message back for.
+  def test_a_working_session_without_a_pid_is_not_busy
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+        "state" => "working", "status" => "idle" }
+    ])
+
+    refute @claude.busy?("uuid-1")
+  end
+
   # Finished sessions are included, so a card commented on tomorrow finds
   # yesterday's session rather than opening a second one.
   def test_finished_sessions_are_listed
@@ -193,9 +245,18 @@ class SessionClaudeTest < Minitest::Test
       ])
     end
 
+    # A pid that is certainly not running: one we started and waited on. Picking
+    # a number out of the air would risk naming a live process.
+    def reaped_pid
+      pid = Process.spawn("true", out: File::NULL, err: File::NULL)
+      Process.wait pid
+      pid
+    end
+
     def agents_json
       JSON.generate([
-        { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card", "state" => "working", "status" => "busy" },
+        { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card", "state" => "working",
+          "status" => "busy", "pid" => Process.pid },
         { "id" => "uuid-2"[0, 8], "sessionId" => "uuid-2", "name" => "Another card", "state" => "done", "status" => "idle" },
         { "id" => "uuid-3"[0, 8], "sessionId" => "uuid-3", "name" => "A third", "state" => "blocked", "status" => "idle" }
       ])

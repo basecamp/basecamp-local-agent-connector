@@ -25,7 +25,11 @@ class BasecampAgentConnector::Session::Claude
   BUSY_STATES = %w[working].freeze
 
   ANSI = /\e\[[0-9;]*m/
-  BACKGROUNDED = /backgrounded\D+([0-9a-f]{6,})/
+  # The separator is matched with `\W+`, not `\D+`: a short id beginning with a
+  # hex letter is itself non-digit, so `\D+` consumed that first character and
+  # the capture came back one short -- `c082afb6` read as `082afb6`, matching no
+  # session, leaving the card unresumable and its follow-up comments undelivered.
+  BACKGROUNDED = /backgrounded\W+([0-9a-f]{6,})/
 
   # How long to keep asking the CLI for the new session's full id. It is
   # normally listed at once; this exists so a slow machine costs a few hundred
@@ -115,8 +119,16 @@ class BasecampAgentConnector::Session::Claude
 
   # Stopping a session that is mid-work discards that work, so a caller that
   # wants to deliver a message has to know the difference.
+  #
+  # A session whose process is gone is not busy, whatever its state says. The
+  # CLI leaves `state` at `working` when a session dies mid-turn, and believing
+  # that alone holds every later message for a session that can never finish --
+  # the card goes deaf, silently, and stays that way until somebody notices.
   def busy?(session_id)
-    BUSY_STATES.include?(state(session_id))
+    record = session(session_id)
+    return false unless record && BUSY_STATES.include?(record["state"])
+
+    running? record["pid"]
   end
 
   def session(session_id)
@@ -136,6 +148,19 @@ class BasecampAgentConnector::Session::Claude
   end
 
   private
+    # Whether the pid the CLI reported still belongs to a live process. Signal
+    # 0 delivers nothing, it only asks. `EPERM` means the process is there but
+    # belongs to somebody else, which still counts as alive; anything without a
+    # usable pid describes nothing worth waiting for.
+    def running?(pid)
+      Process.kill 0, Integer(pid)
+      true
+    rescue Errno::EPERM
+      true
+    rescue Errno::ESRCH, TypeError, ArgumentError
+      false
+    end
+
     # `backgrounded · 1e9694b6 · Re: a card`, minus the colour codes. A name
     # containing hex would parse first without the `backgrounded` anchor.
     def short_id_in(stdout)

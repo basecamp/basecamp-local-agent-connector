@@ -73,8 +73,13 @@ class BasecampAgentConnector::Session::Prompt
       4. Do the work.#{ack_note}
       5. Reply on the recording as yourself:
          `basecamp comments create #{reply_target} "<body>" --profile #{@agent}`
-         Write it as rich text (HTML: <div>, <p>, <strong>, <ul>/<li>, <pre>). If you failed or
-         could not finish, say so plainly and @mention #{@requester} so it reaches them.
+         Write it as rich text (HTML: <div>, <p>, <strong>, <ul>/<li>, <pre>). The body is a
+         positional argument and `comments create` reads nothing from stdin, so redirecting a
+         file into it (`< reply.html`) prints the command's usage and posts nothing. For a long
+         body, write the file and then pass it as that argument:
+         `basecamp comments create #{reply_target} "$(cat reply.html)" --profile #{@agent}`
+         If you failed or could not finish, say so plainly and @mention #{@requester} so it
+         reaches them.
 
       ## If the work involves changing code
 
