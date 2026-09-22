@@ -48,6 +48,7 @@ class BasecampAgentConnector::Session::Dispatcher
   def dispatch(event)
     key = BasecampAgentConnector::Session::Key.from_event(event, agent: @agent)
     return false if key.nil?
+    return false unless worth_a_session?(event, key)
 
     acked = acknowledge(event)
     deliver(key, event, acked: acked)
@@ -101,6 +102,29 @@ class BasecampAgentConnector::Session::Dispatcher
   end
 
   private
+    # A column move is the one trigger that may arrive about a card the agent
+    # has nothing to do with: anyone's card, dragged across a board the agent
+    # merely watches. So it drives a session it already has — a card mid-
+    # conversation is exactly what a move is meant to push along — but opens a
+    # new one only where the board says the card is the agent's, which is the
+    # assignment. Everything else here was addressed to the agent by name and
+    # needs no such test.
+    #
+    # Checked before the receipt boost, so a move the agent is going to ignore
+    # does not leave a boost on the card implying somebody picked it up.
+    def worth_a_session?(event, key)
+      return true unless event.dig("trigger", "moved")
+      return true if @registry.find(key.to_s)
+      return true if event.dig("trigger", "assigned")
+
+      log "ignored move of #{key.display_name} into #{column_title(event).inspect}: no session, and the agent is not an assignee"
+      false
+    end
+
+    def column_title(event)
+      event.dig("recording", "parent", "title")
+    end
+
     # The receipt, posted before anything slow happens. It is the one Basecamp
     # write this class makes on the happy path; everything else the session
     # says, it says itself.

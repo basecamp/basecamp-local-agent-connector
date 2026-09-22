@@ -65,11 +65,7 @@ class BasecampAgentConnector::Session::Prompt
          the workflow to run):
          `basecamp docs documents list --all --project #{@key.bucket_id} -j` then
          `basecamp docs show <doc-id> --project #{@key.bucket_id} -j`.
-      3. If the work lives on a card sitting in a Triage-like column, and the card table has an
-         In progress-like one, move it there first so the board shows the work is underway:
-         `basecamp cards columns --project #{@key.bucket_id}` then
-         `basecamp cards move <card-id> --to "<In progress>" --profile #{@agent}`.
-         Skip it silently if there is no such column — never invent one.
+      3. #{column_step}
       4. Do the work.#{ack_note}
       5. Reply on the recording as yourself:
          `basecamp comments create #{reply_target} "<body>" --profile #{@agent}`
@@ -144,11 +140,60 @@ class BasecampAgentConnector::Session::Prompt
     # in `details`. An assignment's instruction is the recording's own title
     # and body.
     def instruction
+      return moved_instruction if moved?
+
       body = @event.dig("details", "boost", "content") if @event["kind"] == "boost_created"
       body ||= recording["content"]
       body = [ recording["title"], body ].compact.join("\n\n") if body.to_s.strip.empty? || assignment?
 
       body.to_s.gsub(MENTION_ATTACHMENT, "").strip
+    end
+
+    # A move carries no words, so the card's own description must not be handed
+    # over as though it were newly said — on a follow-up that would read as the
+    # requester repeating the brief, and the agent would redo work it had
+    # already done. What was asked is the move itself, and the column names the
+    # work: the project's AGENTS.md is where that column's meaning is written
+    # down, which is why this points at it rather than guessing at semantics
+    # the board's owner has already defined.
+    def moved_instruction
+      <<~MOVED.strip
+        This card was moved into the "#{column_title}" column#{" by #{@requester}" unless @requester.nil?}.
+
+        No message came with it — the move is the request. On this board the column says what kind of
+        work is wanted, so read the project's AGENTS.md for what "#{column_title}" means here and do
+        that. If it says this column is not a request for work, do nothing and say nothing.
+      MOVED
+    end
+
+    def moved?
+      @event.dig("trigger", "moved") == true
+    end
+
+    # Moving the card out of where it sits is right when the agent picked the
+    # work up itself, and wrong when a person just put it there: the column
+    # they chose is the instruction, and shunting it elsewhere both overrides
+    # them and erases the signal.
+    def column_step
+      if moved?
+        <<~STEP.strip
+          Leave the card where it is. #{@requester} put it in "#{column_title}" deliberately, and that
+             column is the request — move it on only when the work the column asks for is finished and
+             AGENTS.md says where it goes next.
+        STEP
+      else
+        <<~STEP.strip
+          If the work lives on a card sitting in a Triage-like column, and the card table has an
+             In progress-like one, move it there first so the board shows the work is underway:
+             `basecamp cards columns --project #{@key.bucket_id}` then
+             `basecamp cards move <card-id> --to "<In progress>" --profile #{@agent}`.
+             Skip it silently if there is no such column — never invent one.
+        STEP
+      end
+    end
+
+    def column_title
+      recording.dig("parent", "title")
     end
 
     def assignment?
@@ -157,6 +202,7 @@ class BasecampAgentConnector::Session::Prompt
 
     def trigger_note
       return " (you were @mentioned)" if @event.dig("trigger", "mentioned")
+      return " (the card was moved into \"#{column_title}\")" if moved?
       return " (a comment on a thread you follow — context, not necessarily a directive)" if @event.dig("trigger", "subscribed")
 
       ""

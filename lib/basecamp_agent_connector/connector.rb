@@ -23,7 +23,8 @@ class BasecampAgentConnector::Connector
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
     :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
-    :allow_duplicate, :dispatch, :session_permission_mode, :session_model)
+    :allow_duplicate, :dispatch, :session_permission_mode, :session_model,
+    :column_moves, :column_move_except)
 
   def self.start(argv)
     return print_status if argv.include?("--status")
@@ -126,6 +127,8 @@ class BasecampAgentConnector::Connector
     allow_assignments = false
     allow_duplicate = false
     dispatch = "stdout"
+    column_moves = false
+    column_move_except = []
     session_permission_mode = BasecampAgentConnector::Session::Dispatcher::DEFAULT_PERMISSION_MODE
     session_model = nil
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
@@ -183,6 +186,12 @@ class BasecampAgentConnector::Connector
       end
       parser.on("--allow-duplicate", "Start even though another connector is already watching this agent " \
         "on these projects (default: refuse — every event would dispatch twice)") { allow_duplicate = true }
+      parser.on("--on-column-move", "Let moving a card into another column trigger the agent, on a board where the " \
+        "column says what work is wanted (default: off — only mentions, assignments, boosts and followed threads " \
+        "trigger). Moves into Done and Not-now columns never trigger") { column_moves = true }
+      parser.on("--column-move-except COLUMN", "Also never trigger on a move into this column, by title (repeatable " \
+        "or comma-separated; implies --on-column-move). Done and Not-now columns are excluded already, by type") \
+        { |value| column_move_except.concat(comma_list(value)) }
       parser.on("--dispatch MODE", DISPATCH_MODES, "What to do with a verified event: #{DISPATCH_MODES.join(", ")} " \
         "(default: stdout — print it and let a watching session act on it; session — also open one Claude session " \
         "per card/message/todo, which needs no watcher)") { |value| dispatch = value }
@@ -211,7 +220,8 @@ class BasecampAgentConnector::Connector
       gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
       chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate,
-      dispatch: dispatch, session_permission_mode: session_permission_mode, session_model: session_model)
+      dispatch: dispatch, session_permission_mode: session_permission_mode, session_model: session_model,
+      column_moves: column_moves || column_move_except.any?, column_move_except: column_move_except)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -314,6 +324,7 @@ class BasecampAgentConnector::Connector
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
+        column_moves: @options.column_moves, column_move_except: @options.column_move_except,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 

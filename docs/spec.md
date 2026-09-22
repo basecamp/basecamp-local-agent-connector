@@ -358,6 +358,57 @@ received-boosts feed rather than a webhook: `creator` is the **booster**,
 `content` field in this feed representation), and `details.boost` carries the
 boost's own `id` and `content` (up to 16 characters, e.g. `"🔥"` or `"redo"`).
 
+### Column moves as a trigger
+
+A fifth way to trigger the agent, off unless `--on-column-move` asks for it.
+On a board whose columns say what kind of work is wanted, the move *is* the
+instruction, and requiring an @mention afterwards only restates the board.
+
+bc3 calls it `kanban_card_adopted`: a card's column is its parent, and
+`adopted` is the event for a recording acquiring a new one. `details` carries
+`parent_id_was` and `new_parent_id`; the recording's `parent` is the
+destination column, titled and typed. None of this is documented — it was
+established by reading a real delivery. Todos are re-parented by the same verb
+(`todo_adopted`, between lists), which is why the connector matches one exact
+kind rather than an `_adopted` suffix: moving a todo between lists says nothing
+about what work is wanted.
+
+**Which moves count.** Done and Not-now columns are excluded by *type*
+(`Kanban::DoneColumn`, `Kanban::NotNowColumn`), which bc3 assigns structurally
+— so the rule survives renaming and translation, where a title match would not.
+`--column-move-except` excludes further columns by title. A card landing back
+in the column it already occupied is not a change and is dropped, since bc3
+emits the adoption whenever a card acquires a parent.
+
+**Trust.** A column move is the same class of privilege as an assignment:
+operator-only in every mode unless `--allow-assignments-from-authorized` opts a
+mode's authors in, because it starts work and anyone who can see a board can
+drag a card across it. Refusing the agent's own events — which every mode does
+— is also what makes this non-looping: the agent moves cards itself as work
+progresses, and those moves die on the same branch that stops the reply loop.
+
+**Corroboration.** Neither of the existing checks applies. A move's author is
+whoever dragged the card, not the card's creator, and the agent need not be an
+assignee for the move to be real. So the Verifier re-fetches the card and
+requires it to *currently sit in the column the event claims* — a forged POST
+cannot move a real card, and a move since undone or superseded fails too, which
+is correct: the card is no longer where the event says.
+
+**Targeting, and why it is split.** The pipeline does not ask whether the card
+is the agent's; an assignee check there would drop moves on cards the agent is
+already mid-conversation about, which are exactly the ones a move should drive.
+Instead the Verifier stamps `agent_assigned`, and the dispatcher decides: a move
+drives a session the card already has, and opens a new one only where the agent
+is an assignee. A move on a card with neither is ignored — and ignored *before*
+the receipt boost, so nothing on the card implies somebody picked it up.
+
+**Briefing.** A move carries no words, so the card's description must not be
+handed over as though newly said; on a follow-up that reads as the requester
+repeating the brief and the agent redoes finished work. The prompt says the card
+was moved into `<column>`, points at the project's `AGENTS.md` for what that
+column means, and tells the session to leave the card where it is — the operator
+chose that column, and moving it on would override them and erase the signal.
+
 ### Dispatch modes
 
 What happens to an event once it is verified is a setting, because the two

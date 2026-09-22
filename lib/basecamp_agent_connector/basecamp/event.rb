@@ -19,6 +19,28 @@ class BasecampAgentConnector::Basecamp::Event
   # reaches the connector under this suffix or not at all.
   DRAFT_PUBLISHED_KIND_SUFFIX = "_active"
 
+  # A fifth way to trigger the agent: the operator drags a card into another
+  # column. On a board where the column says what kind of work is wanted — plan
+  # it, build it, review it — the move *is* the instruction, and having to
+  # @mention the agent afterwards just to say what the board already says is
+  # the step this removes.
+  #
+  # bc3 calls it `adopted`, not `moved`: a card's column is its parent, and
+  # `adopted` is the event for a recording acquiring a new one. `details`
+  # carries `parent_id_was` and `new_parent_id`, and the recording's `parent`
+  # is the destination column, named and typed. Verified against a real
+  # delivery rather than inferred — the kind is not documented.
+  #
+  # Todos are re-parented the same way (`todo_adopted`, moving between lists),
+  # which is why this is one exact kind and not an `_adopted` suffix: moving a
+  # todo between two lists says nothing about what work is wanted.
+  COLUMN_MOVE_KIND = "kanban_card_adopted"
+
+  # Columns whose *type* says the card is not to be worked. bc3 models both
+  # structurally rather than by name, so these hold however the columns are
+  # titled, renamed or translated — which a title match would not.
+  UNWORKED_COLUMN_TYPES = %w[Kanban::DoneColumn Kanban::NotNowColumn].freeze
+
   ACTIONABLE_KIND_SUFFIXES = \
     [ "_created", "_content_changed", DRAFT_PUBLISHED_KIND_SUFFIX, ASSIGNMENT_KIND_SUFFIX ]
 
@@ -68,7 +90,10 @@ class BasecampAgentConnector::Basecamp::Event
 
   EMITTED_RECORDING_FIELDS = %w[id type title app_url url content parent bucket]
   EMITTED_CREATOR_FIELDS = %w[id name email_address]
-  EMITTED_DETAIL_FIELDS = %w[added_person_ids removed_person_ids boost]
+  # `parent_id_was` rides along so a watcher can tell a move from the card
+  # merely being re-saved in the column it already sat in. The destination needs
+  # no field of its own: it is the recording's `parent`, which is emitted whole.
+  EMITTED_DETAIL_FIELDS = %w[added_person_ids removed_person_ids boost parent_id_was new_parent_id]
 
   def self.from_payload(payload)
     new(payload)
@@ -159,7 +184,49 @@ class BasecampAgentConnector::Basecamp::Event
   end
 
   def actionable_kind?
-    kind.end_with?(*ACTIONABLE_KIND_SUFFIXES)
+    kind.end_with?(*ACTIONABLE_KIND_SUFFIXES) || column_move?
+  end
+
+  def column_move?
+    kind == COLUMN_MOVE_KIND
+  end
+
+  # The column the card now sits in: its parent, as Basecamp re-reported it.
+  def column
+    recording["parent"] || {}
+  end
+
+  def column_title
+    column["title"]
+  end
+
+  def column_type
+    column["type"]
+  end
+
+  # A move the board itself says is not a request for work. `Done` and `Not
+  # now` are types in bc3, not names, so this holds under any title; anything
+  # else is excluded by title, for a board that carves out a column of its own.
+  def moved_into_unworked_column?(excluded_titles = [])
+    UNWORKED_COLUMN_TYPES.include?(column_type) ||
+      excluded_titles.any? { |title| title.to_s.casecmp?(column_title.to_s) }
+  end
+
+  # bc3 emits the adoption whenever a card acquires a parent, which includes
+  # landing back in the column it was already in. Nothing was asked for there.
+  def changed_column?
+    was = details["parent_id_was"]
+    now = details["new_parent_id"] || column["id"]
+
+    !was.nil? && !now.nil? && was != now
+  end
+
+  # True only on an authoritative event the Verifier stamped after finding the
+  # agent among the re-fetched card's assignees. Reads nothing from the
+  # forgeable payload — assignment is what says a card is the agent's, so it is
+  # what decides whether a move may open a session.
+  def assigned?
+    @payload["agent_assigned"] == true
   end
 
   def assignment_changed?
@@ -237,7 +304,8 @@ class BasecampAgentConnector::Basecamp::Event
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
-      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed? }
+      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed?,
+        "moved" => column_move?, "assigned" => assigned? }
     }
   end
 

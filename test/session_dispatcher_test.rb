@@ -273,6 +273,80 @@ class SessionDispatcherTest < Minitest::Test
     assert_equal 1, @claude.spawns.length
   end
 
+  # A card mid-conversation is exactly what a move is meant to push along, so
+  # the move lands in the session the card already has — the same key, because
+  # a comment's card and a moved card are the same thing of work.
+  def test_moving_a_card_that_has_a_session_continues_it
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+
+    subject.dispatch moved
+
+    assert_equal 1, @claude.spawns.length
+    assert_equal 1, @claude.continuations.length
+    assert_includes @claude.continuations.first.prompt, "In progress"
+  end
+
+  # Assignment is how the board says a card is the agent's. Without it, a move
+  # is somebody rearranging their own work on a board the agent merely watches.
+  def test_moving_an_unassigned_card_with_no_session_does_nothing
+    refute dispatcher.dispatch(moved)
+
+    assert_empty @claude.spawns
+    assert_empty @runner.commands_matching(/boost create/)
+    assert_nil @registry.find("clawdito_222_Kanban-Card_789")
+  end
+
+  def test_moving_an_assigned_card_with_no_session_opens_one
+    assert dispatcher.dispatch(moved({}, assigned: true))
+
+    assert_equal 1, @claude.spawns.length
+    assert_includes @claude.spawns.first.prompt, "In progress"
+  end
+
+  # The boost would say "somebody picked this up" about a card nobody did.
+  def test_an_ignored_move_leaves_no_receipt_on_the_card
+    dispatcher.dispatch moved
+
+    assert_empty @runner.commands_matching(/boost create/)
+  end
+
+  def test_an_acted_on_move_is_acknowledged
+    dispatcher.dispatch moved({}, assigned: true)
+
+    assert_equal 1, @runner.commands_matching(/boost create/).length
+  end
+
+  # A move carries no words. Handing over the card's own description would read
+  # as the requester repeating the brief, and the agent would redo finished work.
+  def test_a_move_is_briefed_as_a_move_not_as_the_cards_description
+    dispatcher.dispatch moved({}, assigned: true)
+
+    prompt = @claude.spawns.first.prompt
+
+    assert_includes prompt, "moved into the \"In progress\" column"
+    assert_includes prompt, "the move is the request"
+    refute_includes prompt, "The date picker is off by one"
+  end
+
+  # The column the operator chose is the instruction; shunting the card
+  # elsewhere would both override them and erase the signal.
+  def test_a_move_tells_the_session_to_leave_the_card_where_it_is
+    dispatcher.dispatch moved({}, assigned: true)
+
+    prompt = @claude.spawns.first.prompt
+
+    assert_includes prompt, "Leave the card where it is"
+    refute_includes prompt, "cards move"
+  end
+
+  def test_a_mention_still_tells_the_session_to_move_the_card_out_of_triage
+    dispatcher.dispatch event
+
+    assert_includes @claude.spawns.first.prompt, "cards move"
+  end
+
   # A GitHub review line is about a pull request, not a Basecamp thing of work.
   # It stays on STDOUT for whatever handles reviews.
   def test_a_review_line_dispatches_nothing
@@ -376,6 +450,13 @@ class SessionDispatcherTest < Minitest::Test
 
     def event(overrides = {})
       BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload(overrides)).to_emitted_hash
+    end
+
+    # The same card the sample comment hangs off, so a move and a comment on it
+    # resolve to one key — which is the point.
+    def moved(overrides = {}, assigned: false)
+      BasecampAgentConnector::Basecamp::Event.from_payload(
+        column_move_payload(overrides.merge("agent_assigned" => assigned))).to_emitted_hash
     end
 
     def boost_event

@@ -57,15 +57,30 @@ class BasecampAgentConnector::Basecamp::Verifier
     # author is the assigner (not the recording's creator), so instead confirm the
     # agent is actually among the recording's current assignees — a forged POST
     # can't fake real Basecamp state.
+    # A column move has neither property. Its author is whoever dragged the
+    # card, not the card's creator, and the agent need not be an assignee for
+    # the move to be real. What makes it forgery-proof is the board itself: the
+    # card must *currently* sit in the column the event claims it was moved to.
+    # A forged POST cannot move a real card, and a move since undone — or
+    # superseded by a later one — fails this too, which is right: the card is
+    # not where the event says, so the event no longer describes the board.
     def corroborated?(recording, event)
       return false unless recording.is_a?(Hash)
       return false if drafted?(recording)
 
-      if event.assignment_changed?
+      if event.column_move?
+        sits_in_claimed_column?(recording, event)
+      elsif event.assignment_changed?
         assigns_agent?(recording)
       else
         recording.dig("creator", "id") == event.creator_id
       end
+    end
+
+    def sits_in_claimed_column?(recording, event)
+      claimed = event.details["new_parent_id"]
+
+      !claimed.nil? && recording.dig("parent", "id") == claimed
     end
 
     # Only what Basecamp positively marks a draft is refused: representations
@@ -98,9 +113,12 @@ class BasecampAgentConnector::Basecamp::Verifier
         "kind" => event.kind,
         "created_at" => event.created_at,
         "details" => event.details,
-        "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
+        # Like an assignment, a column move's author is the person who acted on
+        # the card, not whoever created it.
+        "creator" => event.assignment_changed? || event.column_move? ? event.creator : recording.fetch("creator"),
         "recording" => recording,
         "agent_mentioned" => mentioned,
+        "agent_assigned" => assigns_agent?(recording),
         "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned)
     end
 
