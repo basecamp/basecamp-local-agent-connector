@@ -104,8 +104,17 @@ class BasecampAgentConnector::Session::Claude
   # A resident session — even one that has finished its turn and reads as
   # `done` — must be stopped before it can be continued in place. Its
   # conversation survives the stop; only the process goes.
+  #
+  # A failed stop is expected when the session turns out not to be resident —
+  # that is the whole reason to stop first when residency is unknown — and then
+  # resuming is safe. But a stop that failed on a session still resident would
+  # make the resume fork it. So after a failed stop, resume only on a definite
+  # "not listed"; otherwise hand back the failed stop and leave the message for
+  # a later attempt.
   def stop_then_resume(session_id:, short_id:, prompt:, cwd:)
-    stop(short_id)
+    stopped = stop(short_id)
+    return stopped unless stopped.success? || resident?(session_id) == false
+
     resume(session_id: session_id, prompt: prompt, cwd: cwd)
   end
 
@@ -132,8 +141,14 @@ class BasecampAgentConnector::Session::Claude
   # `status` is absent once the session is no longer resident, and a dead
   # session is not busy either: the CLI leaves `state` at `working` when one
   # dies mid-turn, so that case falls through to asking the process directly.
+  #
+  # `nil` when the CLI could not be asked. That is not "not busy": a caller
+  # that read it as idle would stop a session that may be mid-work.
   def busy?(session_id)
-    record = session(session_id)
+    listed = sessions
+    return nil if listed.nil?
+
+    record = listed.find { |session| session["sessionId"] == session_id }
     return false unless record && BUSY_STATES.include?(record["state"])
 
     status = record["status"]
@@ -192,7 +207,13 @@ class BasecampAgentConnector::Session::Claude
       stdout.to_s.gsub(ANSI, "")[BACKGROUNDED, 1]
     end
 
+    # A command that could not even be started — a mapped repo that does not
+    # exist (`chdir` raises), a CLI removed since startup — is a failed result
+    # like any other, so callers report it rather than having it unwind past
+    # them after a receipt has already told the requester somebody has it.
     def run(*arguments, chdir: nil)
       @command_runner.run(@executable, *arguments, chdir: chdir)
+    rescue SystemCallError => error
+      BasecampAgentConnector::CommandRunner::Result.new(stdout: "", stderr: error.message, exit_status: 127)
     end
 end

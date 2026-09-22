@@ -503,7 +503,20 @@ learned from a live board rather than the docs:
   session that turns out not to be resident costs nothing, while resuming one
   that is forks the card. So only a definite "not listed" earns a plain
   resume; anything else stops first. This matters most right after a restart,
-  when the first event arrives just as the CLI is least able to answer.
+  when the first event arrives just as the CLI is least able to answer. The
+  same goes for busy: a follow-up is continued only on a definite "idle", and
+  a listing the CLI could not give holds it for the flusher, since stopping a
+  session that may be mid-work would throw its work away.
+
+A message leaves the queue only once a resume actually went through. The
+flusher's check, resume and queue update are one decision under the card's
+registry lock — the lock a webhook delivery takes too — so a comment arriving
+mid-flush waits rather than continuing the session in between. A resume that
+fails keeps every message queued, a direct follow-up whose resume fails is
+queued rather than dropped, and a stop that fails on a session still listed is
+not followed by a resume, because that resume would fork it. A spawn that
+cannot even start (a mapped repo that does not exist) is reported on the card
+like any refused spawn.
 
 A dispatched session must never sit blocked on a question. Nothing watches its
 terminal, and the CLI's session log is raw terminal output rather than text, so

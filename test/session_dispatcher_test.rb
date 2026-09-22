@@ -8,7 +8,7 @@ class FakeClaude
   Continuation = Struct.new(:session_id, :prompt, :cwd, :stopped)
 
   attr_reader :spawns, :continuations, :stops
-  attr_accessor :states, :spawn_succeeds, :resolvable, :listing_fails
+  attr_accessor :states, :spawn_succeeds, :resolvable, :listing_fails, :resume_succeeds, :on_resume
 
   def initialize
     @spawns = []
@@ -16,6 +16,7 @@ class FakeClaude
     @stops = []
     @states = {}
     @spawn_succeeds = true
+    @resume_succeeds = true
     @resolvable = true
     @next_id = 0
   end
@@ -40,15 +41,20 @@ class FakeClaude
     @resolvable ? @spawns.map(&:session_id).find { |id| id.start_with?(short_id) } : nil
   end
 
+  # Continuations are recorded as attempted whether or not they succeed; the
+  # result says which. `on_resume` runs mid-continuation, to let a test do
+  # something while the dispatcher is in the middle of one.
   def resume(session_id:, prompt:, cwd:)
     @continuations << Continuation.new(session_id, prompt, cwd, false)
-    result(true)
+    @on_resume&.call
+    result(@resume_succeeds)
   end
 
   def stop_then_resume(session_id:, short_id:, prompt:, cwd:)
     @stops << short_id
     @continuations << Continuation.new(session_id, prompt, cwd, true)
-    result(true)
+    @on_resume&.call
+    result(@resume_succeeds)
   end
 
   def stop(short_id)
@@ -73,7 +79,10 @@ class FakeClaude
     @states[session_id]
   end
 
+  # nil when the listing cannot be read, as the real one reports it.
   def busy?(session_id)
+    return nil if @listing_fails
+
     state(session_id) == "working"
   end
 
@@ -318,7 +327,9 @@ class SessionDispatcherTest < Minitest::Test
   # The case that forked a card in production: the connector had just
   # restarted, the first event arrived before `claude agents` could answer, and
   # an unanswered question read as "no such session" -- which took the branch
-  # that forks. Not knowing has to take the safe branch instead.
+  # that forks. Not knowing must never resume in place. It now does not resume
+  # at all: the move waits until the CLI can say what the session is doing,
+  # and is then delivered by stopping first.
   def test_a_session_the_cli_cannot_be_asked_about_is_not_resumed_in_place
     subject = dispatcher
     subject.dispatch event
@@ -327,7 +338,14 @@ class SessionDispatcherTest < Minitest::Test
 
     subject.dispatch moved
 
+    assert_empty @claude.continuations
+    assert_equal 1, @registry.find("clawdito_222_Kanban-Card_789").queue.length
+
+    @claude.listing_fails = false
+    subject.flush
+
     assert_predicate @claude.continuations.last, :stopped
+    assert_empty @registry.find("clawdito_222_Kanban-Card_789").queue
   end
 
   # Nothing to stop, so nothing is spent trying.
@@ -436,6 +454,101 @@ class SessionDispatcherTest < Minitest::Test
     assert_includes @claude.spawns.first.prompt, "cards move"
   end
 
+  # A listing the CLI could not give is not "idle": continuing then would stop
+  # a session that may be mid-work. The follow-up waits for the flusher.
+  def test_a_follow_up_waits_when_the_sessions_state_cannot_be_read
+    subject = dispatcher
+    subject.dispatch event
+    @claude.listing_fails = true
+
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457, "content" => "<p>one more thing</p>"))
+
+    assert_empty @claude.continuations
+    assert_empty @claude.stops
+    assert_equal 1, @registry.find("clawdito_222_Kanban-Card_789").queue.length
+  end
+
+  def test_the_flusher_leaves_a_session_alone_while_its_state_cannot_be_read
+    subject = dispatcher
+    subject.dispatch event
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.listing_fails = true
+
+    subject.flush
+
+    assert_empty @claude.continuations
+    assert_equal 1, @registry.find("clawdito_222_Kanban-Card_789").queue.length
+  end
+
+  # A resume that failed delivered nothing, so the follow-up is kept for the
+  # flusher rather than logged and lost.
+  def test_a_follow_up_whose_resume_fails_is_kept
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.resume_succeeds = false
+
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457, "content" => "<p>one more thing</p>"))
+
+    queue = @registry.find("clawdito_222_Kanban-Card_789").queue
+
+    assert_equal 1, queue.length
+    assert_includes queue.first, "one more thing"
+  end
+
+  def test_a_flush_whose_resume_fails_keeps_every_message
+    subject = dispatcher
+    subject.dispatch event
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457, "content" => "<p>first</p>"))
+    subject.dispatch event("id" => 99003, "recording" => sample_recording("id" => 458, "content" => "<p>second</p>"))
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.resume_succeeds = false
+
+    subject.flush
+
+    assert_equal 2, @registry.find("clawdito_222_Kanban-Card_789").queue.length
+  end
+
+  # The flusher's check, resume and queue update are one decision under the
+  # card's lock. A webhook for the same card arriving mid-flush waits for it,
+  # rather than continuing the session in between and then being stopped.
+  def test_a_delivery_to_the_same_card_waits_for_a_flush_in_progress
+    subject = dispatcher
+    subject.dispatch event
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+    @claude.states[@claude.only_session_id] = "done"
+
+    delivery = nil
+    blocked = nil
+    @claude.on_resume = lambda do
+      @claude.on_resume = nil
+      delivery = Thread.new { subject.dispatch event("id" => 99003, "recording" => sample_recording("id" => 458)) }
+      sleep 0.2
+      blocked = delivery.alive?
+    end
+
+    subject.flush
+    delivery&.join
+
+    assert blocked, "a delivery to the same card ran in the middle of a flush"
+  end
+
+  # A mapped repo that does not exist makes the spawn raise before `claude` ever
+  # runs. The requester has already been boosted, so it has to be reported like
+  # any refused spawn, not merely logged.
+  def test_a_spawn_that_cannot_even_start_is_reported_on_the_card
+    unstartable = Object.new
+    def unstartable.run(*, chdir: nil)
+      raise Errno::ENOENT, chdir.to_s
+    end
+
+    dispatcher(claude: BasecampAgentConnector::Session::Claude.new(command_runner: unstartable)).dispatch event
+
+    assert_equal 1, @runner.commands_matching(/comments create/).length
+    assert_nil @registry.find("clawdito_222_Kanban-Card_789")
+  end
+
   # A GitHub review line is about a pull request, not a Basecamp thing of work.
   # It stays on STDOUT for whatever handles reviews.
   def test_a_review_line_dispatches_nothing
@@ -530,9 +643,9 @@ class SessionDispatcherTest < Minitest::Test
   end
 
   private
-    def dispatcher(permission_mode: "acceptEdits", model: nil)
+    def dispatcher(permission_mode: "acceptEdits", model: nil, claude: @claude)
       BasecampAgentConnector::Session::Dispatcher.new(
-        agent: "clawdito", basecamp_cli: build_cli(@runner), claude: @claude, registry: @registry,
+        agent: "clawdito", basecamp_cli: build_cli(@runner), claude: claude, registry: @registry,
         repos: BasecampAgentConnector::Session::RepoResolver.new(mappings: { "bc5" => "/work/bc3" }),
         permission_mode: permission_mode, model: model, logger: @log)
     end

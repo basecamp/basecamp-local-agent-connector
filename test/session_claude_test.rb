@@ -145,6 +145,61 @@ class SessionClaudeTest < Minitest::Test
     assert_equal [ %w[claude stop 09c36f96], [ "claude", "--background", "--resume", "uuid-1", "carry on" ] ], @runner.commands
   end
 
+  # A stop that failed on a session still listed means it is still resident,
+  # and resuming it now would fork it. The failed stop is handed back instead.
+  def test_a_failed_stop_on_a_session_still_listed_does_not_resume
+    @runner.stub "claude stop", stderr: "could not stop", exit_status: 1
+    @runner.stub "claude agents --json", stdout: JSON.generate([ { "id" => "09c36f96", "sessionId" => "uuid-1", "state" => "done" } ])
+
+    result = @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3")
+
+    refute_predicate result, :success?
+    assert_empty @runner.commands_matching(/--resume/)
+  end
+
+  # The case stopping first exists for: residency was unknown, the session
+  # turns out not to be resident, so the stop fails harmlessly and the resume
+  # is safe.
+  def test_a_failed_stop_on_a_session_no_longer_listed_still_resumes
+    @runner.stub "claude stop", stderr: "no such session", exit_status: 1
+    @runner.stub "claude agents --json", stdout: "[]"
+    @runner.stub "claude --background --resume", stdout: "backgrounded"
+
+    assert_predicate @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3"), :success?
+    assert_equal 1, @runner.commands_matching(/--resume uuid-1/).length
+  end
+
+  def test_a_failed_stop_when_the_listing_cannot_be_read_does_not_resume
+    @runner.stub "claude stop", stderr: "could not stop", exit_status: 1
+    @runner.stub "claude agents --json", stdout: "", stderr: "boom", exit_status: 1
+
+    @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3")
+
+    assert_empty @runner.commands_matching(/--resume/)
+  end
+
+  # Not knowing is not "not busy": read as idle, the dispatcher would stop a
+  # session that may be mid-work.
+  def test_busy_is_unknown_when_the_listing_cannot_be_read
+    @runner.stub "claude agents --json", stdout: "", stderr: "boom", exit_status: 1
+
+    assert_nil @claude.busy?("uuid-1")
+  end
+
+  # A command that cannot even start is a failed result, not an exception that
+  # unwinds past the caller after a receipt has already been posted.
+  def test_a_command_that_cannot_start_is_a_failed_result
+    unstartable = Object.new
+    def unstartable.run(*, chdir: nil)
+      raise Errno::ENOENT, chdir.to_s
+    end
+
+    spawned = Claude.new(command_runner: unstartable).spawn(name: "A card", prompt: "do it", cwd: "/no/such/repo")
+
+    refute_predicate spawned, :success?
+    assert_includes spawned.result.stderr, "/no/such/repo"
+  end
+
   def test_reading_a_sessions_state
     @runner.stub "claude agents --json", stdout: agents_json
 

@@ -83,22 +83,24 @@ class BasecampAgentConnector::Session::Dispatcher
     @flusher = nil
   end
 
+  # Each card's check, delivery and queue update happen under that card's
+  # registry lock — the lock a webhook delivery takes too. Otherwise a comment
+  # could continue the session between this reading it idle and resuming it,
+  # and this would then stop a session that had just become busy. The queue is
+  # cleared only once the continuation actually went through; one that failed
+  # leaves every message waiting for the next pass.
   def flush
-    @registry.queued.each do |entry|
-      next if @claude.busy?(entry.session_id)
+    @registry.queued.each do |queued|
+      @registry.with(queued.key) do |entry|
+        next nil if entry.nil? || entry.queue.empty?
+        next nil unless @claude.busy?(entry.session_id) == false
 
-      messages = @registry.drain(entry.key)
-      next if messages.empty?
-
-      # Everything waiting goes in one continuation. Resuming once per queued
-      # comment would stop and restart the session for each of them, and it
-      # would read them in the order the restarts happened to finish.
-      continued = continue(entry, messages.join("\n\n---\n\n"))
-
-      # `continue` may have filled in an id that was missing when the session
-      # was opened; keep it, or the next comment pays for the lookup again.
-      @registry.with(entry.key) { |current| current&.with(session_id: continued.session_id) } \
-        if continued && !entry.resumable? && continued.resumable?
+        # Everything waiting goes in one continuation. Resuming once per queued
+        # comment would stop and restart the session for each of them, and it
+        # would read them in the order the restarts happened to finish.
+        continued, delivered = continue(entry, entry.queue.join("\n\n---\n\n"))
+        delivered ? continued.with(queue: []) : continued
+      end
     end
   end
 
@@ -172,12 +174,19 @@ class BasecampAgentConnector::Session::Dispatcher
       requester = requester_of(event)
 
       @registry.with(key) do |entry|
-        if entry.nil?
-          open key, event, requester: requester, acked: acked
-        elsif @claude.busy?(entry.session_id)
-          hold entry, event, requester: requester
+        next open(key, event, requester: requester, acked: acked) if entry.nil?
+
+        prompt = BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester)
+        busy = @claude.busy?(entry.session_id)
+
+        # Only a definite "idle" is continued now. Busy, or a listing the CLI
+        # could not give, waits for the flusher: stopping a session that may be
+        # mid-work would throw that work away.
+        if busy != false
+          hold entry, prompt, reason: busy.nil? ? "its state could not be read" : "it is busy"
         else
-          continue entry, BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester)
+          continued, delivered = continue(entry, prompt)
+          delivered ? continued : continued.with(queue: continued.queue + [ prompt ])
         end
       end
 
@@ -214,12 +223,12 @@ class BasecampAgentConnector::Session::Dispatcher
         name: key.display_name, repo: repo, created_at: Time.now.utc.iso8601, queue: [])
     end
 
-    # The session is mid-work. Stopping it to say this would discard whatever
-    # it is in the middle of, so the message waits for it to finish.
-    def hold(entry, event, requester:)
-      log "session #{entry.short_id} is busy; holding activity on #{entry.name}"
+    # The session is mid-work, or may be. Stopping it to say this would discard
+    # whatever it is in the middle of, so the message waits for the flusher.
+    def hold(entry, prompt, reason:)
+      log "session #{entry.short_id}: holding activity on #{entry.name}, because #{reason}"
 
-      entry.with(queue: entry.queue + [ BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester) ])
+      entry.with(queue: entry.queue + [ prompt ])
     end
 
     # A resident session has to be stopped before it can be continued in place —
@@ -229,12 +238,16 @@ class BasecampAgentConnector::Session::Dispatcher
     #
     # Returns the entry to record when the lookup below filled in an id that was
     # missing, and nil otherwise.
+    #
+    # Returns the entry to record — `resolved` may have filled in a missing id —
+    # and whether the prompt actually reached the session. Callers keep the
+    # prompt queued unless it did.
     def continue(entry, prompt)
       entry = resolved(entry)
 
       unless entry.resumable?
-        log "session #{entry.short_id} has no session id to resume; leaving #{entry.name} to the session already running"
-        return nil
+        log "session #{entry.short_id} has no session id to resume yet; keeping activity on #{entry.name} queued"
+        return [ entry, false ]
       end
 
       # The branches are not symmetric. Stopping a session that turns out not to
@@ -254,9 +267,9 @@ class BasecampAgentConnector::Session::Dispatcher
         end
 
       log(result.success? ? "session #{entry.short_id} continued for #{entry.name}" \
-        : "session #{entry.short_id} could not be continued: #{result.stderr.to_s.strip}")
+        : "session #{entry.short_id} could not be continued, keeping it queued: #{result.stderr.to_s.strip}")
 
-      entry
+      [ entry, result.success? ]
     end
 
     # A spawn whose id could not be read back is retried here rather than at the

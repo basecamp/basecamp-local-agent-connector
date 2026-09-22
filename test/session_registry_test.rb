@@ -89,17 +89,6 @@ class SessionRegistryTest < Minitest::Test
     assert_nil @registry.find("key")
   end
 
-  # Taking and clearing in one step, so a comment landing mid-flush is either
-  # delivered now or still waiting — never dropped between the two.
-  def test_draining_takes_everything_and_clears_it
-    record "key", session_id: "uuid-1"
-    @registry.enqueue "key", "first"
-    @registry.enqueue "key", "second"
-
-    assert_equal [ "first", "second" ], @registry.drain("key")
-    assert_empty @registry.find("key").queue
-    assert_empty @registry.drain("key")
-  end
 
   def test_queued_lists_only_sessions_with_something_waiting
     record "quiet", session_id: "uuid-1"

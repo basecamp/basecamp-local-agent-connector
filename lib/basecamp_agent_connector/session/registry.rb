@@ -90,21 +90,6 @@ class BasecampAgentConnector::Session::Registry
     end
   end
 
-  # Takes everything waiting and clears it in one step, so a flush that starts
-  # while a new comment lands cannot swallow the comment without delivering it.
-  def drain(key)
-    taken = []
-
-    with(key) do |entry|
-      next nil if entry.nil? || entry.queue.empty?
-
-      taken = entry.queue
-      entry.with(queue: [])
-    end
-
-    taken
-  end
-
   def all
     Dir.glob(File.join(@directory, "*.json")).filter_map { |file| read(file) }
   end
