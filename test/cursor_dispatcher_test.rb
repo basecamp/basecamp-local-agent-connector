@@ -157,6 +157,24 @@ class CursorDispatcherTest < Minitest::Test
     assert_includes @log.string, "could not be reached"
   end
 
+  # A run can take ten minutes. A reader that stops reading for ten minutes
+  # fills the pipe it is reading from, and the connector writing into that pipe
+  # blocks on its own emit — so the watch cannot sit in the reading loop.
+  def test_keeps_reading_while_a_run_is_still_going
+    gate = Queue.new
+
+    with_mock_cursor(run_gate: gate) do |port, requests|
+      dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}")
+      reading = Thread.new { dispatcher.run(StringIO.new(File.read(FIXTURE) + second_event_line)) }
+
+      wait_until { requests.count { |request| request[:method] == "POST" } == 2 }
+      assert_equal 2, requests.count { |request| request[:method] == "POST" }
+
+      2.times { gate << :go }
+      assert reading.join(5), "the dispatcher never finished its watches"
+    end
+  end
+
   def test_a_finished_run_leaves_the_card_to_the_agent
     basecamp = FakeBasecamp.new
 
@@ -192,15 +210,29 @@ class CursorDispatcherTest < Minitest::Test
     # A stand-in for api.cursor.com shaped by the Cloud Agents OpenAPI spec:
     # the create carries the agent AND its first run, and the run reads back
     # terminal so the poll ends on its first pass.
-    def with_mock_cursor(create_status: 200, run_status: "FINISHED")
+    def second_event_line
+      JSON.generate(fixture_event("event_id" => 10327460009)) + "\n"
+    end
+
+    def wait_until(timeout: 5)
+      deadline = Time.now + timeout
+      sleep 0.01 until yield || Time.now >= deadline
+      flunk "condition never came true within #{timeout}s" unless yield
+    end
+
+    def with_mock_cursor(create_status: 200, run_status: "FINISHED", run_gate: nil)
       requests = []
+      recording = Mutex.new
       port = free_port
       server = WEBrick::HTTPServer.new \
         Port: port, BindAddress: "127.0.0.1", Logger: WEBrick::Log.new(File::NULL), AccessLog: []
 
       server.mount_proc("/") do |request, response|
-        requests << { method: request.request_method, path: request.path,
-          body: request.body, authorization: request["Authorization"] }
+        recording.synchronize do
+          requests << { method: request.request_method, path: request.path,
+            body: request.body, authorization: request["Authorization"] }
+        end
+        run_gate.pop if run_gate && request.request_method == "GET"
         response.status = request.request_method == "POST" ? create_status : 200
         response["Content-Type"] = "application/json"
         response.body = JSON.generate(mock_body(request, run_status))

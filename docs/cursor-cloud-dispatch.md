@@ -90,6 +90,12 @@ watcher rather than reaching a cloud agent pointed at the wrong URL.
 The dispatcher then polls `GET /v1/agents/{id}/runs/{runId}` every 5s until
 `status` leaves `CREATING`/`RUNNING`, capped at 10 minutes.
 
+Each watch gets its own thread. The POST is the only thing the reading loop
+waits for, because a run can take ten minutes and a reader that stops reading
+for ten minutes fills the pipe it is reading from — which blocks the connector
+inside its own `emit`. Reading stops when the stream closes, and only then does
+the dispatcher wait for the watches still in flight.
+
 Polling rather than webhooks or SSE: v1 webhooks are "coming soon" (v0 has
 them, but v0 has no inline MCP and requires a repo), and a receiver would need
 a public URL that only the connector's tunnel provides. The SSE stream at

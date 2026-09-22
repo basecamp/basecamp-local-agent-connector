@@ -38,9 +38,15 @@ class BasecampAgentConnector::Cursor::Dispatcher
 
   TERMINAL_RUN_STATUSES = [ "FINISHED", "ERROR", "CANCELLED", "EXPIRED" ].freeze
 
-  # Not one of Cursor's statuses — ours, for a run that was still moving when
-  # the watch gave up. The run itself carries on in Cursor.
+  # Not Cursor's statuses — ours, for the three ways a run can end up
+  # unaccounted for: the watch gave up while it was still moving (the run
+  # carries on in Cursor), the create never got through, or the watch itself
+  # broke.
   TIMED_OUT_STATUS = "TIMED_OUT"
+
+  UNDISPATCHED_STATUS = "UNDISPATCHED"
+
+  UNWATCHED_STATUS = "UNWATCHED"
 
   DEFAULT_POLL_INTERVAL = 5
 
@@ -57,13 +63,17 @@ class BasecampAgentConnector::Cursor::Dispatcher
     @poll_interval = poll_interval
     @poll_timeout = poll_timeout
     @log = log
+    @log_lock = Mutex.new
     @clock = clock
   end
 
-  # Reads NDJSON until the stream closes. A malformed line is logged and
-  # skipped rather than fatal: this process sits downstream of a long-running
-  # watcher, and one torn line must not take the dispatcher down with it.
+  # Reads NDJSON until the stream closes, then waits for the runs still in
+  # flight. A malformed line is logged and skipped rather than fatal: this
+  # process sits downstream of a long-running watcher, and one torn line must
+  # not take the dispatcher down with it.
   def run(input)
+    watches = []
+
     input.each_line do |line|
       next if line.strip.empty?
 
@@ -74,8 +84,10 @@ class BasecampAgentConnector::Cursor::Dispatcher
         next
       end
 
-      dispatch(event) if dispatchable?(event)
+      watches << dispatch(event) if dispatchable?(event)
     end
+
+    watches.compact.each(&:join)
   end
 
   # True only for an event the Verifier already vouched for. `trigger.mentioned`
@@ -97,23 +109,27 @@ class BasecampAgentConnector::Cursor::Dispatcher
     end
   end
 
-  # Never raises: this sits downstream of a long-running watcher, and one
-  # event's bad day must not cost every later event its dispatch.
+  # Returns the thread watching the run it started, or nil when nothing was
+  # started. Never raises: this sits downstream of a long-running watcher, and
+  # one event's bad day must not cost every later event its dispatch.
+  #
+  # The POST is synchronous — one round trip, and its answer is where the
+  # agent id comes from. The watch is not, because a run can take ten minutes
+  # and a reader that stops reading for ten minutes fills the pipe it is
+  # reading from, which stalls the connector writing into it.
   def dispatch(event)
     created = post_agent(request_body(event))
     agent_id = created.dig("agent", "id")
     run_id = created.dig("run", "id")
     warn_line "dispatched #{event["event_id"]} -> agent #{agent_id} run #{run_id}"
 
-    run = await_run(agent_id, run_id)
-    report_back(event, run) unless run["status"] == "FINISHED"
-    run
+    Thread.new { watch(event, agent_id, run_id) }
   rescue AlreadyDispatched
     warn_line "event #{event["event_id"]} was dispatched before; leaving that run alone"
     nil
   rescue Error => error
     warn_line "event #{event["event_id"]} could not be dispatched: #{error.message}"
-    report_back(event, { "status" => "UNDISPATCHED" })
+    report_back(event, { "status" => UNDISPATCHED_STATUS })
     nil
   end
 
@@ -146,6 +162,18 @@ class BasecampAgentConnector::Cursor::Dispatcher
   end
 
   private
+    # Runs on its own thread, so it swallows nothing silently and raises
+    # nothing at all — an exception here would surface only at `join`, long
+    # after it could be acted on.
+    def watch(event, agent_id, run_id)
+      run = await_run(agent_id, run_id)
+      report_back(event, run) unless run["status"] == "FINISHED"
+      run
+    rescue Error => error
+      warn_line "lost the watch on run #{run_id}: #{error.message}"
+      report_back(event, { "id" => run_id, "status" => UNWATCHED_STATUS })
+    end
+
     def prompt_for(event)
       <<~PROMPT
         You are the Basecamp agent that was just mentioned. #{creator_name(event)} left this
@@ -297,8 +325,12 @@ class BasecampAgentConnector::Cursor::Dispatcher
       redacted
     end
 
+    # Serialized for the same reason the Emitter serializes: watches run on
+    # their own threads, and two interleaved writes would tear a line.
     def warn_line(message)
-      @log.puts "[dispatch-cursor] #{redact(message)}"
-      @log.flush
+      @log_lock.synchronize do
+        @log.puts "[dispatch-cursor] #{redact(message)}"
+        @log.flush
+      end
     end
 end
