@@ -640,6 +640,7 @@ skills/basecamp-connect/SKILL.md     # the /basecamp-connect skill
 config/project_repos.toml            # project → repo mapping
 test/                                # minitest, mirrors lib/
 docs/spec.md                         # full design & decisions
+docs/cursor-cloud-dispatch.md        # experimental: mention → Cursor cloud agent
 ```
 
 See [`docs/spec.md`](docs/spec.md) for the complete design and the rationale

@@ -1,0 +1,44 @@
+#!/usr/bin/env ruby
+
+# Reads the connector's NDJSON on STDIN and starts one no-repo Cursor cloud
+# agent per verified mention, with the hosted Basecamp MCP server as its hands.
+#
+#   bin/connect @marie --project "Bring your agents to Basecamp" \
+#     | tee >(bin/dispatch-cursor)
+#
+# Needs CURSOR_API_KEY and BASECAMP_MCP_TOKEN in the environment. Neither is
+# ever printed, logged, or written to a file.
+#
+#   --print  build the request for each event and print it instead of sending
+#            it, with the secrets left as $CURSOR_API_KEY / $BASECAMP_MCP_TOKEN
+
+require_relative "../lib/basecamp_agent_connector"
+
+print_only = ARGV.delete("--print")
+
+api_key = ENV["CURSOR_API_KEY"].to_s
+mcp_token = ENV["BASECAMP_MCP_TOKEN"].to_s
+
+unless print_only
+  abort "CURSOR_API_KEY is not set" if api_key.empty?
+  abort "BASECAMP_MCP_TOKEN is not set" if mcp_token.empty?
+end
+
+dispatcher = BasecampAgentConnector::Cursor::Dispatcher.new(
+  api_key: print_only ? "$CURSOR_API_KEY" : api_key,
+  mcp_token: print_only ? "$BASECAMP_MCP_TOKEN" : mcp_token,
+  api_base: ENV.fetch("CURSOR_API_BASE", BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE)
+)
+
+if print_only
+  $stdin.each_line do |line|
+    next if line.strip.empty?
+
+    event = JSON.parse(line)
+    next unless dispatcher.dispatchable?(event)
+
+    puts JSON.pretty_generate(dispatcher.request_body(event))
+  end
+else
+  dispatcher.run($stdin)
+end
