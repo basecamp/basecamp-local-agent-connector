@@ -145,6 +145,18 @@ class CursorDispatcherTest < Minitest::Test
     assert_includes basecamp.comments.first[:content], "UNDISPATCHED"
   end
 
+  # DNS, a refused connection, a TLS handshake, a read timeout: none of them
+  # are this class's own errors, and all of them used to escape the loop.
+  def test_a_cursor_that_cannot_be_reached_at_all_still_reports_back
+    basecamp = FakeBasecamp.new
+    dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{free_port}", basecamp: basecamp)
+
+    dispatcher.run(StringIO.new(File.read(FIXTURE)))
+
+    assert_includes basecamp.comments.first[:content], "UNDISPATCHED"
+    assert_includes @log.string, "could not be reached"
+  end
+
   def test_a_finished_run_leaves_the_card_to_the_agent
     basecamp = FakeBasecamp.new
 

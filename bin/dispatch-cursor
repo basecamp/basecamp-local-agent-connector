@@ -4,7 +4,11 @@
 # agent per verified mention, with the hosted Basecamp MCP server as its hands.
 #
 #   bin/connect @marie --project "Bring your agents to Basecamp" \
-#     | tee >(bin/dispatch-cursor)
+#     | tee >(bin/dispatch-cursor @marie)
+#
+# The agent name is the same one `bin/connect` is watching as, and for the same
+# reason: anything this process says on a card has to come from the account the
+# mention named, not from whoever the CLI defaults to.
 #
 # Needs CURSOR_API_KEY and BASECAMP_MCP_TOKEN in the environment. Neither is
 # ever printed, logged, or written to a file.
@@ -15,11 +19,13 @@
 require_relative "../lib/basecamp_agent_connector"
 
 print_only = ARGV.delete("--print")
+agent = BasecampAgentConnector::Connector.normalize_agent(ARGV.shift)
 
 api_key = ENV["CURSOR_API_KEY"].to_s
 mcp_token = ENV["BASECAMP_MCP_TOKEN"].to_s
 
 unless print_only
+  abort "an agent is required, e.g. `dispatch-cursor @marie`" if agent.nil? || agent.empty?
   abort "CURSOR_API_KEY is not set" if api_key.empty?
   abort "BASECAMP_MCP_TOKEN is not set" if mcp_token.empty?
 end
@@ -28,10 +34,9 @@ dispatcher = BasecampAgentConnector::Cursor::Dispatcher.new(
   api_key: print_only ? "$CURSOR_API_KEY" : api_key,
   mcp_token: print_only ? "$BASECAMP_MCP_TOKEN" : mcp_token,
   api_base: ENV.fetch("CURSOR_API_BASE", BasecampAgentConnector::Cursor::Dispatcher::DEFAULT_API_BASE),
-  # The fallback voice for a run that never reported back, as the agent the
-  # mention named. BASECAMP_PROFILE is the CLI's own knob; unset means its
-  # default profile, same as everywhere else.
-  basecamp: BasecampAgentConnector::Basecamp::Client.new(profile: ENV["BASECAMP_PROFILE"])
+  # The fallback voice for a run that never reported back, pinned to the agent
+  # profile rather than left to the CLI's default — which is the operator.
+  basecamp: BasecampAgentConnector::Basecamp::Client.new(profile: agent)
 )
 
 if print_only

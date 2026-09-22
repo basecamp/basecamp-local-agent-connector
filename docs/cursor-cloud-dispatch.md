@@ -12,11 +12,15 @@ let it reply on the card itself.
 
 ```
 bin/connect @marie --project "Bring your agents to Basecamp" \
-  | tee >(bin/dispatch-cursor)
+  | tee >(bin/dispatch-cursor @marie)
 ```
 
 `tee` rather than a pipe, because the local watcher should keep getting the
 same stream. Nothing about the connector changes.
+
+The agent name is repeated for the same reason `bin/connect` asks for it:
+anything this process says on a card has to come from the account the mention
+named, and the `basecamp` CLI's default profile is the operator.
 
 ## What it sends
 
@@ -98,8 +102,8 @@ The agent does, on the card, through `basecamp_comments_write` /
 `create_comment`. The dispatcher speaks only when the run ends anything other
 than `FINISHED` — `ERROR`, `EXPIRED`, `CANCELLED`, a poll that timed out, or a
 create that never got through to Cursor at all. It then posts one line on the
-card as the agent (via the `basecamp` CLI, `BASECAMP_PROFILE` picking the
-identity), saying how the run ended and that the list is worth checking.
+card as the agent — the `basecamp` CLI pinned to the profile named on the
+command line — saying how the run ended and that the list is worth checking.
 
 That way round because it is one identity end to end — the MCP token is the
 agent's, so the to-dos and the reply come from the same account that was

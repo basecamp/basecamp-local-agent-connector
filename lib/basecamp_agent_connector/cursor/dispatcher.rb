@@ -258,12 +258,20 @@ class BasecampAgentConnector::Cursor::Dispatcher
       event.dig("recording", "parent", "id") || event.dig("recording", "id")
     end
 
+    # Everything that can go wrong on the wire — DNS, connection, TLS, a read
+    # timeout, a body that is not the JSON it claims — comes back as this
+    # class's own Error, so `dispatch` can contain it per event. A transient
+    # Cursor failure must cost one card its run, not the stream its watcher.
     def perform(request)
       request["Authorization"] = "Bearer #{@api_key}"
       request["Accept"] = "application/json"
 
       uri = request.uri
-      response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
+      response = begin
+        Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
+      rescue StandardError => error
+        raise Error, "Cursor #{request.method} #{uri.path} could not be reached: #{redact(error.message)}"
+      end
 
       unless response.is_a?(Net::HTTPSuccess)
         # The body can carry the token back in an echoed error; redact before
@@ -274,7 +282,11 @@ class BasecampAgentConnector::Cursor::Dispatcher
         raise Error, detail
       end
 
-      JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
+      begin
+        JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
+      rescue JSON::ParserError => error
+        raise Error, "Cursor #{request.method} #{uri.path} answered #{response.code} with unparseable JSON: #{error.message}"
+      end
     end
 
     def redact(text)
