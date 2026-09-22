@@ -20,9 +20,12 @@ require "json"
 class BasecampAgentConnector::Session::Claude
   EXECUTABLE = "claude".freeze
 
-  # `claude agents --json` reports a `state` per session. Only one of them
-  # means "busy with work that stopping would throw away".
+  # `claude agents --json` reports two different things per session, and the
+  # difference matters here. `state` is the lifecycle -- working, blocked, done.
+  # `status` is what the session is doing *right now*, and it is reported only
+  # while the session is resident: `busy` or `idle`, absent once it is gone.
   BUSY_STATES = %w[working].freeze
+  BUSY_STATUS = "busy".freeze
 
   ANSI = /\e\[[0-9;]*m/
   # The separator is matched with `\W+`, not `\D+`: a short id beginning with a
@@ -81,7 +84,7 @@ class BasecampAgentConnector::Session::Claude
   # the first ask.
   def resolve_session_id(short_id)
     RESOLVE_ATTEMPTS.times do |attempt|
-      found = sessions.find { |session| session["id"] == short_id }
+      found = sessions&.find { |session| session["id"] == short_id }
       return found["sessionId"] if found
 
       @wait.call RESOLVE_DELAY if attempt < RESOLVE_ATTEMPTS - 1
@@ -120,31 +123,53 @@ class BasecampAgentConnector::Session::Claude
   # Stopping a session that is mid-work discards that work, so a caller that
   # wants to deliver a message has to know the difference.
   #
-  # A session whose process is gone is not busy, whatever its state says. The
-  # CLI leaves `state` at `working` when a session dies mid-turn, and believing
-  # that alone holds every later message for a session that can never finish --
-  # the card goes deaf, silently, and stays that way until somebody notices.
+  # The question is what the session is *doing*, which `status` answers and
+  # `state` does not. A session can sit at `state: working` while `status` says
+  # `idle` -- resident, but between turns or finished and not yet reaped. It is
+  # not busy, and holding a message for it stalls the card for as long as the
+  # process happens to linger.
+  #
+  # `status` is absent once the session is no longer resident, and a dead
+  # session is not busy either: the CLI leaves `state` at `working` when one
+  # dies mid-turn, so that case falls through to asking the process directly.
   def busy?(session_id)
     record = session(session_id)
     return false unless record && BUSY_STATES.include?(record["state"])
 
+    status = record["status"]
+    return status == BUSY_STATUS unless status.nil?
+
     running? record["pid"]
   end
 
+  # Whether the CLI still lists this session, so it is resident and has to be
+  # stopped before it can be continued in place. `nil` means the CLI could not
+  # be asked -- the caller is left to decide what not knowing is worth, because
+  # the two answers are not equally safe to guess at.
+  def resident?(session_id)
+    listed = sessions
+    return nil if listed.nil?
+
+    listed.any? { |session| session["sessionId"] == session_id }
+  end
+
   def session(session_id)
-    sessions.find { |session| session["sessionId"] == session_id }
+    sessions&.find { |session| session["sessionId"] == session_id }
   end
 
   # Includes sessions that have already finished, so a card commented on
   # tomorrow finds yesterday's session rather than opening a second one.
+  # `nil` when the CLI could not be asked, which is not the same as an empty
+  # list and must not be flattened into one: callers decide what a question
+  # they could not get an answer to means for them.
   def sessions
     result = run("agents", "--json", "--all")
-    return [] unless result.success?
+    return nil unless result.success?
 
     parsed = JSON.parse(result.stdout)
     parsed.is_a?(Array) ? parsed : []
   rescue JSON::ParserError
-    []
+    nil
   end
 
   private

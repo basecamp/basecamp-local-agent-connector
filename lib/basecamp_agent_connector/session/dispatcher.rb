@@ -138,11 +138,22 @@ class BasecampAgentConnector::Session::Dispatcher
       url = event.dig("recording", "url")
       return true if url.nil?
 
-      @basecamp_cli.create_boost url_or_id: url, content: ack_content(event), profile: @agent
+      @basecamp_cli.create_boost url_or_id: url, content: ack_content(event),
+        profile: @agent, event: acknowledged_event_id(event)
       true
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "receipt boost did not land for event #{event["event_id"]}: #{error.message}"
       false
+    end
+
+    # Every other trigger names a recording the requester wrote -- a comment, a
+    # message -- and boosting that is the receipt. A move names only the card,
+    # which may be weeks old and says nothing about which move was picked up.
+    # The move itself is an event in the card's history, and bc3 lets those
+    # carry boosts, so the receipt goes on the "moved this card to In progress"
+    # line that actually asked for the work. `event_id` is that event's id.
+    def acknowledged_event_id(event)
+      event["event_id"] if event.dig("trigger", "moved")
     end
 
     def acknowledgeable?(event)
@@ -225,8 +236,17 @@ class BasecampAgentConnector::Session::Dispatcher
         return nil
       end
 
+      # The branches are not symmetric. Stopping a session that turns out not to
+      # be resident costs nothing: the stop fails, the resume proceeds. Resuming
+      # one that *is* resident forks it -- a copy under a new id carrying the
+      # whole conversation, which is the exact failure dispatching per card
+      # exists to prevent, and it announces itself as an ordinary continue.
+      #
+      # So only a definite "not resident" earns the plain resume. Not knowing
+      # takes the safe branch, which matters most right after a restart, when
+      # the CLI is least able to answer and the first event is arriving.
       result =
-        if @claude.state(entry.session_id).nil?
+        if @claude.resident?(entry.session_id) == false
           @claude.resume(session_id: entry.session_id, prompt: prompt, cwd: entry.repo)
         else
           @claude.stop_then_resume(session_id: entry.session_id, short_id: entry.short_id, prompt: prompt, cwd: entry.repo)

@@ -8,7 +8,7 @@ class FakeClaude
   Continuation = Struct.new(:session_id, :prompt, :cwd, :stopped)
 
   attr_reader :spawns, :continuations, :stops
-  attr_accessor :states, :spawn_succeeds, :resolvable
+  attr_accessor :states, :spawn_succeeds, :resolvable, :listing_fails
 
   def initialize
     @spawns = []
@@ -56,7 +56,20 @@ class FakeClaude
     result(true)
   end
 
+  # nil when the CLI could not be asked -- the real one cannot tell an empty
+  # list from a question that went unanswered unless it says so.
+  def resident?(session_id)
+    return nil if @listing_fails
+
+    @states.key?(session_id)
+  end
+
+  # Both of these read the same listing in the real class, so an unanswerable
+  # CLI has to blank both here -- otherwise the double quietly knows things the
+  # connector could not have known.
   def state(session_id)
+    return nil if @listing_fails
+
     @states[session_id]
   end
 
@@ -288,6 +301,46 @@ class SessionDispatcherTest < Minitest::Test
     assert_includes @claude.continuations.first.prompt, "In progress"
   end
 
+  # Resuming a resident session forks it into a copy under a new id, carrying
+  # the whole conversation -- one card, two sessions, two replies. So a session
+  # the CLI still lists is stopped first.
+  def test_a_resident_session_is_stopped_before_it_is_continued
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+
+    subject.dispatch moved
+
+    assert_predicate @claude.continuations.last, :stopped
+    refute_empty @claude.stops
+  end
+
+  # The case that forked a card in production: the connector had just
+  # restarted, the first event arrived before `claude agents` could answer, and
+  # an unanswered question read as "no such session" -- which took the branch
+  # that forks. Not knowing has to take the safe branch instead.
+  def test_a_session_the_cli_cannot_be_asked_about_is_not_resumed_in_place
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.listing_fails = true
+
+    subject.dispatch moved
+
+    assert_predicate @claude.continuations.last, :stopped
+  end
+
+  # Nothing to stop, so nothing is spent trying.
+  def test_a_session_that_is_not_resident_is_resumed_in_place
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states.delete @claude.only_session_id
+
+    subject.dispatch moved
+
+    refute_predicate @claude.continuations.last, :stopped
+  end
+
   # Assignment is how the board says a card is the agent's. Without it, a move
   # is somebody rearranging their own work on a board the agent merely watches.
   def test_moving_an_unassigned_card_with_no_session_does_nothing
@@ -316,6 +369,42 @@ class SessionDispatcherTest < Minitest::Test
     dispatcher.dispatch moved({}, assigned: true)
 
     assert_equal 1, @runner.commands_matching(/boost create/).length
+  end
+
+  # The card is what the payload names, and it may be weeks old and already
+  # covered in boosts. The move is what asked for the work, and bc3 keeps
+  # boosts on events too -- so the receipt lands on the move's own line.
+  def test_a_move_is_acknowledged_on_the_move_event_not_the_card
+    dispatcher.dispatch moved({}, assigned: true)
+
+    assert_includes @runner.commands_matching(/boost create/).first.join(" "), "--event 99005"
+  end
+
+  # Everything else names a recording the requester actually wrote, which is
+  # the right thing to boost. No event id goes near those.
+  def test_an_ordinary_event_is_acknowledged_on_its_own_recording
+    dispatcher.dispatch event
+
+    refute_includes @runner.commands_matching(/boost create/).first.join(" "), "--event"
+  end
+
+  # The case that needs the move as its target most. The session already
+  # exists, so nothing is opened and the agent posts nothing else -- a boost on
+  # the card would be indistinguishable from the one left when the session was
+  # opened, and the requester has no way to tell the move registered. Note the
+  # move is unassigned here: having the session is what earns it.
+  def test_moving_a_card_that_has_a_session_is_acknowledged_on_the_move
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    before = @runner.commands_matching(/boost create/).length
+
+    subject.dispatch moved
+
+    boosts = @runner.commands_matching(/boost create/)
+
+    assert_equal before + 1, boosts.length
+    assert_includes boosts.last.join(" "), "--event 99005"
   end
 
   # A move carries no words. Handing over the card's own description would read

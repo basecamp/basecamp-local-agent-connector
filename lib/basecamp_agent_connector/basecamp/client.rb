@@ -148,8 +148,10 @@ class BasecampAgentConnector::Basecamp::Client
   # a duplicate reaction is harmless, and a missing ack is indistinguishable
   # from a missed mention — which is the failure worth spending a duplicate to
   # avoid.
-  def create_boost(url_or_id:, content:, profile: nil)
-    json "boost", "create", url_or_id.to_s, content, *profile_flag(profile)
+  # `event:` boosts one line of a recording's history rather than the recording
+  # itself -- bc3 keeps boosts on events too, and the CLI takes `--event` for it.
+  def create_boost(url_or_id:, content:, profile: nil, event: nil)
+    json "boost", "create", url_or_id.to_s, content, *event_flag(event), *profile_flag(profile)
   end
 
   # One attempt: a comment whose answer was lost may well have posted, and a
@@ -289,6 +291,10 @@ class BasecampAgentConnector::Basecamp::Client
 
     def profile_flag(profile)
       profile ? [ "--profile", profile ] : []
+    end
+
+    def event_flag(event)
+      event ? [ "--event", event.to_s ] : []
     end
 
     def run(*arguments)

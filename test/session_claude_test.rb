@@ -171,19 +171,20 @@ class SessionClaudeTest < Minitest::Test
     refute @claude.busy?("uuid-absent")
   end
 
-  # The CLI leaves `state` at `working` when a session dies mid-turn, so state
-  # alone cannot answer this: believing it holds every later message for a
-  # session that will never finish, and the card it belongs to goes deaf.
-  def test_a_working_session_whose_process_is_gone_is_not_busy
+  # The bug this guards: a session can sit at `state: working` while `status`
+  # says `idle` -- resident, but between turns or simply finished and not yet
+  # reaped. Its process is alive, so liveness cannot answer the question, and a
+  # message held for it waits as long as that process happens to linger.
+  def test_a_resident_session_that_is_idle_is_not_busy
     @runner.stub "claude agents --json", stdout: JSON.generate([
       { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
-        "state" => "working", "status" => "idle", "pid" => reaped_pid }
+        "state" => "working", "status" => "idle", "pid" => Process.pid }
     ])
 
     refute @claude.busy?("uuid-1")
   end
 
-  def test_a_working_session_that_is_still_running_is_busy
+  def test_a_resident_session_that_is_working_is_busy
     @runner.stub "claude agents --json", stdout: JSON.generate([
       { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
         "state" => "working", "status" => "busy", "pid" => Process.pid }
@@ -192,11 +193,31 @@ class SessionClaudeTest < Minitest::Test
     assert @claude.busy?("uuid-1")
   end
 
-  # Nothing to wait for, so nothing to hold a message back for.
-  def test_a_working_session_without_a_pid_is_not_busy
+  # `status` is reported only while the session is resident. Without it there is
+  # nothing to read but the process, and a session that died mid-turn keeps
+  # `state: working` for good -- so the card would go deaf, silently.
+  def test_without_a_status_a_gone_process_is_not_busy
     @runner.stub "claude agents --json", stdout: JSON.generate([
       { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
-        "state" => "working", "status" => "idle" }
+        "state" => "working", "pid" => reaped_pid }
+    ])
+
+    refute @claude.busy?("uuid-1")
+  end
+
+  def test_without_a_status_a_live_process_is_busy
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+        "state" => "working", "pid" => Process.pid }
+    ])
+
+    assert @claude.busy?("uuid-1")
+  end
+
+  def test_without_a_status_or_a_pid_nothing_is_busy
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+        "state" => "working" }
     ])
 
     refute @claude.busy?("uuid-1")
@@ -211,17 +232,36 @@ class SessionClaudeTest < Minitest::Test
     assert_includes @runner.commands_matching(/agents/).first, "--all"
   end
 
-  def test_unusable_output_reads_as_no_sessions
+  # A question that went unanswered is not an answer of "none". Flattening the
+  # two is what let a resident session be resumed in place and forked -- so an
+  # unreadable listing says it does not know, and residency says so too.
+  def test_unusable_output_reads_as_unknown
     @runner.stub "claude agents --json", stdout: "not json at all"
 
-    assert_empty @claude.sessions
+    assert_nil @claude.sessions
     assert_nil @claude.state("uuid-1")
+    assert_nil @claude.resident?("uuid-1")
   end
 
-  def test_a_failed_listing_reads_as_no_sessions
+  def test_a_failed_listing_reads_as_unknown
     @runner.stub "claude agents --json", stdout: "", stderr: "boom", exit_status: 1
 
+    assert_nil @claude.sessions
+    assert_nil @claude.resident?("uuid-1")
+  end
+
+  # An empty list is a real answer, and a different one.
+  def test_an_empty_listing_reads_as_not_resident
+    @runner.stub "claude agents --json", stdout: "[]"
+
     assert_empty @claude.sessions
+    refute @claude.resident?("uuid-1")
+  end
+
+  def test_a_listed_session_is_resident
+    @runner.stub "claude agents --json", stdout: agents_json
+
+    assert @claude.resident?("uuid-1")
   end
 
   def test_availability_follows_the_cli
