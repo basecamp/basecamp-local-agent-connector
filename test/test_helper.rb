@@ -28,10 +28,11 @@ BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY = Dir.mktmpdir("basecamp-
 Minitest.after_run { FileUtils.remove_entry BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY, true }
 
 class FakeCommandRunner
-  attr_reader :commands
+  attr_reader :commands, :directories
 
   def initialize
     @commands = []
+    @directories = []
     @stubs = []
   end
 
@@ -43,13 +44,23 @@ class FakeCommandRunner
     @stubs << { matcher: matcher, result: result, remaining: once ? 1 : times }
   end
 
-  def run(*command)
+  # `chdir` is recorded alongside the command rather than folded into it: a
+  # dispatched session running in the wrong repo is a real failure and the
+  # tests have to be able to see the directory it was given.
+  def run(*command, chdir: nil)
     @commands << command
+    @directories << chdir
     stub = @stubs.find { |candidate| candidate[:remaining] != 0 && matches?(command, candidate[:matcher]) }
     raise "no stub for command: #{command.join(' ')}" if stub.nil?
 
     stub[:remaining] -= 1 unless stub[:remaining].nil?
     stub[:result]
+  end
+
+  # The directory the last command matching this pattern ran in.
+  def directory_for(pattern)
+    index = @commands.rindex { |command| command.join(" ").match?(pattern) }
+    index && @directories[index]
   end
 
   def commands_matching(pattern)

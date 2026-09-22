@@ -358,6 +358,73 @@ received-boosts feed rather than a webhook: `creator` is the **booster**,
 `content` field in this feed representation), and `details.boost` carries the
 boost's own `id` and `content` (up to 16 characters, e.g. `"🔥"` or `"redo"`).
 
+### Dispatch modes
+
+What happens to an event once it is verified is a setting, because the two
+answers suit different situations and neither should be forced on the other.
+
+**`--dispatch stdout`** (the default) is the original arrangement: print the
+NDJSON line and stop. Everything downstream — acking, resolving a repo,
+dispatching a worker, replying — belongs to whatever is reading, normally the
+`/basecamp-connect` skill below. The connector stays dumb-and-safe.
+
+**`--dispatch session`** additionally opens a Claude Code session per *thing of
+work*. STDOUT is unaffected, so this adds a reader rather than diverting the
+stream and a watching skill may still run alongside.
+
+The unit is the thing of work, not the event. `Session::Key` resolves a
+recording to its root — the parent for a Comment or a chat line, the recording
+itself otherwise — so a card, message, todo or document owns exactly one
+session and every comment on it joins that session. This is the whole point:
+re-reading a card from Basecamp recovers its text, never the reasoning that
+followed from it, so a follow-up handled by a fresh agent starts from nothing.
+
+The pieces, all under `lib/basecamp_agent_connector/session/`:
+
+| Class | Responsibility |
+| --- | --- |
+| `Key` | Resolves an event to the thing of work it belongs to. Pure; reads only the emitted event. |
+| `Registry` | Which session owns which key, and what is queued for it. Modelled on `RunRegistry`: atomic rename, `0600`, and a per-key lock so two events racing cannot both open a session. |
+| `Claude` | The `claude` CLI — spawn, resume, stop, list. `--background` picks the session id itself (it ignores `--session-id`), so the short id is parsed back off the spawn line and the full uuid looked up from `claude agents --json`. Both are stored: `stop` takes the short one, and `--resume` requires the full one — given the short id it starts a *copy*, which would hand one card two sessions. |
+| `RepoResolver` | Reads `config/project_repos.toml`, which until now only the skill read. |
+| `Prompt` | What a session is told: the full briefing once, then just the new comment. |
+| `Dispatcher` | The decisions below. |
+| `DispatchingEmitter` | Wraps the one `Emitter` every pipeline already shares. |
+
+Three properties follow from there being no model in the loop, and each is
+handled rather than hoped away:
+
+1. **Nothing can be asked.** A project that resolves to no repo is held, with a
+   reply on the recording saying so. Guessing a repo would run an agent
+   somewhere arbitrary.
+2. **Nothing notices a failure.** A refused spawn is reported on the recording,
+   because a boosted card with no reply is indistinguishable from a mention
+   that never arrived — the failure the ack exists to prevent.
+3. **Nothing can be interrupted safely.** A resident session must be stopped
+   before `--resume` will continue it in place; resuming a running one forks a
+   *copy* under a new id, which would give one card two sessions. So a comment
+   arriving while its session is `working` is queued and delivered when the
+   session goes quiet, and a flusher thread drains the queue — the alternative,
+   delivering on the next event, leaves a comment waiting for as long as the
+   card stays quiet.
+
+A dispatched session must never sit blocked on a question. Nothing watches its
+terminal, and the CLI's session log is raw terminal output rather than text, so
+a blocked session is unreadable as well as unattended. The prompt instructs it
+to post the question to Basecamp and end its turn; the answer arrives as a
+comment on the same recording, routes to the same key, and continues it. That
+makes Basecamp the input channel and needs no supervisor.
+
+Sessions deliberately outlive the connector: they are their own processes, the
+registry is on disk, and a restart picks them up again.
+
+**Security.** Dispatched sessions run unattended at
+`--session-permission-mode` (default `acceptEdits`). The operator-only trust
+filter is unchanged and is what stands between a Basecamp comment and a command
+running locally — but it is now the *only* thing, where before a person was
+watching a terminal. The mode is an explicit flag rather than an inherited
+default for that reason.
+
 ---
 
 ## Component 2: `/basecamp-connect` skill

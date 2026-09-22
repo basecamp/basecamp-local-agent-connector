@@ -139,6 +139,30 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
   end
 
+  # The receipt boost, posted as the agent: the requester's evidence that the
+  # mention registered before any slow work starts.
+  #
+  # Retried like any other call, which means a failure that happened *after*
+  # Basecamp accepted the boost posts a second one. That is the right trade
+  # here and the project has already made it once: a boost is a reaction,
+  # a duplicate reaction is harmless, and a missing ack is indistinguishable
+  # from a missed mention — which is the failure worth spending a duplicate to
+  # avoid.
+  def create_boost(url_or_id:, content:, profile: nil)
+    json "boost", "create", url_or_id.to_s, content, *profile_flag(profile)
+  end
+
+  # One attempt: a comment whose answer was lost may well have posted, and a
+  # duplicate comment — unlike a duplicate boost — is noise on the thread that
+  # somebody has to read and delete.
+  #
+  # The connector posts these only when there is no session to speak for
+  # itself: a project it cannot map to a repo, or a session that refused to
+  # start. Everything a session has to say, it says in its own voice.
+  def create_comment(url_or_id:, content:, profile: nil)
+    json "comments", "create", url_or_id.to_s, content, *profile_flag(profile), attempts: 1
+  end
+
   # One attempt: a create whose answer was lost may still have created, and
   # asking again would register a second webhook whose id nobody keeps for
   # teardown. Webhooks#create_with_retries retries the registration.
