@@ -454,6 +454,58 @@ class SessionDispatcherTest < Minitest::Test
     assert_includes @claude.spawns.first.prompt, "cards move"
   end
 
+  # A follow-up is owed a receipt as much as the first message was. When the
+  # boost for it does not land, the session is told to post one.
+  # The session is opened with boosts working; only the follow-up's receipt
+  # fails. The registry and the fake are shared, so a fresh dispatcher on the
+  # failing runner sees the same session.
+  def test_a_follow_up_whose_boost_failed_tells_the_session_to_post_one
+    dispatcher.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    fail_boosts
+
+    dispatcher.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    assert_includes @claude.continuations.last.prompt, "The receipt boost could not be posted"
+  end
+
+  def test_a_held_follow_up_whose_boost_failed_still_carries_the_fallback
+    dispatcher.dispatch event
+    fail_boosts
+
+    dispatcher.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    assert_includes @registry.find("clawdito_222_Kanban-Card_789").queue.first, "The receipt boost could not be posted"
+  end
+
+  def test_a_follow_up_whose_boost_landed_says_nothing_about_one
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    refute_includes @claude.continuations.last.prompt, "receipt boost"
+  end
+
+  # The fallback is the receipt the dispatcher would have posted: on a move,
+  # the move event, not the card.
+  def test_the_fallback_receipt_for_a_move_boosts_the_move
+    fail_boosts
+
+    dispatcher.dispatch moved({}, assigned: true)
+
+    assert_includes @claude.spawns.first.prompt, "--event 99005"
+  end
+
+  def test_the_fallback_receipt_for_a_mention_boosts_the_recording
+    fail_boosts
+
+    dispatcher.dispatch event
+
+    refute_includes @claude.spawns.first.prompt, "--event"
+  end
+
   # A listing the CLI could not give is not "idle": continuing then would stop
   # a session that may be mid-work. The follow-up waits for the flusher.
   def test_a_follow_up_waits_when_the_sessions_state_cannot_be_read
@@ -643,6 +695,13 @@ class SessionDispatcherTest < Minitest::Test
   end
 
   private
+    # Every later receipt boost is refused. Comments still post.
+    def fail_boosts
+      @runner = FakeCommandRunner.new
+      @runner.stub "boost create", stdout: error_envelope("not_found"), exit_status: 2
+      @runner.stub "comments create", stdout: envelope("id" => 2)
+    end
+
     def dispatcher(permission_mode: "acceptEdits", model: nil, claude: @claude)
       BasecampAgentConnector::Session::Dispatcher.new(
         agent: "clawdito", basecamp_cli: build_cli(@runner), claude: claude, registry: @registry,

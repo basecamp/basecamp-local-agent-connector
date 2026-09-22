@@ -298,6 +298,13 @@ cd ~/Work/basecamp/basecamp-local-agent-connector && \
   bin/connect @Clawdito --project "<project>" [--project "<project>"]...
 ```
 
+**Never pass `--dispatch session`.** That makes the connector open a session per
+event itself; this skill dispatching the same events on top would give every
+mention two receipts, two workers and two replies. It is an alternative to this
+skill, not a companion to it — if the user wants it, say so and don't start a
+watcher. (`--on-column-move` is fine: this skill handles moves, see *When a card
+is moved into a column*.)
+
 Read that output file once and confirm it printed `Listening for mentions of ...`
 (webhook registration succeeded) or, for a chat-only `--types`, `Polling ...
 Campfire(s) ...` (the poller is running — chat-only runs register no webhooks

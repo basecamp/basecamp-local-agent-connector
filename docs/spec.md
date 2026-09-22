@@ -447,8 +447,11 @@ dispatching a worker, replying — belongs to whatever is reading, normally the
 `/basecamp-connect` skill below. The connector stays dumb-and-safe.
 
 **`--dispatch session`** additionally opens a Claude Code session per *thing of
-work*. STDOUT is unaffected, so this adds a reader rather than diverting the
-stream and a watching skill may still run alongside.
+work*. STDOUT is unaffected — the line is written first and unconditionally —
+so a consumer that only reads the stream keeps working. An *active* watcher is
+another matter: the `/basecamp-connect` skill dispatches every event it reads,
+and running it against a connector that already dispatches means every event is
+handled twice. The two are alternatives, one driver per connector, not layers.
 
 The unit is the thing of work, not the event. `Session::Key` resolves a
 recording to its root — the parent for a Comment or a chat line, the recording

@@ -22,8 +22,11 @@ class BasecampAgentConnector::Session::Prompt
     new(event: event, agent: agent, key: key, requester: requester, acked: acked).opening
   end
 
-  def self.follow_up(event:, requester:)
-    new(event: event, agent: nil, key: nil, requester: requester, acked: true).follow_up
+  # `acked` is false when the receipt boost for this activity did not land, so
+  # the session posts it — a follow-up is owed a receipt as much as the first
+  # message was.
+  def self.follow_up(event:, requester:, agent:, acked: true)
+    new(event: event, agent: agent, key: nil, requester: requester, acked: acked).follow_up
   end
 
   def initialize(event:, agent:, key:, requester:, acked:)
@@ -105,9 +108,10 @@ class BasecampAgentConnector::Session::Prompt
       Posted on: #{recording_app_url}
       Reply to: #{reply_target}
 
-      Pick up from what you already know. Gather any further context you need from Basecamp, do the
-      work, and reply on the recording as before. If you need something from a person, post the
-      question as a Basecamp comment @mentioning #{@requester} and end your turn rather than waiting.
+      Pick up from what you already know.#{" #{receipt_instruction}" unless @acked} Gather any further
+      context you need from Basecamp, do the work, and reply on the recording as before. If you need
+      something from a person, post the question as a Basecamp comment @mentioning #{@requester} and
+      end your turn rather than waiting.
     PROMPT
   end
 
@@ -211,7 +215,19 @@ class BasecampAgentConnector::Session::Prompt
     def ack_note
       return "" if @acked
 
-      "\n   The receipt boost could not be posted, so post one first: " \
-        "`basecamp boost create #{recording["url"]} \"<short ack>\" --profile #{@agent}`."
+      "\n   #{receipt_instruction}"
+    end
+
+    def receipt_instruction
+      "The receipt boost could not be posted, so post one first: `#{receipt_command}`."
+    end
+
+    # The same receipt the dispatcher would have posted: on a move, the
+    # adoption event in the card's history rather than the card, so it says
+    # which move was picked up.
+    def receipt_command
+      event_flag = " --event #{@event["event_id"]}" if moved? && @event["event_id"]
+
+      "basecamp boost create #{recording["url"]} \"<short ack>\"#{event_flag} --profile #{@agent}"
     end
 end

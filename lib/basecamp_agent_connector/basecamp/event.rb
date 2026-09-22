@@ -304,9 +304,16 @@ class BasecampAgentConnector::Basecamp::Event
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
-      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed?,
-        "moved" => column_move?, "assigned" => assigned? }
+      "trigger" => trigger
     }
+  end
+
+  # A move carries two more verdicts — that it is one, and whether the card is
+  # the agent's — and nothing else does. Adding them to every line would change
+  # the shape a watcher already reads even with column moves switched off.
+  def trigger
+    verdicts = { "mentioned" => mentioned?, "subscribed" => subscribed? }
+    column_move? ? verdicts.merge("moved" => true, "assigned" => assigned?) : verdicts
   end
 
   private

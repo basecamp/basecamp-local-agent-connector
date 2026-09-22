@@ -322,8 +322,11 @@ bin/connect @Clawdito --project "BC5 Calendar" --dispatch session
 | `--session-permission-mode MODE` | `acceptEdits` | What dispatched sessions may do without asking. |
 | `--session-model MODEL` | whatever `claude` uses | Model for dispatched sessions. |
 
-STDOUT still carries every event under `--dispatch session`, so a watching skill
-can run alongside if you want one.
+STDOUT still carries every event under `--dispatch session`, so anything that
+only *reads* the stream keeps working. **Don't run the `/basecamp-connect` skill
+against it at the same time**, though: the skill dispatches every event it reads,
+and the connector has already dispatched it, so each mention would get two
+receipts, two workers and two replies. Pick one driver per connector.
 
 > **Worth understanding before you turn this on.** Dispatched sessions run
 > unattended at the permission mode you give them, which makes the trust boundary

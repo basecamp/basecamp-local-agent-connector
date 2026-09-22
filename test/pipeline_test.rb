@@ -53,7 +53,7 @@ class PipelineTest < Minitest::Test
 
     assert_equal 1, @output.string.lines.length
     assert_equal "message_active", JSON.parse(@output.string)["kind"]
-    assert_equal({ "mentioned" => true, "subscribed" => false, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
   end
 
   # A draft is visible to nobody but its author and bc3 relays no event for
@@ -559,7 +559,7 @@ class PipelineTest < Minitest::Test
   def test_a_mention_emits_a_mentioned_trigger
     pipeline(corroborating_runner).process(sample_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
   end
 
   def test_a_comment_on_a_subscribed_recording_emits_a_subscribed_trigger
@@ -570,30 +570,16 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(sample_payload("recording" => recording))
 
-    assert_equal({ "mentioned" => false, "subscribed" => true, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
   end
 
-  # Neither of the two content verdicts, that is. `assigned` is true because it
-  # is a fact about the recording rather than a verdict about this event: the
-  # agent is on the card's assignees, which is what the Verifier stamps and
-  # what a column move later reads to decide whether the card is the agent's.
-  def test_an_assignment_emits_neither_content_trigger_verdict
+  def test_an_assignment_emits_neither_trigger_verdict
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
 
     pipeline(runner).process(assignment_payload)
 
-    assert_equal({ "mentioned" => false, "subscribed" => false, "moved" => false, "assigned" => true }, emitted_trigger)
-  end
-
-  def test_a_recording_the_agent_is_not_assigned_to_emits_assigned_false
-    runner = FakeCommandRunner.new
-    runner.stub "basecamp show", stdout: envelope(sample_recording)
-    runner.stub "subscriptions show", stdout: subscribers_envelope(200)
-
-    pipeline(runner).process(sample_payload)
-
-    refute emitted_trigger["assigned"]
+    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
   end
 
   def test_mentioned_is_a_fact_about_the_content_whatever_the_kind
@@ -602,7 +588,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(assignment_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false, "moved" => false, "assigned" => true }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
   end
 
   def test_a_chat_line_mention_emits_a_mentioned_trigger
@@ -611,7 +597,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(chat_line_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
   end
 
   def test_a_boost_emits_neither_trigger_verdict
@@ -620,7 +606,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(boost_payload)
 
-    assert_equal({ "mentioned" => false, "subscribed" => false, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
   end
 
   def test_the_emitted_trigger_is_the_verifiers_verdict_not_a_claim_in_the_payload
@@ -633,7 +619,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(sample_payload("agent_mentioned" => true, "recording" => recording))
 
-    assert_equal({ "mentioned" => false, "subscribed" => true, "moved" => false, "assigned" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
   end
 
   # Basecamp never delivers either kind by webhook, so on the webhook pipeline

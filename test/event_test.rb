@@ -47,9 +47,9 @@ class EventTest < Minitest::Test
   end
 
   def test_to_emitted_hash_carries_the_trigger_verdicts
-    assert_equal({ "mentioned" => false, "subscribed" => false, "moved" => false, "assigned" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).to_emitted_hash["trigger"])
-    assert_equal({ "mentioned" => true, "subscribed" => false, "moved" => false, "assigned" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).to_emitted_hash["trigger"])
-    assert_equal({ "mentioned" => false, "subscribed" => true, "moved" => false, "assigned" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => false, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => true, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => false, "subscribed" => true }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).to_emitted_hash["trigger"])
   end
 
   def test_boost_kind

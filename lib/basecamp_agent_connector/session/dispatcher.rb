@@ -176,7 +176,7 @@ class BasecampAgentConnector::Session::Dispatcher
       @registry.with(key) do |entry|
         next open(key, event, requester: requester, acked: acked) if entry.nil?
 
-        prompt = BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester)
+        prompt = BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester, agent: @agent, acked: acked)
         busy = @claude.busy?(entry.session_id)
 
         # Only a definite "idle" is continued now. Busy, or a listing the CLI

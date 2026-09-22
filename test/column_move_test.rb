@@ -66,6 +66,13 @@ class ColumnMoveEventTest < Minitest::Test
     assert_equal 555, details["new_parent_id"]
   end
 
+  # A watcher already reads the two-key trigger. The move fields appear only on
+  # a move, so the line is unchanged for everything else.
+  def test_an_ordinary_event_keeps_the_original_trigger_shape
+    assert_equal %w[mentioned subscribed], Event.from_payload(sample_payload).to_emitted_hash["trigger"].keys
+    assert_equal %w[mentioned subscribed moved assigned], event.to_emitted_hash["trigger"].keys
+  end
+
   def test_the_emitted_event_announces_the_move
     assert event.to_emitted_hash.dig("trigger", "moved")
     refute Event.from_payload(sample_payload).to_emitted_hash.dig("trigger", "moved")
