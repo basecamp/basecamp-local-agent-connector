@@ -42,9 +42,10 @@ class BasecampAgentConnector::Session::Dispatcher
     @logger = logger
   end
 
-  # True when this event now belongs to a session. False means nothing was
-  # dispatched and the event is the STDOUT stream's alone — a GitHub review
-  # line, or a project with no repo to run in.
+  # True when this event was taken on — dispatched, queued, or held with a reply
+  # on the recording saying why (a project with no repo, a spawn that refused).
+  # False means nothing was done and the event is the STDOUT stream's alone: a
+  # GitHub review line, a move this agent is ignoring, or a dispatch that failed.
   def dispatch(event)
     key = BasecampAgentConnector::Session::Key.from_event(event, agent: @agent)
     return false if key.nil?

@@ -389,6 +389,10 @@ watching for new mentions, acknowledge each one, and dispatch it.
   posting as the agent — a distinct user from the operator — keeps replies
   from authorizing anyway; this is cheap defense in depth, and it comes
   *before* the boost so a slipped-through self-comment is never acked).
+  Drop it too if `trigger.moved` is `true` and `trigger.assigned` is not — a
+  card moved on a board the agent merely watches, which nobody handed to it
+  (see *When a card is moved into a column*). Also before the boost, so a card
+  nobody picked up never carries a receipt implying somebody did.
 
 For every other Basecamp event the front thread runs exactly this checklist, in
 this order, and nothing else:
@@ -722,6 +726,45 @@ work on todos and cards too. The dispatched background agent should, in order:
 The instruction here is the **card/todo content**, not a comment body. Everything
 else (resolve repo, one background agent owns it end-to-end, front thread returns
 to the monitor) is the same as above.
+
+### When a card is moved into a column
+
+Only when `bin/connect` runs with `--on-column-move`. The event `kind` is
+`kanban_card_adopted` — bc3's name for a card acquiring a new parent, which for a
+card is its column — and the line carries `trigger.moved: true`. The destination
+column is `recording.parent` (its `title` and `type`); `bin/connect` has already
+dropped moves into Done and Not-now columns, a card landing back where it was,
+and any move the agent made itself.
+
+On a board where the column says what kind of work is wanted, **the move is the
+request**, so it gets handled — but only for a card that is the agent's:
+
+- **`trigger.assigned` false → drop it** before the boost (the routing rule
+  above). A move is the one trigger that can arrive about a card nobody addressed
+  to the agent; assignment is how the board says a card is its.
+- **Acknowledge the move, not the card.** The card may be weeks old and already
+  boosted from earlier rounds; bc3 lets events in a card's history carry boosts,
+  and the line's `event_id` is the move's own event:
+  `basecamp boost create <recording.url> "<ack>" --event <event_id> --profile <agent>`.
+
+The dispatched background agent should, in order:
+
+1. **Boost only if the handoff says an ack is still owed** — same fallback rule
+   as for a mention, with the same `--event <event_id>`.
+2. **Read the column's meaning, not the card's description.** A move carries no
+   words. The instruction is "this card was moved into `<recording.parent.title>`"
+   — read the project's `AGENTS.md` for what that column asks for, and do that;
+   if it says the column is not a request for work, do nothing and say nothing.
+   Handing the card's `content` over as though newly said makes the agent redo
+   work it already did.
+3. **Leave the card where it is.** The operator put it in that column
+   deliberately; the "move it out of Triage" step does not apply. Move it on only
+   when the work the column asks for is finished and `AGENTS.md` says where it
+   goes next.
+4. **Reply with the result** on the card as the agent, as for any other event.
+
+This cannot loop: the agent moving cards itself produces events authored by the
+agent, which `bin/connect` refuses in every trust mode.
 
 ### When the mention arrives in Campfire (a chat line)
 

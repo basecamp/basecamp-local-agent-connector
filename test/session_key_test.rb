@@ -57,7 +57,7 @@ class SessionKeyTest < Minitest::Test
   # different Basecamp users with different reply identities.
   def test_different_agents_do_not_share_a_key
     mine = Key.from_event(emitted(sample_recording), agent: "clawdito")
-    theirs = Key.from_event(emitted(sample_recording), agent: "rhea")
+    theirs = Key.from_event(emitted(sample_recording), agent: "marie")
 
     refute_equal mine, theirs
   end

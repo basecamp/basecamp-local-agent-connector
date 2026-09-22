@@ -402,6 +402,23 @@ drives a session the card already has, and opens a new one only where the agent
 is an assignee. A move on a card with neither is ignored — and ignored *before*
 the receipt boost, so nothing on the card implies somebody picked it up.
 
+**Receipt.** Every other trigger names a recording the requester wrote, and
+boosting it is the receipt. A move names only the card, which may be weeks old
+and already boosted from earlier rounds. bc3 keeps boosts on events as well as
+recordings, and the adoption is an event in the card's history whose id is the
+webhook's `event_id` — so the receipt is `boost create <card> --event
+<event_id>`, and it lands on the move itself. Verified against a live board:
+`adopted` events carry a boosts URL, and the neighbouring kinds do not.
+
+**Independent of dispatch mode.** A move is a trigger; dispatch is what happens
+after one. Under `--dispatch session` the rules above live in the session
+dispatcher. Under the default `--dispatch stdout` the `/basecamp-connect` skill
+applies the same ones from the emitted line: drop a move whose
+`trigger.assigned` is false before the boost, boost the move event with
+`--event <event_id>`, brief the column rather than the card's description, and
+leave the card where it is. The one difference is that the skill keeps no
+sessions, so "drive the session the card already has" does not arise there.
+
 **Briefing.** A move carries no words, so the card's description must not be
 handed over as though newly said; on a follow-up that reads as the requester
 repeating the brief and the agent redoes finished work. The prompt says the card
@@ -454,10 +471,29 @@ handled rather than hoped away:
 3. **Nothing can be interrupted safely.** A resident session must be stopped
    before `--resume` will continue it in place; resuming a running one forks a
    *copy* under a new id, which would give one card two sessions. So a comment
-   arriving while its session is `working` is queued and delivered when the
-   session goes quiet, and a flusher thread drains the queue — the alternative,
+   arriving while its session is busy is queued and delivered when the session
+   goes quiet, and a flusher thread drains the queue — the alternative,
    delivering on the next event, leaves a comment waiting for as long as the
    card stays quiet.
+
+Two details of `claude agents --json` decide whether that works, and both were
+learned from a live board rather than the docs:
+
+- **Busy is `status`, not `state` or liveness.** `state` is the lifecycle
+  (`working`, `blocked`, `done`); `status` is what the session is doing right
+  now (`busy`, `idle`), reported only while it is resident. A session can sit
+  at `state: working, status: idle` with a live pid — between turns, or
+  finished and not yet reaped — and treating that as busy holds the card's
+  messages for as long as the process lingers. When `status` is absent the
+  session is not resident, and the question falls back to whether its process
+  is alive, since the CLI leaves `state` at `working` when a session dies
+  mid-turn.
+- **Not knowing is not "gone".** When the listing cannot be read at all,
+  residency is unknown, and the two guesses are not equally safe: stopping a
+  session that turns out not to be resident costs nothing, while resuming one
+  that is forks the card. So only a definite "not listed" earns a plain
+  resume; anything else stops first. This matters most right after a restart,
+  when the first event arrives just as the CLI is least able to answer.
 
 A dispatched session must never sit blocked on a question. Nothing watches its
 terminal, and the CLI's session log is raw terminal output rather than text, so

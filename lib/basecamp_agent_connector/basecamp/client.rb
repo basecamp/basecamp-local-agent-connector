@@ -148,6 +148,7 @@ class BasecampAgentConnector::Basecamp::Client
   # a duplicate reaction is harmless, and a missing ack is indistinguishable
   # from a missed mention — which is the failure worth spending a duplicate to
   # avoid.
+  #
   # `event:` boosts one line of a recording's history rather than the recording
   # itself -- bc3 keeps boosts on events too, and the CLI takes `--event` for it.
   def create_boost(url_or_id:, content:, profile: nil, event: nil)

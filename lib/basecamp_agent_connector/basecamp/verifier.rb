@@ -57,6 +57,7 @@ class BasecampAgentConnector::Basecamp::Verifier
     # author is the assigner (not the recording's creator), so instead confirm the
     # agent is actually among the recording's current assignees — a forged POST
     # can't fake real Basecamp state.
+    #
     # A column move has neither property. Its author is whoever dragged the
     # card, not the card's creator, and the agent need not be an assignee for
     # the move to be real. What makes it forgery-proof is the board itself: the

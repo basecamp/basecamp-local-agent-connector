@@ -60,6 +60,32 @@ class ConnectorTest < Minitest::Test
     assert_equal "opus", options.session_model
   end
 
+  def test_column_moves_are_off_by_default
+    options = parse "@clawdito", "--project", "A"
+
+    refute options.column_moves
+    assert_empty options.column_move_except
+  end
+
+  def test_on_column_move_turns_them_on
+    assert parse("@clawdito", "--project", "A", "--on-column-move").column_moves
+  end
+
+  def test_an_excluded_column_implies_on_column_move
+    options = parse "@clawdito", "--project", "A", "--column-move-except", "Backlog, Icebox"
+
+    assert options.column_moves
+    assert_equal [ "Backlog", "Icebox" ], options.column_move_except
+  end
+
+  # A move is a trigger, and dispatch is what happens after one: the two are
+  # independent. Under STDOUT the watching skill applies the same rule the
+  # session dispatcher does — act only on a card the agent is assigned.
+  def test_column_moves_work_under_either_dispatch_mode
+    assert parse("@clawdito", "--project", "A", "--on-column-move").column_moves
+    assert parse("@clawdito", "--project", "A", "--on-column-move", "--dispatch", "session").column_moves
+  end
+
   def test_allow_implies_allowlist_trust
     options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow", "sam@example.com, ana@example.com"
 
