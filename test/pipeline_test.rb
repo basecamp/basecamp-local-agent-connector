@@ -53,7 +53,7 @@ class PipelineTest < Minitest::Test
 
     assert_equal 1, @output.string.lines.length
     assert_equal "message_active", JSON.parse(@output.string)["kind"]
-    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   # A draft is visible to nobody but its author and bc3 relays no event for
@@ -559,7 +559,7 @@ class PipelineTest < Minitest::Test
   def test_a_mention_emits_a_mentioned_trigger
     pipeline(corroborating_runner).process(sample_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   def test_a_comment_on_a_subscribed_recording_emits_a_subscribed_trigger
@@ -570,7 +570,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(sample_payload("recording" => recording))
 
-    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => true, "pinged" => false }, emitted_trigger)
   end
 
   def test_an_assignment_emits_neither_trigger_verdict
@@ -579,7 +579,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(assignment_payload)
 
-    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   def test_mentioned_is_a_fact_about_the_content_whatever_the_kind
@@ -588,7 +588,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(assignment_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   def test_a_chat_line_mention_emits_a_mentioned_trigger
@@ -597,7 +597,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(chat_line_payload)
 
-    assert_equal({ "mentioned" => true, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   def test_a_boost_emits_neither_trigger_verdict
@@ -606,7 +606,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(boost_payload)
 
-    assert_equal({ "mentioned" => false, "subscribed" => false }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => false, "pinged" => false }, emitted_trigger)
   end
 
   def test_the_emitted_trigger_is_the_verifiers_verdict_not_a_claim_in_the_payload
@@ -619,7 +619,7 @@ class PipelineTest < Minitest::Test
 
     pipeline(runner).process(sample_payload("agent_mentioned" => true, "recording" => recording))
 
-    assert_equal({ "mentioned" => false, "subscribed" => true }, emitted_trigger)
+    assert_equal({ "mentioned" => false, "subscribed" => true, "pinged" => false }, emitted_trigger)
   end
 
   # Basecamp never delivers either kind by webhook, so on the webhook pipeline
@@ -651,6 +651,48 @@ class PipelineTest < Minitest::Test
     refute pipeline.heard?(99002)
   end
 
+  # A ping needs no mention: the room is the addressing, and the verifier's
+  # stamp is what says so.
+  def test_a_ping_line_emits_a_pinged_trigger_with_no_mention_in_it
+    pipeline(ping_runner).process(ping_line_payload)
+
+    assert_equal({ "mentioned" => false, "subscribed" => false, "pinged" => true }, emitted_trigger)
+  end
+
+  def test_a_ping_from_an_unauthorized_author_is_dropped_before_any_refetch
+    runner = FakeCommandRunner.new
+    stranger = { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }
+
+    pipeline(runner).process(ping_line_payload(ping_line("creator" => stranger)))
+
+    assert_empty @output.string
+    assert_empty runner.commands
+  end
+
+  # A ping is a chat line, so the webhook pipeline refuses it with the rest of
+  # them — and it has to, since a ping is the one payload that could claim to
+  # target the agent with no mention in it at all.
+  def test_the_webhook_pipeline_refuses_a_ping_payload
+    runner = FakeCommandRunner.new
+    pipeline = pipeline(runner, webhook: true)
+
+    assert pipeline.process(ping_line_payload)
+
+    assert_empty @output.string
+    assert_empty runner.commands
+    assert_match(/ignored chat-kind payload/, @logs.string)
+  end
+
+  # The stamp is the verifier's verdict, never a claim in the payload: a
+  # forged agent_pinged on a room the agent is not alone in with its operator
+  # is overwritten by what Basecamp reports.
+  def test_a_claimed_ping_stamp_does_not_survive_verification
+    pipeline(ping_runner(subscribers: [ 100, 200, 400 ])).process(ping_line_payload.merge("agent_pinged" => true))
+
+    assert_empty @output.string
+    assert_match(/does not target the agent/, @logs.string)
+  end
+
   private
     def emitted_trigger
       JSON.parse(@output.string)["trigger"]
@@ -666,11 +708,19 @@ class PipelineTest < Minitest::Test
       runner
     end
 
+    def ping_runner(subscribers: [ 100, 200 ])
+      runner = FakeCommandRunner.new
+      runner.stub "api get https://3.basecamp.com/000/buckets/555/chats/666/lines/92001.json", stdout: envelope(ping_line)
+      runner.stub "api get /buckets/555/recordings/666/subscription.json", stdout: subscribers_envelope(*subscribers)
+      runner
+    end
+
     def pipeline(runner, authorizer: authorizer(), webhook: false)
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
-        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
+        verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent,
+        operator: operator_identity),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: webhook,
         logger: @logs

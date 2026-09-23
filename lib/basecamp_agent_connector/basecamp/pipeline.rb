@@ -103,8 +103,11 @@ class BasecampAgentConnector::Basecamp::Pipeline
   private
     # Basecamp never delivers chat or boost events by webhook: bc3
     # hard-excludes every chat kind from relay, and a boost is not a Recording
-    # and creates no event. So on the webhook pipeline either kind is by
-    # definition not from Basecamp, and is refused rather than corroborated —
+    # and creates no event. A ping needs no clause of its own: it is a chat
+    # line, so it is refused here with the rest of them — and it has to be,
+    # since a ping is the one payload that could claim to target the agent
+    # with no mention in it at all. So on the webhook pipeline either kind is
+    # by definition not from Basecamp, and is refused rather than corroborated —
     # or let replay a real boost past the BoostPoller's own dedupe, which this
     # pipeline does not share. The refusal lives here rather than on the route
     # so that every way into the webhook pipeline passes it: a live delivery
@@ -133,17 +136,19 @@ class BasecampAgentConnector::Basecamp::Pipeline
 
     # The pre-filter is deliberately looser than the authoritative target check:
     # a comment carries no subscription flag in its payload, so it can't prove it
-    # targets the agent until the Verifier re-fetches subscribers — and a boost
+    # targets the agent until the Verifier re-fetches subscribers — a boost
     # can't prove it landed on the agent's work until the Verifier re-fetches the
-    # agent's own received-boosts feed. Admit both here (author is already gated)
-    # so the live fact can be corroborated; `targets_agent?` on the verified
-    # event makes the real decision.
+    # agent's own received-boosts feed — and a ping line carries no mention at
+    # all, because being in the room is the addressing, which only a read of
+    # the Circle's own subscription settles. Admit all three here (author is
+    # already gated) so the live fact can be corroborated; `targets_agent?` on
+    # the verified event makes the real decision.
     def worth_verifying?(event)
-      targets_agent?(event) || event.subscribable_comment? || event.boost?
+      targets_agent?(event) || event.subscribable_comment? || event.boost? || event.ping?
     end
 
     def targets_agent?(event)
-      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted?
+      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted? || event.pinged?
     end
 
     # The in-flight set plus one condition variable is the whole mechanism:
@@ -192,7 +197,13 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # actually subscribe to is dropped here too. A boost works the same way:
     # the verifier stamps `agent_boosted` only after finding the boost in a
     # fresh fetch of the agent's own received-boosts feed, with the emitted
-    # booster and content taken from that fetch.
+    # booster and content taken from that fetch. A ping is the same shape
+    # again: the verifier stamps `agent_pinged` only after the re-fetched line
+    # says its bucket really is a Circle and a fresh read of that Circle's
+    # subscription says the room holds the agent and its operator and nobody
+    # else — so a Campfire line can never be dispatched on room membership in
+    # place of the mention it owes, and a Ping that has gained a third person
+    # stops triggering from that moment.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 

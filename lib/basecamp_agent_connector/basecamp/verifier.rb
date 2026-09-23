@@ -7,9 +7,12 @@ class BasecampAgentConnector::Basecamp::Verifier
   # recording re-drafted since the event, and either way it stays private.
   DRAFTED_STATUS = "drafted"
 
-  def initialize(basecamp_cli:, agent:)
+  # `operator` is needed for one thing: deciding whether a Ping is private to
+  # the agent and the person allowed to direct it. See private_ping?.
+  def initialize(basecamp_cli:, agent:, operator: nil)
     @basecamp_cli = basecamp_cli
     @agent = agent
+    @operator = operator
   end
 
   def verify(event)
@@ -37,11 +40,20 @@ class BasecampAgentConnector::Basecamp::Verifier
     # says nothing about the recording, so it propagates for the caller to
     # defer — a webhook answers 503 for redelivery, a poller retries next
     # tick — instead of masquerading as a forged or deleted event.
+    # A ping line takes a third route again. `chat line` resolves its
+    # `--project` through `/projects/<id>.json` and a Circle is not a project,
+    # so it 404s on every ping (verified against production); and the fetch
+    # has to run **as the agent** in any case, because Basecamp serves a
+    # Circle to nobody but the people in it. That refusal is load-bearing
+    # rather than incidental: a line the agent is served is a line in a room
+    # the agent is in.
     def fetch_recording(event)
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
 
-      if event.chat_kind?
+      if event.ping?
+        @basecamp_cli.get(locator, profile: @agent.profile)
+      elsif event.chat_kind?
         @basecamp_cli.chat_line(locator)
       else
         @basecamp_cli.show(locator)
@@ -63,9 +75,19 @@ class BasecampAgentConnector::Basecamp::Verifier
 
       if event.assignment_changed?
         assigns_agent?(recording)
+      elsif event.ping?
+        recording.dig("creator", "id") == event.creator_id && in_a_circle?(recording)
       else
         recording.dig("creator", "id") == event.creator_id
       end
+    end
+
+    # Read off the *re-fetched* line, never off the claimed payload: the kind
+    # said this was a ping, and this is Basecamp agreeing. Without it a
+    # ping-shaped payload naming a project Campfire line would be dispatched
+    # on room membership alone, skipping the mention a Campfire line owes.
+    def in_a_circle?(recording)
+      recording.dig("bucket", "type") == BasecampAgentConnector::Basecamp::Event::CIRCLE_BUCKET_TYPE
     end
 
     # Only what Basecamp positively marks a draft is refused: representations
@@ -101,7 +123,61 @@ class BasecampAgentConnector::Basecamp::Verifier
         "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
         "recording" => recording,
         "agent_mentioned" => mentioned,
-        "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned)
+        "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned),
+        "agent_pinged" => agent_pinged?(event, recording)
+    end
+
+    # The check a mention makes on every other surface, made here instead. A
+    # ping is actionable because the conversation is the agent's and its
+    # operator's and nobody else's — so that has to come from Basecamp rather
+    # than from the payload. A third participant makes it someone else's
+    # conversation too, and the reply the agent posts lands in front of them.
+    #
+    # Re-read per event rather than remembered with the room, because a Ping
+    # that gains a participant has to stop triggering from that moment, and a
+    # remembered verdict would go on answering for the old membership.
+    #
+    # Only the operator is recognized, in every trust mode. The broadened
+    # modes key on an author's email or client flag, and bc3 redacts other
+    # people's addresses from a non-admin reader — the agent reading this
+    # subscription sees `y•••••••@•••••••.•••` — so there is nothing here for
+    # them to match on. Failing closed means a Ping with a third person in it
+    # never triggers, whatever `--trust` says; widening that needs a
+    # person-level trust test Basecamp does not currently give the agent the
+    # fields for.
+    def agent_pinged?(event, recording)
+      event.ping? && private_ping?(recording)
+    end
+
+    def private_ping?(recording)
+      return false if @operator.nil? || @operator.person_id.nil? || @agent.person_id.nil?
+
+      ping_subscriber_ids(recording).sort == [ @operator.person_id, @agent.person_id ].sort
+    end
+
+    # A Circle's subscription is served only to the people in the room, so
+    # this runs as the agent. `subscriptions show` takes no profile and would
+    # ask as the operator — which for a Ping the operator is not in would
+    # answer about the wrong room, or not at all.
+    def ping_subscriber_ids(recording)
+      locator = ping_subscription_path(recording)
+      return [] if locator.nil?
+
+      Array(@basecamp_cli.get(locator, profile: @agent.profile)["subscribers"]).map { |subscriber| subscriber["id"] }
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      []
+    end
+
+    # Built from the authoritative line's own ids: its Circle, and the
+    # transcript it hangs off. A chat line's subscription lives on the
+    # transcript, not the line.
+    def ping_subscription_path(recording)
+      circle = recording.dig("bucket", "id")
+      transcript = recording.dig("parent", "id")
+
+      "/buckets/#{circle}/recordings/#{transcript}/subscription.json" unless circle.nil? || transcript.nil?
     end
 
     # A comment can trigger by subscription instead of by a mention: confirm,

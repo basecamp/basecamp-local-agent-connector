@@ -47,9 +47,9 @@ class EventTest < Minitest::Test
   end
 
   def test_to_emitted_hash_carries_the_trigger_verdicts
-    assert_equal({ "mentioned" => false, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).to_emitted_hash["trigger"])
-    assert_equal({ "mentioned" => true, "subscribed" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).to_emitted_hash["trigger"])
-    assert_equal({ "mentioned" => false, "subscribed" => true }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => false, "subscribed" => false, "pinged" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_mentioned" => true)).to_emitted_hash["trigger"])
+    assert_equal({ "mentioned" => false, "subscribed" => true, "pinged" => false }, BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload("agent_subscribed" => true)).to_emitted_hash["trigger"])
   end
 
   def test_boost_kind
@@ -164,6 +164,34 @@ class EventTest < Minitest::Test
   def test_non_chat_kinds_are_not_chat_kind
     refute from_kind("comment_created").chat_kind?
     refute from_kind("kanban_card_assignment_changed").chat_kind?
+  end
+
+  # Both halves of ping?: the kind keeps a non-chat payload from claiming ping
+  # targeting, the bucket keeps a project Campfire line from claiming it.
+  def test_a_chat_line_in_a_circle_is_a_ping
+    assert_predicate BasecampAgentConnector::Basecamp::Event.from_payload(ping_line_payload), :ping?
+  end
+
+  def test_a_chat_line_in_a_project_campfire_is_not_a_ping
+    refute_predicate BasecampAgentConnector::Basecamp::Event.from_payload(chat_line_payload), :ping?
+  end
+
+  def test_a_non_chat_payload_naming_a_circle_is_not_a_ping
+    payload = sample_payload("recording" => sample_recording("bucket" => { "id" => 555, "type" => "Circle" }))
+
+    refute_predicate BasecampAgentConnector::Basecamp::Event.from_payload(payload), :ping?
+  end
+
+  def test_a_ping_line_carries_its_circle_and_transcript_ids
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(ping_line_payload)
+
+    assert_equal 555, event.bucket_id
+    assert_equal 666, event.transcript_id
+  end
+
+  def test_pinged_reads_only_the_verifiers_stamp
+    refute_predicate BasecampAgentConnector::Basecamp::Event.from_payload(ping_line_payload), :pinged?
+    assert_predicate BasecampAgentConnector::Basecamp::Event.from_payload(ping_line_payload.merge("agent_pinged" => true)), :pinged?
   end
 
   private
