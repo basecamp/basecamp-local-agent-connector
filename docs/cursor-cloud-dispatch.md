@@ -143,7 +143,24 @@ So an unattended runner needs either a first-party OAuth client (issued by
 37signals, with `client_credentials` or token-exchange enabled) or a one-time
 human authorization whose refresh token the runner then keeps.
 
-Two Cursor-side gates to check before assuming this works on an account:
-no-repo agents must be enabled for the team (a repository-scoped API key cannot
-create one), and `GET /v1/agents/{id}/usage` answers `403 feature_unavailable`
-until early access is turned on.
+Three Cursor-side gates to check before assuming this works on an account,
+in the order they bite:
+
+- **The key has to be a user API key or a service-account key.** A key from
+  the dashboard's *Team API Keys* tab is for the Admin API only; every
+  Cloud Agents endpoint, `GET /v1/me` included, answers it with `401` and a
+  message saying exactly that. Found the hard way on 23 Sep 2026 with the
+  first key issued for this spike, so `bin/dispatch-cursor` never got past
+  the create — the run ended `UNDISPATCHED` and the fallback comment landed
+  on the card as the agent, which is the failure path doing its job.
+- No-repo agents must be enabled for the team (a repository-scoped API key
+  cannot create one).
+- `GET /v1/agents/{id}/usage` answers `403 feature_unavailable` until early
+  access is turned on.
+
+And the Basecamp-side wall above held on 23 Sep too: every `bc_at_` token,
+real or garbage, still gets `503 Authorization upstream unavailable; retry`
+from `https://mcp.basecamp.com/mcp`, with a `Retry-After` that rolls forward
+to about 01:45 UTC the next day each time it is checked. A request with no
+token gets the expected `401` with `WWW-Authenticate`, so the server is up;
+it is the token exchange behind it that is refusing.
