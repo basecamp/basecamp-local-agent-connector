@@ -82,7 +82,14 @@ class BasecampAgentConnector::RunRegistry
       new(pid: json["pid"], process_start: json["process_start"], started_at: json["started_at"],
         agent: json["agent"], operator: json["operator"],
         projects: Array(json["projects"]), repos: Array(json["repos"]), paths: Array(json["paths"]),
-        boosts: json["boosts"] != false, pings: json["pings"] != false)
+        # `boosts` reads absent as on, because every build that ever wrote an
+        # entry polled them. `pings` reads absent as off, and the asymmetry is
+        # the point: a build that polls pings always writes the key, so an
+        # entry without one was written before the trigger existed and was
+        # certainly not polling. Reading it as on makes `--status` claim
+        # coverage a live run does not have, and makes the duplicate check
+        # warn about two ping pollers where there is one.
+        boosts: json["boosts"] != false, pings: json["pings"] == true)
     end
 
     def alive?

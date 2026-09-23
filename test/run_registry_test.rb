@@ -270,6 +270,18 @@ class RunRegistryTest < Minitest::Test
     end
   end
 
+  # A pre-ping entry has no `pings` key, and it was written by a build that
+  # could not poll them — so it reads as off, where `boosts` (which every
+  # build polled) reads absent as on.
+  def test_an_entry_from_before_the_ping_trigger_reads_as_not_polling_pings
+    run = BasecampAgentConnector::RunRegistry::Run.from_json(
+      "pid" => 4_194_303, "started_at" => "2026-09-20T20:11:48Z", "agent" => "clawdito",
+      "operator" => "jorge", "projects" => [ "Queenbee" ], "repos" => [], "paths" => [ "/bc5/old" ])
+
+    refute run.pings
+    assert run.boosts
+  end
+
   private
     def in_registry
       Dir.mktmpdir do |directory|
