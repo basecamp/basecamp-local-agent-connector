@@ -297,6 +297,23 @@ What `bin/connect` has in place, at a glance:
   fetch, never from a payload. Email-keyed trust modes (`allowlist`, `domain`)
   can't see through that redaction, so under them boosts effectively stay
   operator-only; `project` mode broadens boosts fine.
+- **Ping gating** — a line in a **Ping** (Basecamp's direct message, a `Circle`
+  bucket holding one chat transcript) triggers without any mention: writing in
+  a two-person conversation with the agent *is* addressing it, and asking for
+  an @mention there would be asking for what the conversation already is. What
+  stands in a mention's place is stricter than one. The line is re-fetched **as
+  the agent** — Basecamp serves a Circle only to the people in it and answers
+  `not_found` to everyone else — the re-fetched line must itself say its bucket
+  is a `Circle` (so a project Campfire line can never be dispatched on room
+  membership in place of the mention it owes), and a fresh read of that
+  Circle's subscription must show **the agent and its operator and nobody
+  else**. That last check is re-read per line, not remembered with the room, so
+  a Ping that gains a third participant stops triggering from that moment —
+  the reply the agent would post lands in front of whoever is there. Only the
+  operator is recognized, in every trust mode: the broadened modes key on an
+  author's email, and bc3 redacts other people's addresses from a non-admin
+  reader, so there is nothing in a subscription for them to match on. Pings are
+  also refused outright on the webhook route, with every other chat kind.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -336,18 +353,22 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    Basecamp actually recorded, never to forgeable POST text. (An **assignment**
    corroborates the agent's assignee state but not the assigner — see the
    assignment caveat under [Trust modes](#trust-modes).)
-2. **Targets the agent.** The event must reach the agent one of four ways:
+2. **Targets the agent.** The event must reach the agent one of five ways:
    a real Basecamp mention *attachment* (`application/vnd.basecamp.mention`)
    naming it (not loose text that happens to contain the name); an assignment
    adding it to a card/todo; a **new comment on a recording the agent
-   subscribes to**; or a **boost on the agent's work**. Mentions are re-checked
+   subscribes to**; a **boost on the agent's work**; or a **line in a Ping the
+   agent is in** (see Ping gating above — the room is the addressing, and the
+   room must hold only the agent and its operator). Mentions are re-checked
    on the corroborated recording, so a forged mention paired with a real
    un-mentioning recording is dropped; subscription is re-fetched from the live
    subscribers API and stamped by the verifier, so a comment the agent doesn't
    actually subscribe to is dropped the same way; a boost is stamped only when
    the verifier finds it in a fresh fetch of the agent's own received-boosts
    feed — the feed files a boost under the person it was aimed at, so
-   membership is the targeting fact.
+   membership is the targeting fact; a ping is stamped only when the
+   re-fetched line says it lives in a `Circle` and a fresh read of that
+   Circle's subscription holds exactly the agent and its operator.
 3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
    API and confirmed. For a mention that means it exists **with the claimed
    creator and the claimed mention** — so a forged POST cannot survive. For an
@@ -465,6 +486,8 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--chat-poll` | Campfire poll interval, in seconds. | `15` |
 | `--boost-poll` | Received-boosts poll interval, in seconds. Boosts have no webhooks, so the connector polls the agent's own received-boosts feed for them. | `60` |
 | `--no-boosts` | Don't poll the agent's received-boosts feed (no boost trigger). | polling on |
+| `--ping-poll` | Ping (direct message) poll interval, in seconds. A Ping lives in a `Circle`, which is not a project, so there is nothing to register a webhook against — and a chat line would be excluded from webhook relay anyway. | `30` |
+| `--no-pings` | Don't poll the Pings the agent is in (no ping trigger). | polling on |
 | `--webhook-check` | How often, in seconds, to re-check that each registered webhook is still active and its funnel path still mounted, putting back whichever isn't, and to reconcile each webhook's delivery history so a delivery that never arrived is replayed. Basecamp deactivates a webhook after 10 failed deliveries. | `300` |
 | `--port` | Local port for the webhook server. | an unused high port |
 
@@ -490,7 +513,12 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    (unless `--no-boosts`): boosts have no webhooks, so the agent's own
    received-boosts feed is fetched every `--boost-poll` seconds and each new
    boost runs the same pipeline as a webhook delivery. The first fetch is a
-   baseline — history is never dispatched.
+   baseline — history is never dispatched. Starts the **ping poller** too
+   (unless `--no-pings`): the agent's notification feed (`/my/readings.json`)
+   is read every `--ping-poll` seconds for rows whose `section` is `pings`,
+   each of which names a Ping, and every Ping found has its lines read
+   directly from then on. A room's first fetch is a baseline, so connecting
+   never replays a conversation.
 5. **Listen.** For each delivery, on the request thread: pre-filter
    (authorized author + mentions agent + actionable kind), de-duplicate by
    event id, verify against the Basecamp API, re-check that the
@@ -536,8 +564,12 @@ recording. A `comment_created` is exactly one of the two. An assignment or a
 boost is a directive by `kind` alone: `subscribed` is `false` for both, and
 `mentioned` is a fact about the content (an assigned card whose description
 mentions the agent reads `true`; a boost is a reaction, not content, so the
-boost path settles no mention verdict and it always reads `false`). A watcher
-reads `trigger` to tell a directive from
+boost path settles no mention verdict and it always reads `false`), and
+`pinged` when the line arrived in a Ping. `pinged` is the starkest of the
+three: a ping line carries *nothing* saying the agent was addressed — no
+mention markup, and an ordinary `chat_lines_*_created` kind — so without the
+stamp a watcher would read a direct message as any other Campfire chatter.
+A watcher reads `trigger` to tell a directive from
 followed-thread activity instead of decoding the mention markup itself.
 
 **Teardown.** On `SIGINT`/`SIGTERM` it deletes **every** registered webhook
@@ -588,6 +620,13 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   connector polls the agent's own received-boosts feed — an account-wide,
   agent-scoped surface (a boost triggers wherever the agent's boosted work
   lives, not only in watched projects).
+- **Ping polling** — `--ping-poll` interval in seconds (default 30), or
+  `--no-pings` to disable the ping trigger. Pings have no webhooks either — a
+  `Circle` is not a project to register against, and chat kinds are excluded
+  from relay regardless — so the connector reads the agent's own notification
+  feed to find which Pings exist and then polls each one's transcript. Like
+  boosts this is account-wide and agent-scoped: a ping triggers wherever it
+  was sent, not only in watched projects.
 - **Webhook check** — `--webhook-check` interval in seconds (default 300):
   how often each registered webhook is re-read and reactivated if Basecamp
   deactivated it, the funnel paths remounted if lost, and each webhook's

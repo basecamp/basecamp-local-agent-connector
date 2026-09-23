@@ -76,12 +76,13 @@ class BasecampAgentConnector::RunRegistry
     nil
   end
 
-  Run = Data.define(:pid, :process_start, :started_at, :agent, :operator, :projects, :repos, :paths, :boosts) do
+  Run = Data.define(:pid, :process_start, :started_at, :agent, :operator, :projects, :repos, :paths, :boosts,
+    :pings) do
     def self.from_json(json)
       new(pid: json["pid"], process_start: json["process_start"], started_at: json["started_at"],
         agent: json["agent"], operator: json["operator"],
         projects: Array(json["projects"]), repos: Array(json["repos"]), paths: Array(json["paths"]),
-        boosts: json["boosts"] != false)
+        boosts: json["boosts"] != false, pings: json["pings"] != false)
     end
 
     def alive?
@@ -161,13 +162,14 @@ class BasecampAgentConnector::RunRegistry
   #
   # Returns the live runs of this agent that don't overlap: worth a warning,
   # not a refusal.
-  def reserve(agent:, operator:, projects:, repos:, boosts:, allow_duplicate: false)
+  def reserve(agent:, operator:, projects:, repos:, boosts:, pings:, allow_duplicate: false)
     exclusively do
       duplicates = duplicates_of(agent: agent, projects: projects, repos: repos)
       raise DuplicateRun, duplicates unless duplicates.empty? || allow_duplicate
 
       elsewhere = same_agent_elsewhere(agent: agent, projects: projects, repos: repos)
-      record agent: agent, operator: operator, projects: projects, repos: repos, paths: [], boosts: boosts
+      record agent: agent, operator: operator, projects: projects, repos: repos, paths: [], boosts: boosts,
+        pings: pings
       elsewhere
     end
   end
@@ -182,23 +184,23 @@ class BasecampAgentConnector::RunRegistry
 
   # Same agent, no detected overlap. Still worth saying out loud: project
   # tokens are compared as written, so a name in one run and an id in the
-  # other hides a real duplicate — and the received-boosts feed is per-agent,
-  # so two boost pollers on one agent double every boost regardless of
-  # projects.
+  # other hides a real duplicate — and the received-boosts feed and the
+  # agent's Pings are per-agent, so two boost pollers (or two ping pollers) on
+  # one agent double every boost and every ping regardless of projects.
   #
   # A GitHub-only run has no agent, and two of those share nothing per-agent:
-  # no boost feed, no mentions. Neither is "the same agent" as the other.
+  # no boost feed, no Pings, no mentions. Neither is "the same agent" as the other.
   def same_agent_elsewhere(agent:, projects:, repos:)
     return [] if agent.nil?
 
     same_agent(agent) - duplicates_of(agent: agent, projects: projects, repos: repos)
   end
 
-  def record(agent:, operator:, projects:, repos:, paths:, boosts:)
+  def record(agent:, operator:, projects:, repos:, paths:, boosts:, pings:)
     write file_for(Process.pid), JSON.generate(
       pid: Process.pid, process_start: self.class.process_start(Process.pid),
       started_at: started_at, agent: agent, operator: operator,
-      projects: projects, repos: repos, paths: paths, boosts: boosts)
+      projects: projects, repos: repos, paths: paths, boosts: boosts, pings: pings)
   end
 
   def forget

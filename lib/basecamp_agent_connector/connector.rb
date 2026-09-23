@@ -16,8 +16,8 @@ class BasecampAgentConnector::Connector
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
-    :allow_duplicate)
+    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :ping_poll,
+    :webhook_check, :allow_duplicate)
 
   def self.start(argv)
     return print_status if argv.include?("--status")
@@ -47,6 +47,7 @@ class BasecampAgentConnector::Connector
         puts "    repos:    #{run.repos.join(', ')}" if run.repos.any?
         puts "    paths:    #{run.paths.any? ? run.paths.join(', ') : "(none — chat-only, no webhooks)"}"
         puts "    boosts:   #{run.boosts ? "polling" : "off"}"
+        puts "    pings:    #{run.pings ? "polling" : "off"}"
       end
       puts "A webhook whose payload_url ends in one of those paths belongs to a LIVE run. Don't delete it."
     end
@@ -121,13 +122,14 @@ class BasecampAgentConnector::Connector
     allow_duplicate = false
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
+    ping_poll = BasecampAgentConnector::Basecamp::PingPoller::DEFAULT_INTERVAL
     webhook_check = BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
-        "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
+        "[--ping-poll SECONDS] [--no-pings] [--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
@@ -165,6 +167,12 @@ class BasecampAgentConnector::Connector
         boost_poll = value
       end
       parser.on("--no-boosts", "Don't poll the agent's received-boosts feed") { boost_poll = nil }
+      parser.on("--ping-poll SECONDS", Integer, "Ping (direct message) poll interval "         "(default: #{BasecampAgentConnector::Basecamp::PingPoller::DEFAULT_INTERVAL}s; a Ping lives in a Circle, "         "not a project, so it has no webhooks either)") do |value|
+        raise ArgumentError, "--ping-poll must be a positive number of seconds" unless value.positive?
+
+        ping_poll = value
+      end
+      parser.on("--no-pings", "Don't poll the Pings the agent is in") { ping_poll = nil }
       parser.on("--webhook-check SECONDS", Integer, "How often to re-check that each registered webhook is still active " \
         "and its funnel path still mounted, restoring either (default: " \
         "#{BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL}s; Basecamp deactivates a webhook after 10 failed deliveries)") do |value|
@@ -190,7 +198,8 @@ class BasecampAgentConnector::Connector
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
-      chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
+      chat_poll: chat_poll, boost_poll: boost_poll, ping_poll: ping_poll, webhook_check: webhook_check,
+      allow_duplicate: allow_duplicate)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -286,10 +295,10 @@ class BasecampAgentConnector::Connector
       refuse_same_user(agent, operator)
 
       BasecampAgentConnector::Basecamp::Bridge.new \
-        authorizer: authorizer(operator, agent), agent: agent,
+        authorizer: authorizer(operator, agent), agent: agent, operator: operator,
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
-        webhook_check_interval: @options.webhook_check,
+        ping_poll_interval: @options.ping_poll, webhook_check_interval: @options.webhook_check,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 
@@ -385,7 +394,7 @@ class BasecampAgentConnector::Connector
       warn_of_same_agent_elsewhere @registry.reserve(
         agent: @options.agent, operator: @options.operator,
         projects: @options.projects, repos: @options.repos,
-        boosts: polling_boosts?, allow_duplicate: @options.allow_duplicate)
+        boosts: polling_boosts?, pings: polling_pings?, allow_duplicate: @options.allow_duplicate)
     rescue BasecampAgentConnector::RunRegistry::DuplicateRun => error
       abort duplicate_run_message(error.runs)
     rescue BasecampAgentConnector::RunRegistry::Error => error
@@ -413,8 +422,8 @@ class BasecampAgentConnector::Connector
     end
 
     # Same agent, no overlap detected. Not fatal, but worth saying: the
-    # received-boosts feed is per-agent, so two boost pollers double every
-    # boost whatever the projects — and project tokens are compared as
+    # received-boosts feed and the agent's Pings are per-agent, so two of
+    # either poller double every boost and every ping whatever the projects — and project tokens are compared as
     # written, so a name here and an id there hides a real overlap.
     def warn_of_same_agent_elsewhere(others)
       return if others.empty?
@@ -423,6 +432,7 @@ class BasecampAgentConnector::Connector
         "No project overlap detected, but project names and ids don't compare, so check `bin/connect --status`."
       warn "Both runs poll the same received-boosts feed, so every boost dispatches twice — " \
         "pass --no-boosts to one of them." if @options.boost_poll && others.any?(&:boosts)
+      warn "Both runs poll the same Pings, so every ping dispatches twice — "         "pass --no-pings to one of them." if @options.ping_poll && others.any?(&:pings)
     end
 
     # Completes the reservation with the paths the bridges own, which is what
@@ -430,7 +440,7 @@ class BasecampAgentConnector::Connector
     def record_run
       @registry.record agent: @options.agent, operator: @options.operator,
         projects: @options.projects, repos: @options.repos,
-        paths: @bridges.flat_map(&:paths), boosts: polling_boosts?
+        paths: @bridges.flat_map(&:paths), boosts: polling_boosts?, pings: polling_pings?
     rescue BasecampAgentConnector::RunRegistry::Error => error
       abort unrecordable_run_message(error)
     end
@@ -439,6 +449,12 @@ class BasecampAgentConnector::Connector
     # whatever --boost-poll says.
     def polling_boosts?
       @options.projects.any? && !@options.boost_poll.nil?
+    end
+
+    # Same for pings. The Pings are the agent's own, not any project's, but it
+    # takes a Basecamp bridge to read them.
+    def polling_pings?
+      @options.projects.any? && !@options.ping_poll.nil?
     end
 
 

@@ -43,12 +43,13 @@ the operator alone (you — the CLI default profile, or `--operator <profile>`);
 `--allow-project`) can deliberately broaden this to named colleagues, an email
 domain, or the whole project membership — (2) **@mentions the agent user**,
 **assigns** it a card/todo, is a new comment on a recording the agent
-**subscribes** to, **or** is a **boost on the agent's work**, and (3) is
+**subscribes** to, is a **boost on the agent's work**, **or** is a line in a
+**Ping** the agent is in, and (3) is
 corroborated against the Basecamp API. The agent's own identity never
 authorizes, in any mode. Treat every STDOUT line as already-trusted — but still
 keep dispatched agents scoped to the resolved repo.
 
-There are thus **four triggers**:
+There are thus **five triggers**:
 
 1. an `@mention` of the agent;
 2. the operator **assigning** the agent a card/todo (a `*_assignment_changed`
@@ -67,7 +68,20 @@ There are thus **four triggers**:
    gated exactly like a mention author, matched by Person id (the agent's view
    of the feed redacts other users' emails, so under email-keyed `allowlist`/
    `domain` trust, boosts effectively stay operator-only). See
-   [When someone boosts the agent's work](#when-someone-boosts-the-agents-work).
+   [When someone boosts the agent's work](#when-someone-boosts-the-agents-work);
+5. a **ping** — a line in a Basecamp Ping (a direct message) the agent is in.
+   It arrives as an ordinary `chat_lines_*_created` kind with
+   `trigger.pinged: true` and a `recording.bucket.type` of `"Circle"`. **No
+   @mention is needed or expected**: writing in a two-person conversation with
+   the agent is already writing at it. Pings have no webhooks either — a
+   Circle is not a project to register against — so the connector reads the
+   agent's notification feed to learn which Pings exist and then polls each
+   one's lines (every `--ping-poll` seconds, default 30; `--no-pings`
+   disables). The connector will only dispatch a ping whose room holds **the
+   agent and its operator and nobody else**, re-checked per line, so a Ping
+   that gains a third person goes quiet — in every trust mode, because
+   Basecamp redacts the emails the broadened modes would key on. See
+   [When the trigger is a ping](#when-the-trigger-is-a-ping).
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -150,6 +164,7 @@ The skill remembers the last successful connection in
   "types": "Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line",
   "chat_poll": 15,
   "boost_poll": 60,
+  "ping_poll": 30,
   "saved_at": "2026-07-01T15:00:00Z"
 }
 ```
@@ -173,8 +188,9 @@ The skill remembers the last successful connection in
   names, **the trust configuration** (the mode and its value flags, so a
   later no-argument launch reconstructs the same trust boundary rather than
   silently falling back to operator-only), **and the coverage** — the `--types`
-  value, `--chat-poll` interval, and boost polling (`--boost-poll` interval, or
-  `null` for `--no-boosts`) actually used, so a chat-only or custom-typed run
+  value, `--chat-poll` interval, boost polling (`--boost-poll` interval, or
+  `null` for `--no-boosts`), and ping polling (`--ping-poll` interval, or
+  `null` for `--no-pings`) actually used, so a chat-only or custom-typed run
   relaunches as itself instead of silently restoring the default mixed
   webhook/chat coverage (and its Funnel + webhooks) — so the store always
   reflects the last working connection. Create the directory if needed. Launch failures must
@@ -191,8 +207,9 @@ The skill remembers the last successful connection in
   operator-only (older stores). If the stored block is internally inconsistent
   and the parser rejects it, **stop and confirm with the user** — never infer a
   mode to make it launch. Also re-emit the stored `types` (as `--types`),
-  `chat_poll` (as `--chat-poll`), and `boost_poll` (`--boost-poll <n>`, or
-  `--no-boosts` for a stored `null`) when present; missing fields (older
+  `chat_poll` (as `--chat-poll`), `boost_poll` (`--boost-poll <n>`, or
+  `--no-boosts` for a stored `null`), and `ping_poll` (`--ping-poll <n>`, or
+  `--no-pings` for a stored `null`) when present; missing fields (older
   stores) mean the defaults.
 
 Project ids are stored (not just names) because a name is only resolved against
@@ -329,7 +346,7 @@ Each STDOUT line is one trusted event as NDJSON:
  "recording":{"id":456,"type":"Comment","app_url":"...","url":"...",
    "content":"<p>Hey <bc-attachment content-type=\"application/vnd.basecamp.mention\">…@Clawdito…</bc-attachment> do X</p>",
    "parent":{...},"bucket":{"id":222,"name":"BC5 Calendar"}},
- "trigger":{"mentioned":true,"subscribed":false}}
+ "trigger":{"mentioned":true,"subscribed":false,"pinged":false}}
 ```
 
 `creator` is the **triggering author** — the person whose mention/assignment
@@ -340,11 +357,15 @@ to @mention on failure — not as "the operator." The mention of the agent lives
 in `recording.content` as a mention attachment. `trigger` is the connector's
 verdict on **why** the event fired, settled on the re-fetched recording:
 `mentioned` (its content carries a mention attachment for the agent's Person
-id) or `subscribed` (a `comment_created` on a recording the agent follows, with
-no mention of it). A `comment_created` is exactly one of the two; an assignment
-or a boost is a directive by `kind` alone (`subscribed` is `false` for both;
-`mentioned` reports whether an assigned recording's content mentions the
-agent, and is always `false` on a boost — a reaction is not content). STDERR
+id), `subscribed` (a `comment_created` on a recording the agent follows, with
+no mention of it), or `pinged` (the line arrived in a Ping). A
+`comment_created` is exactly one of the first two; an assignment or a boost is
+a directive by `kind` alone (`subscribed` is `false` for both; `mentioned`
+reports whether an assigned recording's content mentions the agent, and is
+always `false` on a boost — a reaction is not content). **`pinged` is the one
+verdict you cannot derive from the line itself**: a ping carries no mention
+markup and an ordinary chat kind, so without it a direct message reads as any
+other Campfire chatter. STDERR
 carries diagnostics (dropped/uncorroborated events, registration notices) —
 surface them but don't act on them.
 
@@ -754,6 +775,46 @@ with these differences:
   chat-sized; spill long results into a Basecamp doc or comment and link
   them. On failure, @mention the requester so it notifies:
   `[@Name](person:<creator.id>)`.
+
+### When the trigger is a ping
+
+If `trigger.pinged` is `true` — the `kind` is an ordinary `chat_lines_*_created`
+and `recording.bucket.type` is `"Circle"` — the line arrived in a **Ping**, a
+Basecamp direct message between the operator and the agent. Treat it as chat
+(see the Campfire section above), with these differences:
+
+- **Read the trigger off `trigger.pinged`, not off the content.** There is no
+  mention in a ping and there is not meant to be: the room is the addressing.
+  A ping whose text merely mentions a name is still just a ping.
+- **Context** — the CLI's `chat line` cannot fetch one (it resolves its
+  `--project` through `/projects/<id>.json`, and a Circle is not a project), so
+  read a single line through the API and the conversation through `chat
+  messages`, which does take a Circle as its bucket:
+  ```bash
+  basecamp api get <recording.url> -j --profile <agent>                                 # the line itself
+  basecamp chat messages --project <bucket.id> --room <recording.parent.id> -n 25 -j --profile <agent>
+  ```
+  **Every ping call needs `--profile <agent>`**: Basecamp serves a Circle only
+  to the people in it, and answers `not_found` to anyone else — including the
+  operator, for a Ping the operator is not in.
+- **Ack** — boost the line as usual, or let a fast substantive reply carry the
+  receipt. A Ping is a two-person conversation, so a quick real answer is very
+  often the better ack; there is no board and no audience waiting on a visible
+  marker.
+- **No card moves** — there is no board; skip the Triage step.
+- **Reply in the same Ping as the agent**, with the Circle as the project:
+  ```bash
+  basecamp chat post "<body>" --project <bucket.id> --room <recording.parent.id> --profile <agent>
+  ```
+  The same formatting rules as Campfire apply (Markdown only when the reply
+  carries a mention, plain prose otherwise, never hand-written HTML). **Don't
+  @mention the operator in a Ping** — they are one of two people in the room and
+  already notified; a mention there reads as shouting. Keep replies
+  chat-sized and spill long results into a doc or a comment you link.
+- **Privacy is the point.** A Ping is private to the two of them, which is
+  exactly why the connector refuses to dispatch one the moment a third person
+  joins. Don't relay a ping's contents into a project, a card, or a Campfire
+  without being asked to.
 
 ### When a comment lands on a thread the agent follows
 

@@ -119,8 +119,14 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("chat", "list", "--project", project.to_s)
   end
 
-  def chat_lines(project:, chat:, limit:)
-    Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s)
+  # `project` is a bucket id, which for a Ping is its Circle rather than a
+  # project — `chat messages` passes it through as a bucket and serves a
+  # Circle's transcript unchanged (verified against production). `profile`
+  # matters there and nowhere else: Basecamp serves a Circle only to its
+  # participants, so a ping room has to be read as the agent.
+  def chat_lines(project:, chat:, limit:, profile: nil)
+    Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s,
+      *profile_flag(profile))
   end
 
   def chat_line(url_or_id)
@@ -131,12 +137,33 @@ class BasecampAgentConnector::Basecamp::Client
     json "subscriptions", "show", url_or_id
   end
 
+  # The raw API passthrough: a path or a full url, handed through untouched.
+  # Two things need it, both of them pings. `chat line` cannot fetch a line in
+  # a Circle — it resolves its `--project` through `/projects/<id>.json`, and
+  # a Circle is not a project (verified against production: "Resource not
+  # found: …/projects/<circle id>.json") — and `subscriptions show` takes no
+  # profile, while a Circle's subscription is readable only as someone in the
+  # room.
+  def get(url_or_path, profile: nil)
+    json "api", "get", url_or_path.to_s, *profile_flag(profile)
+  end
+
   # The boosts the profile's user has received (bc3's `/my/boosts.json` — the
   # report behind the "You've got Boosts!" notification), newest first. The CLI
   # has no dedicated command for the received-boosts feed, so go through its
   # raw API passthrough.
   def received_boosts(profile:)
     Array json("api", "get", "/my/boosts.json", *profile_flag(profile))
+  end
+
+  # The profile's own notification inbox (bc3's `/my/readings.json` — the
+  # report behind Basecamp's sidebar notifications), as one hash of
+  # `unreads` / `reads` / `bubble_ups` lists. The CLI has no command for it,
+  # so go through the raw API passthrough as the boosts feed does. The
+  # PingPoller reads it for one thing only: which Pings exist
+  # (`section == "pings"`).
+  def readings(profile:)
+    json "api", "get", "/my/readings.json", *profile_flag(profile)
   end
 
   # One attempt: a create whose answer was lost may still have created, and

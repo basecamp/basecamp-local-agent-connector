@@ -74,7 +74,7 @@ class RunRegistryTest < Minitest::Test
       write_run directory, pid: Process.pid, agent: "clawdito", process_start: "0"
       abandoned = registry.abandoned
 
-      registry.reserve(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+      registry.reserve(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true)
       registry.discard abandoned
 
       assert_equal [ Process.pid ], registry.live.map(&:pid)
@@ -139,7 +139,7 @@ class RunRegistryTest < Minitest::Test
 
   def test_reserving_records_the_run_with_no_paths_yet
     in_registry do |registry|
-      elsewhere = registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+      elsewhere = registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true)
 
       assert_empty elsewhere
       assert_equal [ Process.pid ], registry.live.map(&:pid)
@@ -154,7 +154,7 @@ class RunRegistryTest < Minitest::Test
         write_run directory, pid: pid, agent: "clawdito", projects: [ "Queenbee" ]
 
         error = assert_raises BasecampAgentConnector::RunRegistry::DuplicateRun do
-          registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+          registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true)
         end
 
         assert_equal [ pid ], error.runs.map(&:pid)
@@ -168,7 +168,7 @@ class RunRegistryTest < Minitest::Test
       with_live_process do |pid|
         write_run directory, pid: pid, agent: "clawdito", projects: [ "Queenbee" ]
 
-        registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, allow_duplicate: true)
+        registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true, allow_duplicate: true)
 
         assert_includes registry.live.map(&:pid), Process.pid
       end
@@ -180,7 +180,7 @@ class RunRegistryTest < Minitest::Test
       with_live_process do |pid|
         write_run directory, pid: pid, agent: "clawdito", projects: [ "Queenbee" ]
 
-        elsewhere = registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "BC5.1" ], repos: [], boosts: true)
+        elsewhere = registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "BC5.1" ], repos: [], boosts: true, pings: true)
 
         assert_equal [ pid ], elsewhere.map(&:pid)
       end
@@ -241,7 +241,7 @@ class RunRegistryTest < Minitest::Test
     end
 
     assert_raises BasecampAgentConnector::RunRegistry::Error do
-      registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+      registry.reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true)
     end
   end
 
@@ -286,8 +286,8 @@ class RunRegistryTest < Minitest::Test
       end
     end
 
-    def run_attributes(agent: "clawdito", projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/mine" ], boosts: true)
-      { agent: agent, operator: "jorge", projects: projects, repos: repos, paths: paths, boosts: boosts }
+    def run_attributes(agent: "clawdito", projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/mine" ], boosts: true, pings: true)
+      { agent: agent, operator: "jorge", projects: projects, repos: repos, paths: paths, boosts: boosts, pings: pings }
     end
 
     # `process_start` disagreeing with the live one is what proves a pid was
@@ -295,7 +295,7 @@ class RunRegistryTest < Minitest::Test
     def write_run(directory, pid:, agent:, projects: [ "Queenbee" ], repos: [], paths: [], process_start: nil)
       File.write File.join(directory, "#{pid}.json"), JSON.generate(
         pid: pid, process_start: process_start, started_at: "2026-09-01T00:00:00Z", agent: agent, operator: "jorge",
-        projects: projects, repos: repos, paths: paths, boosts: true)
+        projects: projects, repos: repos, paths: paths, boosts: true, pings: true)
     end
 
     # A pid that is genuinely alive and genuinely not this process: the only
@@ -336,7 +336,7 @@ class RunRegistryTest < Minitest::Test
 
     def reserve_outcome(directory)
       BasecampAgentConnector::RunRegistry.new(directory: directory)
-        .reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true)
+        .reserve(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], boosts: true, pings: true)
       "reserved"
     rescue BasecampAgentConnector::RunRegistry::DuplicateRun
       "refused"

@@ -9,9 +9,11 @@ require "securerandom"
 # chat kinds from relay outright), so chat-typed entries in `types` are split
 # off into a ChatPoller instead of the webhook registration. Boosts are just as
 # webhook-infeasible (a Boost creates no Event in bc3), so the bridge also runs
-# a BoostPoller over the agent's own received-boosts feed. All sources feed
-# identical pipelines: authorizer pre-filter, corroborating re-fetch,
-# authoritative re-check, one STDOUT funnel.
+# a BoostPoller over the agent's own received-boosts feed. Pings are infeasible
+# twice over — a chat kind, in a Circle that is not a project to register
+# against — so a PingPoller covers those from the agent's notification feed.
+# All sources feed identical pipelines: authorizer pre-filter, corroborating
+# re-fetch, authoritative re-check, one STDOUT funnel.
 #
 # The deliveries the webhook route never received are a source of their own: on
 # the webhook re-check's tick a DeliveryReconciler reads each registration's own
@@ -22,13 +24,15 @@ class BasecampAgentConnector::Basecamp::Bridge
   # webhook recording type. Chat::Line is the canonical spelling.
   CHAT_TYPE = /\A(chat(::.+)?|campfire)\z/i
 
-  def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, logger: $stderr,
+  def initialize(authorizer:, agent:, projects:, types:, basecamp_cli:, emitter:, operator: nil, logger: $stderr,
     chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
     boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
+    ping_poll_interval: BasecampAgentConnector::Basecamp::PingPoller::DEFAULT_INTERVAL,
     webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL,
     delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK)
     @authorizer = authorizer
     @agent = agent
+    @operator = operator
     @projects = projects
     @webhook_types, @chat_types = partition_types(types)
     @basecamp_cli = basecamp_cli
@@ -36,6 +40,7 @@ class BasecampAgentConnector::Basecamp::Bridge
     @logger = logger
     @chat_poll_interval = chat_poll_interval
     @boost_poll_interval = boost_poll_interval
+    @ping_poll_interval = ping_poll_interval
     @webhook_check_interval = webhook_check_interval
     @delivery_lookback = delivery_lookback
     @secret = SecureRandom.hex(16)
@@ -98,6 +103,14 @@ class BasecampAgentConnector::Basecamp::Bridge
       log "Polling @#{agent_name}'s received-boosts feed every #{@boost_poll_interval}s (boosts have no webhooks)"
     end
 
+    # Same again for pings: discovery runs synchronously here so the room
+    # count is accurate, but no line is read until the thread's first pass.
+    if @ping_poll_interval
+      pings = ping_poller.start
+      log "Polling #{pings.length} Ping(s) with @#{agent_name} every #{@ping_poll_interval}s " \
+        "(a Circle is not a project, so pings have no webhooks either)"
+    end
+
     log "Trust: #{@authorizer.description}"
   end
 
@@ -153,6 +166,7 @@ class BasecampAgentConnector::Basecamp::Bridge
   def teardown
     @chat_poller&.stop
     @boost_poller&.stop
+    @ping_poller&.stop
     @webhook_monitor&.stop
     @webhooks.delete_all
   end
@@ -185,6 +199,18 @@ class BasecampAgentConnector::Basecamp::Bridge
         pipeline: build_pipeline,
         agent: @agent,
         interval: @boost_poll_interval,
+        logger: @logger
+    end
+
+    # Like the other two: its own pipeline so ping line ids, chat line ids and
+    # webhook event ids never share a dedupe space; trust components are the
+    # same instances.
+    def ping_poller
+      @ping_poller ||= BasecampAgentConnector::Basecamp::PingPoller.new \
+        basecamp_cli: @basecamp_cli,
+        pipeline: build_pipeline,
+        agent: @agent,
+        interval: @ping_poll_interval,
         logger: @logger
     end
 
@@ -224,7 +250,8 @@ class BasecampAgentConnector::Basecamp::Bridge
     end
 
     def verifier
-      @verifier ||= BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent)
+      @verifier ||= BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: @basecamp_cli, agent: @agent,
+        operator: @operator)
     end
 
     def agent_name

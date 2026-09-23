@@ -237,6 +237,42 @@ class BasecampBridgeTest < Minitest::Test
     bridge.teardown
   end
 
+  def test_register_starts_the_ping_poller_and_logs_after_the_webhook_readiness_line
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    runner.stub "api get /my/readings.json", stdout: readings_envelope(unreads: [ ping_notification ])
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, ping_poll_interval: 30)
+
+    bridge.register(base_url: "https://host.ts.net")
+
+    listening = logs.string.index("Listening for mentions")
+    polling = logs.string.index("Polling 1 Ping(s) with @Clawdito every 30s")
+    refute_nil polling
+    assert_operator listening, :<, polling
+    # Discovery is synchronous, so the room count is accurate — but no line is
+    # read until the first interval pass, so no ping can beat the readiness
+    # lines to the funnel.
+    assert_empty runner.commands_matching(/chat messages/)
+  ensure
+    bridge.teardown
+  end
+
+  def test_a_nil_ping_poll_interval_disables_the_poller
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks delete", exit_status: 0
+    logs = StringIO.new
+    bridge = bridge(runner, logger: logs, ping_poll_interval: nil)
+
+    bridge.register(base_url: "https://host.ts.net")
+    bridge.teardown
+
+    refute_match(/Ping\(s\)/, logs.string)
+    assert_empty runner.commands_matching(%r{api get /my/readings\.json})
+  end
+
   def test_a_nil_boost_poll_interval_disables_the_poller
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)
@@ -315,16 +351,18 @@ class BasecampBridgeTest < Minitest::Test
     end
 
     def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new,
-      boost_poll_interval: nil, webhook_check_interval: nil)
+      boost_poll_interval: nil, ping_poll_interval: nil, webhook_check_interval: nil)
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer,
         agent: agent_identity,
+        operator: operator_identity,
         projects: projects,
         types: types,
         basecamp_cli: build_cli(runner),
         emitter: BasecampAgentConnector::Emitter.new(output: output),
         logger: logger,
         boost_poll_interval: boost_poll_interval,
+        ping_poll_interval: ping_poll_interval,
         webhook_check_interval: webhook_check_interval
     end
 end
