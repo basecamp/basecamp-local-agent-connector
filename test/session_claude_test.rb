@@ -138,11 +138,58 @@ class SessionClaudeTest < Minitest::Test
   # the stop is not optional — it is what keeps one card on one session.
   def test_stop_then_resume_stops_before_resuming
     @runner.stub "claude stop", stdout: "stopped"
+    @runner.stub "claude agents --json", stdout: JSON.generate([ { "id" => "09c36f96", "sessionId" => "uuid-1", "state" => "stopped" } ])
     @runner.stub "claude --background --resume", stdout: "backgrounded"
 
     @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3")
 
-    assert_equal [ %w[claude stop 09c36f96], [ "claude", "--background", "--resume", "uuid-1", "carry on" ] ], @runner.commands
+    assert_equal [ %w[claude stop 09c36f96], %w[claude agents --json --all],
+      [ "claude", "--background", "--resume", "uuid-1", "carry on" ] ], @runner.commands
+  end
+
+  # `claude stop` returns once the stop is requested, and a session tearing down
+  # a dev server or a test run takes a moment to go. Resumed inside that window
+  # it is still resident, and the CLI copies it under a new id instead -- which
+  # the daemon log shows happening five times, 14 to 573 ms before the original
+  # finished dying. So the resume waits until the session is no longer running.
+  def test_stop_then_resume_waits_for_the_session_to_exit
+    @runner.stub "claude stop", stdout: "stopped"
+    @runner.stub "claude agents --json", stdout: JSON.generate([ { "id" => "09c36f96", "sessionId" => "uuid-1", "state" => "done", "status" => "idle", "pid" => Process.pid } ]), times: 3
+    @runner.stub "claude agents --json", stdout: JSON.generate([ { "id" => "09c36f96", "sessionId" => "uuid-1", "state" => "stopped" } ])
+    @runner.stub "claude --background --resume", stdout: "backgrounded"
+
+    assert_predicate @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3"), :success?
+
+    polls_before_resume = @runner.commands.take_while { |command| !command.include?("--resume") }.count { |command| command.include?("agents") }
+    assert_equal 4, polls_before_resume
+  end
+
+  # Giving up costs a flush: the dispatcher keeps the message queued and tries
+  # again. Resuming anyway would cost a second agent on the card.
+  def test_a_session_that_never_exits_is_not_resumed
+    @runner.stub "claude stop", stdout: "stopped"
+    @runner.stub "claude agents --json", stdout: JSON.generate([ { "id" => "09c36f96", "sessionId" => "uuid-1", "state" => "done", "status" => "idle", "pid" => Process.pid } ])
+
+    result = @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3")
+
+    refute_predicate result, :success?
+    assert_match(/still shutting down/, result.stderr)
+    assert_empty @runner.commands_matching(/--resume/)
+  end
+
+  def test_a_listing_that_cannot_be_read_after_the_stop_does_not_resume
+    @runner.stub "claude stop", stdout: "stopped"
+    @runner.stub "claude agents --json", stdout: "", stderr: "boom", exit_status: 1
+
+    refute_predicate @claude.stop_then_resume(session_id: "uuid-1", short_id: "09c36f96", prompt: "carry on", cwd: "/work/bc3"), :success?
+    assert_empty @runner.commands_matching(/--resume/)
+  end
+
+  # The CLI names the session it continued; a fork names a different one.
+  def test_continued_as_reads_the_session_the_cli_continued
+    result = BasecampAgentConnector::CommandRunner::Result.new(stdout: BACKGROUNDED, stderr: "", exit_status: 0)
+
+    assert_equal "1e9694b6", @claude.continued_as(result)
   end
 
   # A stop that failed on a session still listed means it is still resident,

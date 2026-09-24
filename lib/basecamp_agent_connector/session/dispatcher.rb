@@ -269,6 +269,14 @@ class BasecampAgentConnector::Session::Dispatcher
       log(result.success? ? "session #{entry.short_id} continued for #{entry.name}" \
         : "session #{entry.short_id} could not be continued, keeping it queued: #{result.stderr.to_s.strip}")
 
+      # Every fork so far logged as an ordinary continue and was found days
+      # later by cross-reading transcripts. If one gets past the wait above, the
+      # CLI names the copy in its own output, so say so where it will be seen.
+      copy = result.success? && @claude.continued_as(result)
+      if copy && copy != entry.short_id
+        log "session #{entry.short_id} was COPIED into #{copy} instead of continued: two sessions now hold #{entry.name}. Stop #{copy}."
+      end
+
       [ entry, result.success? ]
     end
 

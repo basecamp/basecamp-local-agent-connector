@@ -8,7 +8,7 @@ class FakeClaude
   Continuation = Struct.new(:session_id, :prompt, :cwd, :stopped)
 
   attr_reader :spawns, :continuations, :stops
-  attr_accessor :states, :spawn_succeeds, :resolvable, :listing_fails, :resume_succeeds, :on_resume
+  attr_accessor :states, :spawn_succeeds, :resolvable, :listing_fails, :continues_as, :resume_succeeds, :on_resume
 
   def initialize
     @spawns = []
@@ -60,6 +60,12 @@ class FakeClaude
   def stop(short_id)
     @stops << short_id
     result(true)
+  end
+
+  # nil unless a test sets it: the real CLI names the session it continued, and
+  # a fork names a different one.
+  def continued_as(_result)
+    @continues_as
   end
 
   # nil when the CLI could not be asked -- the real one cannot tell an empty
@@ -308,6 +314,30 @@ class SessionDispatcherTest < Minitest::Test
     assert_equal 1, @claude.spawns.length
     assert_equal 1, @claude.continuations.length
     assert_includes @claude.continuations.first.prompt, "In progress"
+  end
+
+  # Every fork so far logged as an ordinary continue. When the CLI reports that
+  # it continued a different session from the one it was given, that is said.
+  def test_a_resume_that_lands_in_a_copy_is_named_in_the_log
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.continues_as = "deadbeef"
+
+    subject.dispatch moved
+
+    assert_match(/COPIED into deadbeef/, @log.string)
+  end
+
+  def test_a_resume_that_continues_the_same_session_says_nothing_extra
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.continues_as = @claude.only_session_id[0, 8]
+
+    subject.dispatch moved
+
+    refute_match(/COPIED/, @log.string)
   end
 
   # Resuming a resident session forks it into a copy under a new id, carrying

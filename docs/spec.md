@@ -510,6 +510,16 @@ learned from a live board rather than the docs:
   same goes for busy: a follow-up is continued only on a definite "idle", and
   a listing the CLI could not give holds it for the flusher, since stopping a
   session that may be mid-work would throw its work away.
+- **`claude stop` returns before the session is gone.** It returns once the
+  stop is requested, and a session tearing down a dev server or a test run
+  takes a moment to exit. A resume issued in that window finds it still
+  resident and forks it — seen five times in five days, the copy claimed
+  between 14 and 573 ms before the original finished exiting. So the resume
+  waits, polling for up to ten seconds, until the session is unlisted or listed
+  without a `status`; if it has not gone, or the listing cannot be read, the
+  continue fails and the message stays queued. In case a fork ever gets
+  through anyway, the dispatcher compares the session the CLI says it
+  continued with the one it asked for, and logs a copy loudly.
 
 A message leaves the queue only once a resume actually went through. The
 flusher's check, resume and queue update are one decision under the card's

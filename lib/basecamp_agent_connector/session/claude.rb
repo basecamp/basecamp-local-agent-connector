@@ -40,6 +40,11 @@ class BasecampAgentConnector::Session::Claude
   RESOLVE_ATTEMPTS = 12
   RESOLVE_DELAY = 0.25
 
+  # How long to wait for a stopped session to exit before resuming it: up to
+  # ten seconds, polled. The slowest teardown seen so far took under one.
+  SETTLE_ATTEMPTS = 40
+  SETTLE_DELAY = 0.25
+
   # `session_id` is nil when the spawn failed, or when it succeeded but the id
   # could not be read back — a running session that cannot be continued, which
   # the dispatcher records and retries resolving later rather than discarding.
@@ -111,11 +116,28 @@ class BasecampAgentConnector::Session::Claude
   # make the resume fork it. So after a failed stop, resume only on a definite
   # "not listed"; otherwise hand back the failed stop and leave the message for
   # a later attempt.
+  #
+  # `claude stop` returns once the stop is requested, not once the session has
+  # gone. Tearing down takes a moment -- longer when it was running a dev server
+  # or a test suite -- and a resume issued inside that window finds the session
+  # still resident and copies it under a new id instead of continuing it. The
+  # daemon log shows it five times in five days, the copy claimed between 14 and
+  # 573 ms before the original finished dying. So the resume waits for the exit,
+  # and gives up rather than guess: a continue that fails leaves the message
+  # queued for the next flush, which only costs time, where a fork costs a
+  # second agent on the card.
   def stop_then_resume(session_id:, short_id:, prompt:, cwd:)
     stopped = stop(short_id)
     return stopped unless stopped.success? || resident?(session_id) == false
+    return still_shutting_down(short_id) unless exited?(session_id)
 
     resume(session_id: session_id, prompt: prompt, cwd: cwd)
+  end
+
+  # The short id a resume actually continued, read off the line the CLI prints.
+  # A resume that forked names a different session from the one it was given.
+  def continued_as(result)
+    short_id_in(result.stdout)
   end
 
   def stop(short_id)
@@ -188,6 +210,29 @@ class BasecampAgentConnector::Session::Claude
   end
 
   private
+    # Gone from the CLI's view of what is running: no longer listed, or listed
+    # without a `status`, which the CLI reports only while a session is
+    # resident. A listing that cannot be read counts as not yet -- resuming on a
+    # guess is exactly how a card ends up with two sessions.
+    def exited?(session_id)
+      SETTLE_ATTEMPTS.times do |attempt|
+        listed = sessions
+        unless listed.nil?
+          record = listed.find { |session| session["sessionId"] == session_id }
+          return true if record.nil? || record["status"].nil?
+        end
+
+        @wait.call SETTLE_DELAY if attempt < SETTLE_ATTEMPTS - 1
+      end
+
+      false
+    end
+
+    def still_shutting_down(short_id)
+      BasecampAgentConnector::CommandRunner::Result.new(stdout: "",
+        stderr: "session #{short_id} was still shutting down after the stop, so it was not resumed yet", exit_status: 1)
+    end
+
     # Whether the pid the CLI reported still belongs to a live process. Signal
     # 0 delivers nothing, it only asks. `EPERM` means the process is there but
     # belongs to somebody else, which still counts as alive; anything without a
