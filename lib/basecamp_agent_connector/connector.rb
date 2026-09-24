@@ -15,9 +15,16 @@ class BasecampAgentConnector::Connector
   DEFAULT_EVENTS = "pull_request_review"
   TRUST_MODES = %w[operator allowlist project domain]
 
+  # What happens to a verified event. `stdout` prints it and stops there, for a
+  # watching session to pick up — the original arrangement, and still the
+  # default, so nothing changes for anyone who doesn't ask for it. `session`
+  # also opens a Claude session per thing of work, which needs no watcher.
+  DISPATCH_MODES = %w[stdout session]
+
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
     :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
-    :allow_duplicate)
+    :allow_duplicate, :dispatch, :session_permission_mode, :session_model,
+    :column_moves, :column_move_except)
 
   def self.start(argv)
     return print_status if argv.include?("--status")
@@ -119,6 +126,11 @@ class BasecampAgentConnector::Connector
     allow_project = false
     allow_assignments = false
     allow_duplicate = false
+    dispatch = "stdout"
+    column_moves = false
+    column_move_except = []
+    session_permission_mode = BasecampAgentConnector::Session::Dispatcher::DEFAULT_PERMISSION_MODE
+    session_model = nil
     chat_poll = BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL
     boost_poll = BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL
     webhook_check = BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL
@@ -174,6 +186,20 @@ class BasecampAgentConnector::Connector
       end
       parser.on("--allow-duplicate", "Start even though another connector is already watching this agent " \
         "on these projects (default: refuse — every event would dispatch twice)") { allow_duplicate = true }
+      parser.on("--on-column-move", "Let moving a card into another column trigger the agent, on a board where the " \
+        "column says what work is wanted (default: off — only mentions, assignments, boosts and followed threads " \
+        "trigger). Moves into Done and Not-now columns never trigger") { column_moves = true }
+      parser.on("--column-move-except COLUMN", "Also never trigger on a move into this column, by title (repeatable " \
+        "or comma-separated; implies --on-column-move). Done and Not-now columns are excluded already, by type") \
+        { |value| column_move_except.concat(comma_list(value)) }
+      parser.on("--dispatch MODE", DISPATCH_MODES, "What to do with a verified event: #{DISPATCH_MODES.join(", ")} " \
+        "(default: stdout — print it and let a watching session act on it; session — also open one Claude session " \
+        "per card/message/todo, which needs no watcher)") { |value| dispatch = value }
+      parser.on("--session-permission-mode MODE", "Permission mode for dispatched sessions " \
+        "(default: #{BasecampAgentConnector::Session::Dispatcher::DEFAULT_PERMISSION_MODE}; only with --dispatch session)") \
+        { |value| session_permission_mode = value }
+      parser.on("--session-model MODEL", "Model for dispatched sessions (default: whatever `claude` is configured to use; " \
+        "only with --dispatch session)") { |value| session_model = value }
       parser.on("--status", "List the connectors running on this machine and the funnel paths they own, then exit") { }
       parser.on("--events EVENTS", "Comma-separated GitHub webhook events") { |value| events = value }
       parser.on("--port PORT", Integer, "Local port for the webhook server") { |value| port = value }
@@ -187,10 +213,15 @@ class BasecampAgentConnector::Connector
 
     trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
 
+    raise ArgumentError, "--dispatch session needs an agent to dispatch as, e.g. `connect @clawdito --project \"My Project\" --dispatch session`" \
+      if dispatch == "session" && (agent.nil? || agent.empty?)
+
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
       trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
-      chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
+      chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate,
+      dispatch: dispatch, session_permission_mode: session_permission_mode, session_model: session_model,
+      column_moves: column_moves || column_move_except.any?, column_move_except: column_move_except)
   end
 
   # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
@@ -230,6 +261,8 @@ class BasecampAgentConnector::Connector
   end
 
   def start
+    verify_claude_available
+
     # Runs that died without tearing down are read first — and left on disk.
     # Their entries name the webhooks they abandoned, which the sweep below
     # needs, and which nothing else on this machine could attribute.
@@ -251,6 +284,7 @@ class BasecampAgentConnector::Connector
       end
     @bridges.each { |bridge| bridge.register(base_url: base_url) }
     start_funnel_monitor if @tunnel
+    session_dispatcher.start_flusher if dispatching_sessions?
 
     @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
     install_signal_handlers
@@ -290,6 +324,7 @@ class BasecampAgentConnector::Connector
         projects: @options.projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
+        column_moves: @options.column_moves, column_move_except: @options.column_move_except,
         basecamp_cli: basecamp_cli, emitter: emitter
     end
 
@@ -367,11 +402,16 @@ class BasecampAgentConnector::Connector
       end
     end
 
+    # The dispatched sessions deliberately outlive this. They are their own
+    # processes doing their own work, and a connector restart is no reason to
+    # throw away a half-finished task — the registry is on disk, so the next
+    # run finds them again and goes on feeding them comments.
     def teardown
       @server&.stop
       @bridges&.each(&:teardown)
       @funnel_monitor&.stop
       @tunnel&.stop
+      @session_dispatcher&.stop_flusher
       @registry.forget
     end
 
@@ -473,7 +513,35 @@ class BasecampAgentConnector::Connector
       @github_cli ||= BasecampAgentConnector::GitHub::Client.new(command_runner: command_runner)
     end
 
+    # Under `--dispatch stdout` this is the same object graph it always was.
+    # Under `--dispatch session` the same Emitter is still what writes the
+    # NDJSON; it just gains a second reader.
     def emitter
-      @emitter ||= BasecampAgentConnector::Emitter.new
+      @emitter ||=
+        if dispatching_sessions?
+          BasecampAgentConnector::Session::DispatchingEmitter.new(inner: BasecampAgentConnector::Emitter.new, dispatcher: session_dispatcher)
+        else
+          BasecampAgentConnector::Emitter.new
+        end
+    end
+
+    def dispatching_sessions?
+      @options.dispatch == "session"
+    end
+
+    def session_dispatcher
+      @session_dispatcher ||= BasecampAgentConnector::Session::Dispatcher.new(
+        agent: @options.agent, basecamp_cli: basecamp_cli,
+        permission_mode: @options.session_permission_mode, model: @options.session_model)
+    end
+
+    # Refusing here rather than at the first mention. By then a requester has
+    # been boosted and is waiting on a reply that no session exists to write.
+    def verify_claude_available
+      return unless dispatching_sessions?
+      return if BasecampAgentConnector::Session::Claude.new.available?
+
+      abort "--dispatch session needs the `claude` CLI on PATH, and it isn't.\n" \
+        "Install Claude Code (https://claude.com/claude-code), or drop --dispatch session to print events for a watching session instead."
     end
 end

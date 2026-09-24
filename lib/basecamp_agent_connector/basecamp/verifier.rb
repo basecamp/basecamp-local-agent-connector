@@ -7,6 +7,10 @@ class BasecampAgentConnector::Basecamp::Verifier
   # recording re-drafted since the event, and either way it stays private.
   DRAFTED_STATUS = "drafted"
 
+  # How a card's history records it being moved into another column: its
+  # column is its parent, and acquiring a new parent is an adoption.
+  ADOPTED_ACTION = "adopted"
+
   def initialize(basecamp_cli:, agent:)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -17,9 +21,10 @@ class BasecampAgentConnector::Basecamp::Verifier
       verify_boost(event)
     else
       recording = fetch_recording(event)
+      adoption = fetch_adoption(event) if event.column_move?
 
-      if corroborated?(recording, event)
-        authoritative_event(event, recording)
+      if corroborated?(recording, event, adoption: adoption)
+        authoritative_event(event, recording, adoption: adoption)
       end
     end
   end
@@ -57,15 +62,71 @@ class BasecampAgentConnector::Basecamp::Verifier
     # author is the assigner (not the recording's creator), so instead confirm the
     # agent is actually among the recording's current assignees — a forged POST
     # can't fake real Basecamp state.
-    def corroborated?(recording, event)
+    #
+    # A column move has neither property. Its author is whoever dragged the
+    # card, not the card's creator, and the agent need not be an assignee for
+    # the move to be real. Nor is the card's current column enough on its own:
+    # a forger need not move anything, only claim a move into the column the
+    # card already sits in, with any `parent_id_was` they like.
+    #
+    # What bc3 does keep is the move itself. A card's history records each
+    # adoption as an event — its id, its author, the columns on both sides —
+    # and the webhook's id *is* that event's id. So the move is corroborated
+    # against that record: this exact event must exist, be an adoption, and
+    # land in the claimed column. The card must also still sit there, since a
+    # move since undone or superseded no longer describes the board. The author
+    # and details the pipeline acts on then come from the record, not the POST
+    # (see authoritative_event), so its second authorization binds to who
+    # really moved the card.
+    def corroborated?(recording, event, adoption: nil)
       return false unless recording.is_a?(Hash)
       return false if drafted?(recording)
 
-      if event.assignment_changed?
+      if event.column_move?
+        adopted_as_claimed?(recording, event, adoption)
+      elsif event.assignment_changed?
         assigns_agent?(recording)
       else
         recording.dig("creator", "id") == event.creator_id
       end
+    end
+
+    # For a mention the recording's creator is the author. For an assignment it
+    # is the assigner, which only the POST names. For a move it is whoever the
+    # card's history says moved it.
+    def authoritative_creator(event, recording, adoption)
+      if adoption
+        adoption.fetch("creator", {})
+      elsif event.assignment_changed?
+        event.creator
+      else
+        recording.fetch("creator")
+      end
+    end
+
+    def adopted_as_claimed?(recording, event, adoption)
+      claimed = event.details["new_parent_id"]
+
+      !adoption.nil? && !claimed.nil? && \
+        adoption.dig("details", "new_parent_id") == claimed && \
+        recording.dig("parent", "id") == claimed
+    end
+
+    # The adoption event the webhook names, from the card's own history — or
+    # nil when there is no such event, or it is not an adoption. Only Basecamp's
+    # refusal means "no such event"; a lookup the CLI could not complete
+    # propagates, exactly as for fetch_recording.
+    def fetch_adoption(event)
+      bucket = event.recording.dig("bucket", "id")
+      card = event.recording["id"]
+      return nil if bucket.nil? || card.nil? || event.id.nil?
+
+      @basecamp_cli.recording_events(bucket: bucket, recording: card)
+        .find { |recorded| recorded["id"] == event.id && recorded["action"] == ADOPTED_ACTION }
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      nil
     end
 
     # Only what Basecamp positively marks a draft is refused: representations
@@ -90,17 +151,20 @@ class BasecampAgentConnector::Basecamp::Verifier
     # the stamps the watcher reads off the emitted line cannot disagree with
     # the drop decision. The pipeline still runs `Event#mentions?` itself; the
     # `agent_mentioned` stamp exists for the emitted line, not for the gate.
-    def authoritative_event(event, recording)
+    def authoritative_event(event, recording, adoption: nil)
       mentioned = mentions_agent?(recording)
 
       BasecampAgentConnector::Basecamp::Event.from_payload \
         "id" => event.id,
         "kind" => event.kind,
         "created_at" => event.created_at,
-        "details" => event.details,
-        "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
+        # A move's author and columns come from the card's own history, which a
+        # forged POST cannot write to.
+        "details" => adoption ? adoption.fetch("details", {}) : event.details,
+        "creator" => authoritative_creator(event, recording, adoption),
         "recording" => recording,
         "agent_mentioned" => mentioned,
+        "agent_assigned" => assigns_agent?(recording),
         "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned)
     end
 

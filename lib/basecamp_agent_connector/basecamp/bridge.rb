@@ -26,7 +26,10 @@ class BasecampAgentConnector::Basecamp::Bridge
     chat_poll_interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL,
     boost_poll_interval: BasecampAgentConnector::Basecamp::BoostPoller::DEFAULT_INTERVAL,
     webhook_check_interval: BasecampAgentConnector::Basecamp::WebhookMonitor::DEFAULT_INTERVAL,
-    delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK)
+    delivery_lookback: BasecampAgentConnector::Basecamp::DeliveryReconciler::DEFAULT_LOOKBACK,
+    column_moves: false, column_move_except: [])
+    @column_moves = column_moves
+    @column_move_except = column_move_except
     @authorizer = authorizer
     @agent = agent
     @projects = projects
@@ -220,7 +223,9 @@ class BasecampAgentConnector::Basecamp::Bridge
         verifier: verifier,
         emitter: @emitter,
         webhook: webhook,
-        logger: @logger
+        logger: @logger,
+        column_moves: @column_moves,
+        column_move_except: @column_move_except
     end
 
     def verifier

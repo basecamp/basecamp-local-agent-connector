@@ -1,11 +1,18 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr)
+  # `column_moves` opts the board in as a trigger; `column_move_except` names
+  # columns that never are, beyond the Done and Not-now ones bc3 marks
+  # structurally. Off by default: on a board nobody set up for it, every drag
+  # would wake the agent.
+  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr,
+    column_moves: false, column_move_except: [])
     @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
     @webhook = webhook
     @logger = logger
+    @column_moves = column_moves
+    @column_move_except = column_move_except
     @seen_event_ids = Set.new
     @in_flight_event_ids = Set.new
     @lock = Mutex.new
@@ -139,11 +146,26 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # so the live fact can be corroborated; `targets_agent?` on the verified
     # event makes the real decision.
     def worth_verifying?(event)
-      targets_agent?(event) || event.subscribable_comment? || event.boost?
+      targets_agent?(event) || event.subscribable_comment? || event.boost? || workable_column_move?(event)
     end
 
     def targets_agent?(event)
-      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted?
+      event.mentions?(@agent) || event.assigns?(@agent) || event.subscribed? || event.boosted? || \
+        workable_column_move?(event)
+    end
+
+    # A move into a column that asks for work, on a board that opted in.
+    #
+    # Unlike the other triggers this does not ask whether the card is the
+    # agent's — an assignee check here would drop moves on cards the agent is
+    # already mid-conversation about, which are exactly the ones a move is
+    # meant to drive. Whether a move may *open* a session is a separate and
+    # narrower question, settled downstream against the `assigned` stamp this
+    # emits; the trust gate that matters is already passed, since only the
+    # operator can move a card at all.
+    def workable_column_move?(event)
+      @column_moves && event.column_move? && event.changed_column? && \
+        !event.moved_into_unworked_column?(@column_move_except)
     end
 
     # The in-flight set plus one condition variable is the whole mechanism:

@@ -28,10 +28,11 @@ BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY = Dir.mktmpdir("basecamp-
 Minitest.after_run { FileUtils.remove_entry BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY, true }
 
 class FakeCommandRunner
-  attr_reader :commands
+  attr_reader :commands, :directories
 
   def initialize
     @commands = []
+    @directories = []
     @stubs = []
   end
 
@@ -43,13 +44,23 @@ class FakeCommandRunner
     @stubs << { matcher: matcher, result: result, remaining: once ? 1 : times }
   end
 
-  def run(*command)
+  # `chdir` is recorded alongside the command rather than folded into it: a
+  # dispatched session running in the wrong repo is a real failure and the
+  # tests have to be able to see the directory it was given.
+  def run(*command, chdir: nil)
     @commands << command
+    @directories << chdir
     stub = @stubs.find { |candidate| candidate[:remaining] != 0 && matches?(command, candidate[:matcher]) }
     raise "no stub for command: #{command.join(' ')}" if stub.nil?
 
     stub[:remaining] -= 1 unless stub[:remaining].nil?
     stub[:result]
+  end
+
+  # The directory the last command matching this pattern ran in.
+  def directory_for(pattern)
+    index = @commands.rindex { |command| command.join(" ").match?(pattern) }
+    index && @directories[index]
   end
 
   def commands_matching(pattern)
@@ -113,6 +124,45 @@ module PayloadHelpers
       "creator" => { "id" => 777, "name" => "Someone Else", "email_address" => "someone@example.com" },
       "assignees" => [ { "id" => 200, "name" => "Clawdito" } ]
     ).merge(overrides)
+  end
+
+  # A `kanban_card_adopted` webhook: the operator dragged a card into another
+  # column. Modelled on a real delivery — bc3 calls a column change an
+  # adoption, because a card's column is its parent, and `details` names the
+  # column ids on both sides while the recording's `parent` is the destination,
+  # titled and typed.
+  def column_move_payload(overrides = {})
+    {
+      "id" => 99005,
+      "kind" => "kanban_card_adopted",
+      "created_at" => "2026-09-21T19:41:35Z",
+      "creator" => { "id" => 100, "name" => "Operator", "email_address" => "operator@example.com" },
+      "details" => { "new_parent_id" => 555, "parent_id_was" => 554, "notified_recipient_ids" => [] },
+      "recording" => moved_card
+    }.merge(overrides)
+  end
+
+  # The column types are bc3's own: a board marks Done and Not-now structurally,
+  # whatever those columns are titled, and every other column is a plain
+  # `Kanban::Column` (or `Kanban::Triage` for the intake one).
+  def moved_card(overrides = {})
+    sample_recording(
+      "id" => 789,
+      "type" => "Kanban::Card",
+      "title" => "Fix the date picker",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789",
+      "url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789.json",
+      "content" => "<p>The date picker is off by one.</p>",
+      "creator" => { "id" => 777, "name" => "Someone Else", "email_address" => "someone@example.com" },
+      "parent" => column(id: 555, title: "In progress")
+    ).merge(overrides)
+  end
+
+  def column(id:, title:, type: "Kanban::Column")
+    {
+      "id" => id, "title" => title, "type" => type,
+      "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/columns/#{id}"
+    }
   end
 
   # A `*_active` webhook: a recording that was drafted first and published
