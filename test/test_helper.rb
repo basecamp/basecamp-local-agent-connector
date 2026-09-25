@@ -280,6 +280,14 @@ module PayloadHelpers
     runner.stub matcher, stdout: stdout, exit_status: exit_status, times: BasecampAgentConnector::Basecamp::Client::ATTEMPTS
   end
 
+  # What the CLI prints when an agent profile's client_credentials mint is
+  # refused — the secret rotated, or the agent disconnected, in Basecamp
+  # (basecamp-cli internal/auth/agent.go, agentMintRefusal + agentRemedy).
+  def agent_refusal_envelope(profile: "clawdito")
+    error_envelope "auth_required", "Minting an agent token was refused (token error: invalid_client)", retryable: false,
+      hint: "Pipe the agent's client secret in: ... | basecamp auth login --with-client-credentials --client-id bc-agent-7 -P #{profile}"
+  end
+
   # No sleeping between retries in tests; pass `wait:` to observe the delays.
   def build_cli(command_runner, wait: ->(_seconds) { })
     BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner, wait: wait)

@@ -269,7 +269,8 @@ dig +short <node>.<tailnet>.ts.net @ns1.dnsimple.com
 
 ### 1. Launch the bridge, then watch its STDOUT
 
-`bin/connect` is a long-running process that never exits on its own — it streams
+`bin/connect` is a long-running process that exits on its own only when Basecamp
+refuses a credential outright (see *A refused agent credential* below) — it streams
 one trusted event per STDOUT line for as long as it runs. A plain background
 task only notifies you when a command *completes*, so on its own it would never
 wake you per event. You therefore need **two** steps: run the connector in the
@@ -847,6 +848,18 @@ Both symptoms surface before the actual API request is sent.
   such on Basecamp. The startup check in *Prerequisite* runs on its own and is
   the authority on whether the profile exists; an intermittent error mid-run is
   not.
+
+### A refused agent credential
+
+`Minting an agent token was refused (token error: invalid_client)` is **not**
+the transient failure above: the agent's secret was rotated or the agent was
+disconnected in Basecamp, and every retry sends the dead secret again (bc3
+rate-limits and then IP-blocks that). Don't retry it. The connector stops on its
+own: it tears down and exits non-zero with `Basecamp refused the agent
+credential for profile <agent> …` on STDERR, and the background task's
+completion is how you hear of it. Relay that message and its remedy to the user
+(reconnect the agent in Basecamp, re-authenticate the profile with the command
+it names, then restart). Don't restart the connector until they say they have.
 
 ### Validate a finished body of work with `bin/ci` (in the background)
 

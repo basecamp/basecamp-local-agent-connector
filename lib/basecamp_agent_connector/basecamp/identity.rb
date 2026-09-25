@@ -11,8 +11,12 @@ class BasecampAgentConnector::Basecamp::Identity
       person_id: account_person_id(basecamp_cli, profile)
   end
 
+  # A refused credential is past what a refresh can mend — asking for one
+  # would only put the refused secret on the wire once more.
   def self.authenticated_user(basecamp_cli, profile)
     basecamp_cli.me(profile: profile)
+  rescue BasecampAgentConnector::Basecamp::Client::CredentialRefused
+    raise
   rescue BasecampAgentConnector::Basecamp::Client::Error
     raise unless basecamp_cli.refresh_auth(profile: profile)
     basecamp_cli.me(profile: profile)
