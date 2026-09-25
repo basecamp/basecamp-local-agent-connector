@@ -527,6 +527,19 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
    too: fix it (`basecamp auth status --profile <agent>`). The connector logs
    that remedy with every `503`.
 
+   One auth failure is not the race: an agent profile's token mint refused by
+   Basecamp (`Minting an agent token was refused (token error:
+   invalid_client)` — the agent's secret was rotated, or the agent
+   disconnected). Nothing the connector can do gets past that, and the CLI
+   re-mints on every invocation, so the connector remembers the refusal —
+   no further call goes out on that profile — deregisters its webhooks, and
+   **exits non-zero**, naming the profile and the remedy on STDERR: reconnect
+   the agent in Basecamp, re-authenticate the profile with the command the
+   CLI's hint gives, then restart. A rate limit is still transient, but one
+   that says how long to wait (Retry-After, which the CLI relays as "Try
+   again in N seconds") is not asked again within the call, and the pollers'
+   next tick waits at least that long.
+
 **Emitted event (STDOUT, one JSON object per line):**
 
 ```json

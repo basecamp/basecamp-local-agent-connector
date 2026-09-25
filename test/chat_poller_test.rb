@@ -339,6 +339,34 @@ class ChatPollerTest < Minitest::Test
     poller&.stop
   end
 
+  # bc3's abuse tracker answers 429 with a Retry-After, and asking before it
+  # has passed is what keeps the block in place: the next tick waits at least
+  # that long, past the cap, and a clean one restores the cadence as ever.
+  def test_a_stated_retry_after_sets_the_next_wait_past_the_cap
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", exit_status: 5, once: true,
+      stdout: error_envelope("rate_limit", "Rate limited", retryable: true, hint: "Try again in 900 seconds")
+    runner.stub "chat messages", stdout: empty_envelope
+    delays = Queue.new
+    ticks = Queue.new
+    poller = poller(runner, wait: ->(seconds) { delays << seconds; ticks.pop })
+
+    poller.start
+    waited = [ delays.pop ]
+    2.times do
+      ticks << true
+      waited << delays.pop
+    end
+
+    assert_equal [ 15, 900, 15 ], waited
+    # The refused fetch was not retried within its tick either.
+    assert_equal 2, runner.commands_matching(/chat messages/).length
+    assert_match(/backing off chat polls to 900s \(Basecamp asked for 900s\)/, @logs.string)
+  ensure
+    poller&.stop
+  end
+
   # A refusal during start's synchronous discovery already proves the budget
   # is exhausted, so even the first wait backs off.
   def test_a_rate_limited_chat_listing_backs_off_from_the_start

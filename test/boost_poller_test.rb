@@ -419,6 +419,37 @@ class BoostPollerTest < Minitest::Test
     assert_equal 1 + BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(%r{api get /my/boosts\.json}).length
   end
 
+  # The production loop: the agent's secret was rotated in Basecamp, and
+  # every tick re-minted with it — three client attempts a minute, each a
+  # refused mint, for as long as the process lived. After the first refusal
+  # the feed is not asked for again, whatever the cadence.
+  def test_a_refused_agent_credential_stops_the_asking
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3, stdout: agent_refusal_envelope
+
+    poller = poller(runner)
+    5.times { poller.poll }
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
+    assert_match(/boost poll failed: .*Minting an agent token was refused/, @logs.string)
+  end
+
+  # What that must not swallow: the keyring race's auth_required, which
+  # clears in seconds, is asked again on every tick.
+  def test_a_transient_auth_failure_is_retried_every_tick
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3,
+      stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found"),
+      times: 2 * BasecampAgentConnector::Basecamp::Client::ATTEMPTS
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+
+    poller = poller(runner)
+    3.times { poller.poll }
+
+    assert_equal 2 * BasecampAgentConnector::Basecamp::Client::ATTEMPTS + 2, runner.commands.length
+    assert_equal 1, @output.string.lines.length
+  end
+
   private
     def poller(runner, clock: -> { BEFORE_THE_BOOST }, wait: ->(_seconds) { }, trust_authorizer: authorizer, interval: 15)
       BasecampAgentConnector::Basecamp::BoostPoller.new \

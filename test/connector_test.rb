@@ -329,6 +329,69 @@ class ConnectorTest < Minitest::Test
     end
   end
 
+  # Serves until stopped, as WEBrick does — bounded, so a halt that never
+  # comes fails the test instead of hanging it.
+  class ServingServer
+    def initialize
+      @stopped = Queue.new
+    end
+
+    def start
+      @stopped.pop(timeout: 5)
+    end
+
+    def stop
+      @stopped << true
+    end
+  end
+
+  # The production loop, end to end: the agent's secret was rotated in
+  # Basecamp while the connector ran. The first boost poll draws the refusal;
+  # the run stops serving, tears down, and exits non-zero naming the profile
+  # and the remedy — and nothing asks for the agent's token again.
+  def test_a_refused_agent_credential_halts_the_run_with_the_remedy
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+    runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "jorge@example.com", "first_name" => "Jorge" } })
+    runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "chat list", stdout: "[]"
+    runner.stub "api get /my/boosts.json", exit_status: 3, stdout: agent_refusal_envelope
+    connector = BasecampAgentConnector::Connector.new(parse("@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "jorge", "--port", "4567"))
+    connector.instance_variable_set(:@command_runner, runner)
+
+    _out, err = without_waiting do
+      BasecampAgentConnector::Server.stub(:new, ServingServer.new) do
+        capture_io do
+          refute_equal 0, assert_raises(SystemExit) { connector.start }.status
+        end
+      end
+    end
+    sleep 0.05
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(%r{api get /my/boosts\.json}).length
+    assert_match(/Basecamp refused the agent credential for profile clawdito \(invalid_client\)/, err)
+    assert_match(/Reconnect the agent in Basecamp/, err)
+    assert_match(/basecamp auth login --with-client-credentials --client-id bc-agent-7 -P clawdito/, err)
+    assert_match(/restart the connector/, err)
+  end
+
+  # Refused at startup, the agent's credential gets the same remedy — and no
+  # `auth refresh`, which would only send the refused secret once more.
+  def test_an_agent_credential_refused_at_startup_aborts_with_the_remedy
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp me --profile clawdito", exit_status: 3, stdout: agent_refusal_envelope
+    runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "jorge@example.com" } })
+    runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+
+    _out, err = without_waiting do
+      start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "jorge", "--port", "4567" ], runner, expect_exit: true
+    end
+
+    assert_match(/Basecamp refused the agent credential for profile clawdito/, err)
+    assert_empty runner.commands_matching(/auth refresh/)
+    assert_empty runner.commands_matching(/chat list/)
+  end
+
   def test_start_makes_every_operator_side_call_under_the_operator_profile
     runner = FakeCommandRunner.new
     runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
@@ -657,6 +720,19 @@ class ConnectorTest < Minitest::Test
             connector.start
           end
         end
+      end
+    end
+
+    # The connector builds its own client and pollers; take the real sleeps
+    # out of both — the client's retry pauses and the pollers' intervals —
+    # keeping everything else they are built with.
+    def without_waiting(&block)
+      no_wait = ->(_seconds) { }
+      tick = ->(_seconds) { sleep 0.01 }
+      client, boosts = BasecampAgentConnector::Basecamp::Client.method(:new), BasecampAgentConnector::Basecamp::BoostPoller.method(:new)
+
+      BasecampAgentConnector::Basecamp::Client.stub(:new, ->(**options) { client.call(**options, wait: no_wait) }) do
+        BasecampAgentConnector::Basecamp::BoostPoller.stub(:new, ->(**options) { boosts.call(**options, wait: tick) }, &block)
       end
     end
 

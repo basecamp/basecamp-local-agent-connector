@@ -229,37 +229,44 @@ class BasecampAgentConnector::Connector
     @registry = registry
   end
 
+  # A refused credential ends the run once teardown has deregistered its
+  # webhooks, non-zero, with the remedy on STDERR as the last thing it says.
   def start
-    # Runs that died without tearing down are read first — and left on disk.
-    # Their entries name the webhooks they abandoned, which the sweep below
-    # needs, and which nothing else on this machine could attribute.
-    abandoned = @registry.abandoned
-    reserve_run
-
-    @bridges = build_bridges
-    port = @options.port || free_port
-    record_run
-    sweep_orphans abandoned
-
-    # Chat-only watching has no inbound paths, so it needs no funnel at all —
-    # Tailscale isn't required unless something actually receives webhooks.
-    paths = @bridges.filter_map(&:path)
-    base_url = \
-      if paths.any?
-        @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
-        @tunnel.start
-      end
-    @bridges.each { |bridge| bridge.register(base_url: base_url) }
-    start_funnel_monitor if @tunnel
-
-    @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
-    install_signal_handlers
-    @server.start
-  ensure
-    teardown
+    serve
+    abort refusal_message(@refusal) if @refusal
   end
 
   private
+    def serve
+      # Runs that died without tearing down are read first — and left on disk.
+      # Their entries name the webhooks they abandoned, which the sweep below
+      # needs, and which nothing else on this machine could attribute.
+      abandoned = @registry.abandoned
+      reserve_run
+
+      @bridges = build_bridges
+      port = @options.port || free_port
+      record_run
+      sweep_orphans abandoned
+
+      # Chat-only watching has no inbound paths, so it needs no funnel at all —
+      # Tailscale isn't required unless something actually receives webhooks.
+      paths = @bridges.filter_map(&:path)
+      base_url = \
+        if paths.any?
+          @tunnel = BasecampAgentConnector::Tunnel.new(port: port, paths: paths, command_runner: command_runner)
+          @tunnel.start
+        end
+      @bridges.each { |bridge| bridge.register(base_url: base_url) }
+      start_funnel_monitor if @tunnel
+
+      @server = BasecampAgentConnector::Server.new(port: port, routes: routes)
+      install_signal_handlers
+      @server.start unless @refusal
+    ensure
+      teardown
+    end
+
     def build_bridges
       @basecamp_bridge = basecamp_bridge if @options.projects.any?
       @github_bridge = github_bridge if @options.repos.any?
@@ -314,6 +321,8 @@ class BasecampAgentConnector::Connector
 
     def resolve_agent
       BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.agent)
+    rescue BasecampAgentConnector::Basecamp::Client::CredentialRefused => error
+      abort refusal_message(error)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "No usable local Basecamp profile '#{@options.agent}'.\n" \
         "Run `basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
@@ -321,6 +330,8 @@ class BasecampAgentConnector::Connector
 
     def resolve_operator
       BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.operator)
+    rescue BasecampAgentConnector::Basecamp::Client::CredentialRefused => error
+      abort refusal_message(error)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "Could not resolve the operator identity#{operator_label}: #{error.message}\nRun `basecamp auth login` and try again."
     end
@@ -359,6 +370,44 @@ class BasecampAgentConnector::Connector
       else
         "Authenticate the agent profile as a distinct bot user, or pass --operator <your profile>."
       end
+    end
+
+    # Stop everything, rather than back off, when Basecamp refuses a
+    # credential outright. Every poll, corroboration and webhook check runs
+    # as the agent or the operator, and the agent's replies go out under its
+    # own profile, so with either credential dead the run can hear nothing it
+    # could act on — and the pollers exist to hammer on a cadence. A slower
+    # probe would only keep a dead secret on the wire, into bc3's abuse
+    # tracker, while the process looks alive to the operator watching it; a
+    # process that exits is what the watcher notices. Nothing is lost by
+    # stopping: the fix is a re-login, and a restart re-reads everything
+    # (chat history is never replayed, and bc3 redelivers what the 503s
+    # deferred). So this stops the server the way a Ctrl-C does, and #start
+    # reports the refusal once teardown has deregistered the webhooks.
+    #
+    # Called from whichever thread drew the refusal (see Client), possibly
+    # before the server exists, which the start checks for itself.
+    def halt(refusal)
+      @refusal ||= refusal
+      @server&.stop
+    end
+
+    def refusal_message(refusal)
+      whose = refusal.profile && refusal.profile == @options.agent ? "agent" : "operator"
+      profile = refusal.profile || "(the CLI default)"
+      login = \
+        if !refusal.hint.to_s.empty?
+          refusal.hint
+        elsif refusal.profile
+          "`basecamp auth login --profile #{refusal.profile}`"
+        else
+          "`basecamp auth login`"
+        end
+
+      "Basecamp refused the #{whose} credential for profile #{profile} (#{refusal.reason}); the connector stopped " \
+        "rather than keep sending it, since nothing but a new credential gets past that.\n" \
+        "#{whose == "agent" ? "Reconnect the agent in Basecamp, re-authenticate" : "Re-authenticate"} the profile " \
+        "(#{login}), then restart the connector.\n(#{refusal.message})"
     end
 
     def install_signal_handlers
@@ -466,7 +515,8 @@ class BasecampAgentConnector::Connector
     # identity authorizes, and a BASECAMP_PROFILE in the environment cannot
     # quietly substitute another principal for them.
     def basecamp_cli
-      @basecamp_cli ||= BasecampAgentConnector::Basecamp::Client.new(command_runner: command_runner, profile: @options.operator)
+      @basecamp_cli ||= BasecampAgentConnector::Basecamp::Client.new \
+        command_runner: command_runner, profile: @options.operator, on_credential_refused: method(:halt)
     end
 
     def github_cli

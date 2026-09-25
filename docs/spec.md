@@ -234,7 +234,13 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
    (~4.3h; a revoked credential is indistinguishable from the race) gets the
    webhook deactivated, silently on bc3's side — the 503 log line names the
    remedy: fix the CLI's credentials and restart `bin/connect`, which
-   re-registers.
+   re-registers. The exception is a credential Basecamp refused outright — an
+   agent profile's client_credentials mint answered `invalid_client` on
+   every attempt of a call (`Client::CREDENTIAL_REFUSAL`). That is raised as
+   `Client::CredentialRefused` (a TransientError, so unaware callers defer as
+   before), remembered per profile so the CLI is never invoked on that
+   profile again, and reported to the connector, which stops the server,
+   tears down (deregistering webhooks) and exits non-zero with the remedy.
 
 ### Event pipeline
 

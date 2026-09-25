@@ -443,4 +443,115 @@ class BasecampClientTest < Minitest::Test
     assert_equal 91001, line.fetch("id")
     assert_includes runner.commands.first.join(" "), "chat line https://example.org/lines/91001.json"
   end
+
+  # A dead agent secret: every invocation re-mints, and the token endpoint
+  # refuses every mint. Tried through the client's attempts (a keyring-race
+  # loser reading a stale file could draw it once), then raised as the
+  # refusal it is — naming the profile it refused, and reported once.
+  def test_a_refused_agent_credential_is_raised_as_such_and_reported
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3, stdout: agent_refusal_envelope
+    reported = []
+    cli = refusal_reporting_cli(runner, reported)
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::CredentialRefused) { cli.received_boosts(profile: "clawdito") }
+
+    assert_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, error
+    assert_equal "clawdito", error.profile
+    assert_equal "invalid_client", error.reason
+    assert_match(/--with-client-credentials/, error.hint)
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
+    assert_equal [ error ], reported
+  end
+
+  # The CLI forgets the refusal between invocations; the client must not.
+  # Nothing more goes to the token endpoint on that profile — and the other
+  # profile, the operator's, keeps working.
+  def test_a_refused_profile_is_never_asked_again
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3, stdout: agent_refusal_envelope
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    reported = []
+    cli = refusal_reporting_cli(runner, reported)
+    assert_raises(BasecampAgentConnector::Basecamp::Client::CredentialRefused) { cli.received_boosts(profile: "clawdito") }
+
+    5.times do
+      assert_raises(BasecampAgentConnector::Basecamp::Client::CredentialRefused) { cli.received_boosts(profile: "clawdito") }
+    end
+    assert_raises(BasecampAgentConnector::Basecamp::Client::CredentialRefused) { cli.me(profile: "clawdito") }
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands_matching(/--profile clawdito/).length
+    assert_equal 1, reported.length
+    assert_equal 333, cli.chats(project: 222).first.fetch("id")
+    assert_match(/--profile jorge/, runner.commands.last.join(" "))
+  end
+
+  # A refusal a later attempt contradicts was the race, not the credential.
+  def test_a_refusal_the_next_attempt_contradicts_is_not_remembered
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3, stdout: agent_refusal_envelope, once: true
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost ])
+    cli = build_cli(runner)
+
+    assert_equal 88001, cli.received_boosts(profile: "clawdito").first.fetch("id")
+    assert_equal 88001, cli.received_boosts(profile: "clawdito").first.fetch("id")
+  end
+
+  # The keyring race's own auth_required — no refusal from the token
+  # endpoint in it — stays the transient failure it always was, and is asked
+  # again on the next call.
+  def test_an_unrefused_auth_failure_is_not_a_credential_refusal
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", exit_status: 3,
+      stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found")
+    cli = build_cli(runner)
+
+    2.times do
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { cli.received_boosts(profile: "clawdito") }
+      refute_kind_of BasecampAgentConnector::Basecamp::Client::CredentialRefused, error
+    end
+
+    assert_equal 2 * BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
+  end
+
+  # A 429 that says when to come back is not asked again within the call —
+  # the next attempt is a second away and the server said minutes — and the
+  # wait it asked for reaches the caller, in each spelling the CLI has.
+  def test_a_rate_limit_with_a_retry_after_is_not_retried_and_carries_it
+    [
+      error_envelope("rate_limit", "Rate limited", retryable: true, hint: "Try again in 900 seconds"),
+      error_envelope("rate_limit", "minting an agent token: Rate limited (retry after 900 seconds)", retryable: true),
+      error_envelope("rate_limit", "Rate limited", retryable: true, meta: { "retry_after" => 900 })
+    ].each do |stdout|
+      runner = FakeCommandRunner.new
+      runner.stub "chat messages", exit_status: 5, stdout: stdout
+      delays = []
+
+      error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+        build_cli(runner, wait: ->(seconds) { delays << seconds }).chat_lines(project: 222, chat: 333, limit: 50)
+      end
+
+      assert_equal 1, runner.commands.length, stdout
+      assert_empty delays
+      assert_equal 900, error.retry_after
+    end
+  end
+
+  def test_a_rate_limit_without_a_retry_after_keeps_the_retries
+    runner = FakeCommandRunner.new
+    stub_transient_failure runner, "chat messages", exit_status: 7, stdout: error_envelope("api_error", "rate limit exceeded")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      build_cli(runner).chat_lines(project: 222, chat: 333, limit: 50)
+    end
+
+    assert_equal BasecampAgentConnector::Basecamp::Client::ATTEMPTS, runner.commands.length
+    assert_nil error.retry_after
+  end
+
+  private
+    def refusal_reporting_cli(runner, reported)
+      BasecampAgentConnector::Basecamp::Client.new command_runner: runner, profile: "jorge", wait: ->(_seconds) { },
+        on_credential_refused: ->(error) { reported << error }
+    end
 end

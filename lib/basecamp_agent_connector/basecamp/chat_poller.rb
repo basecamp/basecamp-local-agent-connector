@@ -50,6 +50,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     @started_at = @clock.call.floor
     @stopping = false
     @rate_limited = false
+    @retry_after = nil
     @backoff = nil
   end
 
@@ -85,6 +86,7 @@ class BasecampAgentConnector::Basecamp::ChatPoller
   def poll
     unless @stopping
       @rate_limited = false
+      @retry_after = nil
 
       begin
         # One refusal is the account's shared budget saying no to everyone,
@@ -304,19 +306,26 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # configured cadence. Logged when the delay changes, not on every
     # backed-off tick.
     def note_rate_limit(error)
-      @rate_limited ||= error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
+      if error.is_a?(BasecampAgentConnector::Basecamp::Client::Error) && error.rate_limited?
+        @rate_limited = true
+        @retry_after = [ @retry_after, error.retry_after ].compact.max
+      end
     end
 
     # Backoff only ever lengthens the delay: doubling stops at the cap, and
     # a configured interval at or above the cap never backs off at all —
     # min against a smaller cap would speed a slow poller *up*.
+    #
+    # A Retry-After Basecamp stated overrides both: the next tick waits at
+    # least that long, past the cap if it has to — bc3 said when it would
+    # listen again, and asking sooner is what gets an IP blocked.
     def extend_backoff
       current = @backoff || @interval
-      extended = [ current * 2, [ @interval, MAX_BACKOFF ].max ].min
+      extended = [ [ current * 2, [ @interval, MAX_BACKOFF ].max ].min, @retry_after.to_i ].max
 
       if extended > current
         @backoff = extended
-        log "rate limited; backing off chat polls to #{extended}s"
+        log "rate limited; backing off chat polls to #{extended}s#{" (Basecamp asked for #{@retry_after}s)" if @retry_after}"
       end
     end
 
