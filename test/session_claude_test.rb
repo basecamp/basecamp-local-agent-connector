@@ -16,11 +16,110 @@ class SessionClaudeTest < Minitest::Test
     @runner = FakeCommandRunner.new
     @projects = Dir.mktmpdir("claude-projects")
     @now = Time.utc(2026, 9, 26, 18, 30)
-    @claude = Claude.new(command_runner: @runner, wait: ->(_seconds) { }, projects_dir: @projects, clock: -> { @now })
+    @daemon = Dir.mktmpdir("cc-daemon")
+    @socks = Dir.mktmpdir("cc-socks")
+    @claude = Claude.new(command_runner: @runner, wait: ->(_seconds) { }, projects_dir: @projects, clock: -> { @now },
+      daemon_dir: @daemon)
   end
 
   def teardown
+    @daemon_thread&.kill
     FileUtils.remove_entry @projects
+    FileUtils.remove_entry @daemon
+    FileUtils.remove_entry @socks
+  end
+
+  # The message goes to the daemon as the `reply` agent view sends, addressed
+  # by short id and authenticated with the daemon's key, and counts as sent
+  # once the transcript shows it queued -- how the CLI records a message a busy
+  # session will read.
+  def test_a_reply_the_session_queues_is_delivered
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    requests = run_daemon { |request| append_to_transcript({ "type" => "queue-operation", "operation" => "enqueue", "content" => request["text"] }) }
+
+    assert @claude.message(session_id: "uuid-1", text: "one more thing")
+
+    request = requests.pop
+    assert_equal 1, request["proto"]
+    assert_equal "reply", request["op"]
+    assert_equal "uuid-1"[0, 8], request["short"]
+    assert_equal "one more thing", request["text"]
+    assert_equal "the-key", request["auth"]
+  end
+
+  # A reply with line breaks arrives as pasted content, so the prompt's layout
+  # is folded onto one line; the words are all still there.
+  def test_a_reply_is_sent_as_one_line
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    requests = run_daemon { |request| append_to_transcript({ "type" => "queue-operation", "operation" => "enqueue", "content" => request["text"] }) }
+
+    assert @claude.message(session_id: "uuid-1", text: "New activity:\n\n  one more thing\nPosted on: a url\n")
+
+    assert_equal "New activity: one more thing Posted on: a url", requests.pop["text"]
+  end
+
+  # A turn the reply starts, on a session that was idle after all, shows up
+  # as the turn's prompt rather than a queued message.
+  def test_a_reply_that_starts_a_turn_is_delivered
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    run_daemon { |request| append_to_transcript({ "type" => "user", "message" => { "role" => "user", "content" => request["text"] } }) }
+
+    assert @claude.message(session_id: "uuid-1", text: "one more thing")
+  end
+
+  def test_a_reply_the_daemon_refuses_is_not_delivered
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    run_daemon(answer: { "ok" => false, "error" => "unauthorized" }) { |_request| }
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
+  end
+
+  # Nothing to show it arrived is not the same as arriving: the caller keeps
+  # the message, and the worst case is saying it twice.
+  def test_a_reply_with_no_sign_of_arrival_is_not_delivered
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    run_daemon { |_request| }
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
+  end
+
+  # The same text queued earlier -- a comment said twice -- does not answer
+  # for this one; only what was written after the reply counts.
+  def test_an_earlier_identical_message_does_not_count
+    stub_busy_listing
+    write_transcript turn_ended_at: @now, after: [ { "type" => "queue-operation", "operation" => "enqueue", "content" => "one more thing" } ]
+    run_daemon { |_request| }
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
+  end
+
+  def test_no_daemon_running_is_not_messaged
+    stub_busy_listing
+    @runner.stub "claude daemon status", stderr: "no daemon running", exit_status: 1
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
+  end
+
+  def test_a_daemon_without_a_key_is_not_messaged
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    requests = run_daemon(key: nil) { |_request| }
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
+    assert_empty requests
+  end
+
+  def test_a_session_that_is_not_resident_is_not_messaged
+    @runner.stub "claude agents --json", stdout: JSON.generate([
+      { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card", "state" => "done" }
+    ])
+
+    refute @claude.message(session_id: "uuid-1", text: "one more thing")
   end
 
   def test_spawning_names_the_session
@@ -442,6 +541,32 @@ class SessionClaudeTest < Minitest::Test
 
     # A session that moved into a worktree keeps its transcript under the
     # directory it started in, so this one is deliberately somewhere else.
+    # A stand-in for the background daemon: `claude daemon status` names its
+    # socket directory, the key sits in the daemon dir, and each request is
+    # handed to the block, which plays the CLI's part by writing to the
+    # transcript, before the daemon answers.
+    def run_daemon(key: "the-key", answer: { "ok" => true, "op" => "reply" }, &respond)
+      File.write(File.join(@daemon, "control.key"), "#{key}\n") if key
+      @runner.stub "claude daemon status", stdout: "pid:     1\nbg sessions:\n  sock dir:     #{@socks}\n  control.sock: reachable\n"
+      server = UNIXServer.new(File.join(@socks, "control.sock"))
+      requests = Queue.new
+      @daemon_thread = Thread.new do
+        loop do
+          client = server.accept
+          request = JSON.parse(client.gets)
+          respond.call(request)
+          requests << request
+          client.puts JSON.generate(answer)
+          client.close
+        end
+      end
+      requests
+    end
+
+    def append_to_transcript(record)
+      File.open(Dir.glob(File.join(@projects, "*", "uuid-1.jsonl")).first, "a") { |file| file.puts record.to_json }
+    end
+
     def write_transcript(turn_ended_at:, after: [])
       dir = File.join(@projects, "-home-agent-work-repo--claude-worktrees-a-card")
       FileUtils.mkdir_p dir

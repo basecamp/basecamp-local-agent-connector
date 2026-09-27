@@ -304,8 +304,12 @@ Three consequences of having no model in the loop, all handled explicitly:
 - **Nobody notices a failure.** A session that refuses to start is reported on the
   card, because silence there is indistinguishable from a missed mention.
 - **Nobody can be interrupted.** A comment arriving while its session is mid-work
-  waits in the registry and is delivered when the session finishes, rather than
-  stopping it and discarding what it was doing.
+  is sent to it as a reply, the same way a reply typed into
+  [agent view](https://code.claude.com/docs/en/agent-view) reaches a background
+  session, and Claude reads it between tool calls without stopping the command
+  it is running. If the reply doesn't go through, the comment waits in the registry
+  and is delivered when the session finishes, rather than stopping the session
+  and discarding what it was doing.
 
 A dispatched session never parks itself on a question, either. Nothing is watching
 its terminal, so when it needs input it posts the question to Basecamp and ends its
@@ -338,6 +342,19 @@ receipts, two workers and two replies. Pick one driver per connector.
 
 Requires the `claude` CLI on `PATH`; the connector refuses to start without it
 rather than discovering it at the first mention.
+
+**How mid-work delivery works.** The connector sends the `reply` request agent
+view sends to Claude Code's background daemon: it finds the daemon's socket with
+`claude daemon status` and authenticates with the key the daemon keeps in
+`~/.claude/daemon/control.key`, so it only works as the OS user the sessions run
+as. The message arrives as the user's own (`origin: human`), exactly like a
+prompt given on resume, and is folded onto one line, because a reply with line
+breaks is framed as pasted content.
+
+This request is internal to Claude Code, not a documented interface, and an
+update could change it. Every delivery is confirmed in the session's transcript,
+so if it stops working the comment is held and delivered when the session
+finishes, as it was before; nothing is lost.
 
 ### Column moves (`--on-column-move`)
 

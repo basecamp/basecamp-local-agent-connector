@@ -530,6 +530,21 @@ learned from a live board rather than the docs:
   session would kill. A transcript that cannot be found or read leaves the
   CLI's answer standing.
 
+**Reaching a busy session mid-work.** A comment for a session that is busy is
+first sent to it the way a reply typed into agent view is: a `reply` request on
+the background daemon's control socket (found via `claude daemon status`,
+authenticated with the key in `~/.claude/daemon/control.key`, so only the OS
+user the sessions run as can do it). The session reads it between tool calls
+without interrupting the running command, and it arrives as the user's own
+message, like a resume prompt. It is sent as one line, since a reply with line
+breaks is framed as pasted content. This is an internal Claude Code interface,
+not a documented one — the documented cross-session inbox was tried first and
+rejected, because it frames the message as coming from another session and not
+the user. So every delivery is confirmed in the session's transcript, and one
+that is refused, unconfirmed within five seconds, or impossible (no daemon, no
+key) falls back to holding the comment for the flusher, which delivers with an
+ordinary resume. The flusher never uses the reply channel.
+
 A message leaves the queue only once a resume actually went through. The
 flusher's check, resume and queue update are one decision under the card's
 registry lock — the lock a webhook delivery takes too — so a comment arriving

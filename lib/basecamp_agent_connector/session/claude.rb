@@ -1,4 +1,5 @@
 require "json"
+require "socket"
 require "time"
 
 # The Claude Code CLI, as much of it as dispatching sessions needs.
@@ -65,6 +66,15 @@ class BasecampAgentConnector::Session::Claude
   CONVERSATION_TYPES = %w[user assistant].freeze
   TURN_ENDED = "turn_duration".freeze
 
+  # How long to look for a reply in the transcript before giving up on it: up
+  # to five seconds, polled. It is written within milliseconds of the daemon
+  # taking it -- queued for a busy session, or as the prompt of a turn it starts.
+  REPLY_CONFIRM_ATTEMPTS = 20
+  REPLY_CONFIRM_DELAY = 0.25
+
+  # How long the daemon has to answer a reply before it counts as refused.
+  REPLY_TIMEOUT = 5
+
   # `session_id` is nil when the spawn failed, or when it succeeded but the id
   # could not be read back — a running session that cannot be continued, which
   # the dispatcher records and retries resolving later rather than discarding.
@@ -75,9 +85,11 @@ class BasecampAgentConnector::Session::Claude
   end
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: EXECUTABLE,
-    wait: ->(seconds) { sleep seconds }, projects_dir: default_projects_dir, clock: -> { Time.now })
+    wait: ->(seconds) { sleep seconds }, projects_dir: default_projects_dir, clock: -> { Time.now },
+    daemon_dir: default_daemon_dir)
     @command_runner = command_runner
     @executable = executable
+    @daemon_dir = daemon_dir
     @wait = wait
     @projects_dir = projects_dir
     @clock = clock
@@ -166,6 +178,33 @@ class BasecampAgentConnector::Session::Claude
     run("stop", short_id)
   end
 
+  # Says something to a resident session without stopping it, the way a reply
+  # from agent view does: the `reply` operation on the background daemon's
+  # control socket. A busy session queues it and reads it between tool calls --
+  # the running command is never interrupted -- and it arrives as a message
+  # from the user (`origin: human`), like a prompt given to `--resume`.
+  #
+  # The text goes as one line. A reply with line breaks in it arrives wrapped
+  # as pasted content, which the session is told not to take instructions
+  # from; the breaks in a prompt are only layout, so they are folded away.
+  #
+  # The operation is the daemon's own, not a documented interface, so every
+  # step that can fail says so: no daemon, no key, a refusal, or no sign of the
+  # message in the transcript in time are all false, and the caller falls back
+  # to delivering it the old way. A false negative costs a duplicate later; a
+  # false positive would lose the comment.
+  def message(session_id:, text:)
+    record = session(session_id)
+    return false if record.nil? || record["status"].nil? || record["id"].nil?
+
+    line = one_line(text)
+    transcript = transcript_of(session_id)
+    since = transcript ? File.size(transcript) : 0
+    reply(short_id: record["id"], text: line) && replied?(session_id, line, since: since)
+  rescue SystemCallError, IOError, JSON::ParserError
+    false
+  end
+
   # `working`, `blocked`, `done`, or nil when the CLI no longer lists it —
   # which is not an error: a session that has exited can still be resumed from
   # its history.
@@ -236,6 +275,80 @@ class BasecampAgentConnector::Session::Claude
   end
 
   private
+    def default_daemon_dir
+      File.join(ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude")), "daemon")
+    end
+
+    def one_line(text)
+      text.to_s.split.join(" ")
+    end
+
+    # The request agent view sends, authenticated with the key the daemon
+    # keeps for its own clients. True only when the daemon says it took it.
+    def reply(short_id:, text:)
+      control = control_socket
+      key = daemon_key
+      return false if control.nil? || key.nil?
+
+      request = { proto: 1, op: "reply", short: short_id, text: text, auth: key }
+      answer = UNIXSocket.open(control) do |socket|
+        socket.write "#{JSON.generate(request)}\n"
+        socket.wait_readable(REPLY_TIMEOUT) ? socket.gets.to_s : ""
+      end
+
+      JSON.parse(answer)["ok"] == true
+    end
+
+    # Where the daemon listens, read from `claude daemon status`, which prints
+    # its socket directory; the directory's name is not something to guess.
+    def control_socket
+      result = run("daemon", "status")
+      return nil unless result.success?
+
+      dir = result.stdout.to_s[/^\s*sock dir:\s*(\S+)/, 1]
+      path = dir && File.join(dir, "control.sock")
+      path if path && File.socket?(path)
+    end
+
+    def daemon_key
+      key = File.read(File.join(@daemon_dir, "control.key")).strip
+      key.empty? ? nil : key
+    rescue SystemCallError
+      nil
+    end
+
+    def replied?(session_id, text, since:)
+      REPLY_CONFIRM_ATTEMPTS.times do |attempt|
+        return true if replied_since?(transcript_of(session_id), text, since: since)
+
+        @wait.call REPLY_CONFIRM_DELAY if attempt < REPLY_CONFIRM_ATTEMPTS - 1
+      end
+
+      false
+    end
+
+    # Reads only what was written since the reply, so an earlier message with
+    # the same text cannot answer for it.
+    def replied_since?(path, text, since:)
+      return false if path.nil?
+
+      written = File.open(path, "rb") do |file|
+        file.seek([ since, file.size ].min)
+        file.read.force_encoding(Encoding::UTF_8).scrub
+      end
+
+      written.each_line.any? do |line|
+        record = JSON.parse(line) rescue next
+        next false unless record.is_a?(Hash)
+
+        queued = record["type"] == "queue-operation" && record["operation"] == "enqueue" && record["content"]
+        prompt = record["type"] == "user" && record.dig("message", "content")
+        [ queued, prompt ].any? { |said| said.is_a?(String) && one_line(said) == text }
+      end
+    rescue SystemCallError
+      false
+    end
+
     def default_projects_dir
       File.join(ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude")), "projects")
     end
