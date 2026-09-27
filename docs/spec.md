@@ -555,6 +555,19 @@ not followed by a resume, because that resume would fork it. A spawn that
 cannot even start (a mapped repo that does not exist) is reported on the card
 like any refused spawn.
 
+**Who posts the receipt.** The session does, as its first step. The watching
+skill's receipt was a model's reaction fitted to the message, and a fixed token
+posted from code loses that, so every prompt that owes a receipt opens with the
+exact `boost create` command (with `--event` on a move) and asks for a short,
+apt reaction before any context gathering. The connector posts its own plain 👀
+only for a message it has to *hold* — busy and the reply did not go through,
+state unreadable, a continuation that failed — since the session may not read
+it for minutes; if that boost fails, the held prompt still asks the session to
+ack. The cost is latency: a new session's receipt lands once it has started and
+run its first command, seconds rather than the connector's near-instant boost,
+and a busy session's once it reads the reply between tool calls. A session that
+cannot be opened is reported on the recording in words.
+
 A dispatched session must never sit blocked on a question. Nothing watches its
 terminal, and the CLI's session log is raw terminal output rather than text, so
 a blocked session is unreadable as well as unattended. The prompt instructs it

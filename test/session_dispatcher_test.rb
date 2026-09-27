@@ -149,14 +149,18 @@ class SessionDispatcherTest < Minitest::Test
     assert_equal "/work/bc3", entry.repo
   end
 
-  # The receipt lands as the agent, on the recording that triggered it.
-  def test_the_receipt_boost_is_posted_as_the_agent
+  # The receipt is the session's, as its first step, so it can fit the
+  # message; the dispatcher posts nothing for a session it opens. The receipt
+  # lands as the agent, on the recording that triggered it.
+  def test_a_new_session_acks_first_and_the_dispatcher_does_not
     dispatcher.dispatch event
 
-    boost = @runner.commands_matching(/boost create/).first
+    prompt = @claude.spawns.first.prompt
 
-    assert_includes boost, "https://3.basecamp.com/000/buckets/222/comments/456.json"
-    assert_includes boost.join(" "), "--profile clawdito"
+    assert_empty @runner.commands_matching(/boost create/)
+    assert_includes prompt, "basecamp boost create https://3.basecamp.com/000/buckets/222/comments/456.json"
+    assert_includes prompt, "--profile clawdito"
+    assert_operator prompt.index("Acknowledge this"), :<, prompt.index("Do this, in order")
   end
 
   def test_the_configured_permission_mode_and_model_reach_the_session
@@ -483,10 +487,10 @@ class SessionDispatcherTest < Minitest::Test
     assert_empty @runner.commands_matching(/boost create/)
   end
 
-  def test_an_acted_on_move_is_acknowledged
+  def test_an_acted_on_move_is_acknowledged_by_the_session
     dispatcher.dispatch moved({}, assigned: true)
 
-    assert_equal 1, @runner.commands_matching(/boost create/).length
+    assert_includes @claude.spawns.first.prompt, "Acknowledge this"
   end
 
   # The card is what the payload names, and it may be weeks old and already
@@ -495,7 +499,7 @@ class SessionDispatcherTest < Minitest::Test
   def test_a_move_is_acknowledged_on_the_move_event_not_the_card
     dispatcher.dispatch moved({}, assigned: true)
 
-    assert_includes @runner.commands_matching(/boost create/).first.join(" "), "--event 99005"
+    assert_includes @claude.spawns.first.prompt, "--event 99005"
   end
 
   # Everything else names a recording the requester actually wrote, which is
@@ -503,7 +507,7 @@ class SessionDispatcherTest < Minitest::Test
   def test_an_ordinary_event_is_acknowledged_on_its_own_recording
     dispatcher.dispatch event
 
-    refute_includes @runner.commands_matching(/boost create/).first.join(" "), "--event"
+    refute_includes @claude.spawns.first.prompt, "--event"
   end
 
   # The case that needs the move as its target most. The session already
@@ -515,14 +519,10 @@ class SessionDispatcherTest < Minitest::Test
     subject = dispatcher
     subject.dispatch event
     @claude.states[@claude.only_session_id] = "done"
-    before = @runner.commands_matching(/boost create/).length
 
     subject.dispatch moved
 
-    boosts = @runner.commands_matching(/boost create/)
-
-    assert_equal before + 1, boosts.length
-    assert_includes boosts.last.join(" "), "--event 99005"
+    assert_includes @claude.continuations.last.prompt, "--event 99005"
   end
 
   # A move carries no words. Handing over the card's own description would read
@@ -554,56 +554,78 @@ class SessionDispatcherTest < Minitest::Test
     assert_includes @claude.spawns.first.prompt, "cards move"
   end
 
-  # A follow-up is owed a receipt as much as the first message was. When the
-  # boost for it does not land, the session is told to post one.
-  # The session is opened with boosts working; only the follow-up's receipt
-  # fails. The registry and the fake are shared, so a fresh dispatcher on the
-  # failing runner sees the same session.
-  def test_a_follow_up_whose_boost_failed_tells_the_session_to_post_one
-    dispatcher.dispatch event
-    @claude.states[@claude.only_session_id] = "done"
-    fail_boosts
-
-    dispatcher.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
-
-    assert_includes @claude.continuations.last.prompt, "The receipt boost could not be posted"
-  end
-
-  def test_a_held_follow_up_whose_boost_failed_still_carries_the_fallback
-    dispatcher.dispatch event
-    fail_boosts
-
-    dispatcher.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
-
-    assert_includes @registry.find("clawdito_222_Kanban-Card_789").queue.first, "The receipt boost could not be posted"
-  end
-
-  def test_a_follow_up_whose_boost_landed_says_nothing_about_one
+  # A follow-up is owed a receipt as much as the first message was, and one
+  # that reaches the session now gets it from the session.
+  def test_a_follow_up_continued_now_is_acked_by_the_session
     subject = dispatcher
     subject.dispatch event
     @claude.states[@claude.only_session_id] = "done"
 
     subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
 
-    refute_includes @claude.continuations.last.prompt, "receipt boost"
+    prompt = @claude.continuations.last.prompt
+    assert_empty @runner.commands_matching(/boost create/)
+    assert_includes prompt, "basecamp boost create https://3.basecamp.com/000/buckets/222/comments/456.json"
+    assert_operator prompt.index("Acknowledge this"), :<, prompt.index("Pick up from what you already know")
   end
 
-  # The fallback is the receipt the dispatcher would have posted: on a move,
-  # the move event, not the card.
-  def test_the_fallback_receipt_for_a_move_boosts_the_move
-    fail_boosts
+  def test_a_follow_up_replied_mid_work_is_acked_by_the_session
+    @claude.reply_goes_through = true
+    subject = dispatcher
+    subject.dispatch event
 
-    dispatcher.dispatch moved({}, assigned: true)
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
 
-    assert_includes @claude.spawns.first.prompt, "--event 99005"
+    assert_empty @runner.commands_matching(/boost create/)
+    assert_includes @claude.messages.last.text, "Acknowledge this"
   end
 
-  def test_the_fallback_receipt_for_a_mention_boosts_the_recording
-    fail_boosts
+  # A held follow-up will not be read until the session is free, which can be
+  # many minutes, so the dispatcher posts the receipt now and the session is
+  # not asked for a second one.
+  def test_a_held_follow_up_is_acked_by_the_dispatcher
+    subject = dispatcher
+    subject.dispatch event
 
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    boosts = @runner.commands_matching(/boost create/)
+    assert_equal 1, boosts.length
+    assert_includes boosts.first, "https://3.basecamp.com/000/buckets/222/comments/456.json"
+    assert_includes boosts.first.join(" "), "--profile clawdito"
+    refute_includes @registry.find("clawdito_222_Kanban-Card_789").queue.first, "Acknowledge this"
+  end
+
+  def test_a_held_follow_up_whose_boost_failed_is_acked_by_the_session_later
     dispatcher.dispatch event
+    fail_boosts
 
-    refute_includes @claude.spawns.first.prompt, "--event"
+    dispatcher.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    assert_includes @registry.find("clawdito_222_Kanban-Card_789").queue.first, "Acknowledge this"
+  end
+
+  # A continuation that did not go through leaves the message queued, which is
+  # holding it: the dispatcher acks it.
+  def test_a_follow_up_whose_continuation_failed_is_acked_by_the_dispatcher
+    subject = dispatcher
+    subject.dispatch event
+    @claude.states[@claude.only_session_id] = "done"
+    @claude.resume_succeeds = false
+
+    subject.dispatch event("id" => 99002, "recording" => sample_recording("id" => 457))
+
+    assert_equal 1, @runner.commands_matching(/boost create/).length
+    refute_includes @registry.find("clawdito_222_Kanban-Card_789").queue.first, "Acknowledge this"
+  end
+
+  def test_a_held_move_is_acked_on_the_move
+    subject = dispatcher
+    subject.dispatch event
+
+    subject.dispatch moved
+
+    assert_includes @runner.commands_matching(/boost create/).first.join(" "), "--event 99005"
   end
 
   # A listing the CLI could not give is not "idle": continuing then would stop
@@ -687,7 +709,7 @@ class SessionDispatcherTest < Minitest::Test
   end
 
   # A mapped repo that does not exist makes the spawn raise before `claude` ever
-  # runs. The requester has already been boosted, so it has to be reported like
+  # runs. The requester has had no receipt yet, so it has to be reported like
   # any refused spawn, not merely logged.
   def test_a_spawn_that_cannot_even_start_is_reported_on_the_card
     unstartable = Object.new
@@ -738,6 +760,7 @@ class SessionDispatcherTest < Minitest::Test
 
     assert_empty @runner.commands_matching(/boost create/)
     assert_equal 1, @claude.spawns.length
+    refute_includes @claude.spawns.first.prompt, "Acknowledge this"
   end
 
   # A comment on a followed thread is context somebody else is having, not a
@@ -749,25 +772,18 @@ class SessionDispatcherTest < Minitest::Test
     dispatcher.dispatch followed
 
     assert_empty @runner.commands_matching(/boost create/)
+    refute_includes @claude.spawns.first.prompt, "Acknowledge this"
   end
 
-  # The boost is the requester's only evidence the mention registered, so when
-  # it does not land the session is told to post one itself.
-  def test_a_failed_boost_tells_the_session_an_ack_is_owed
-    @runner = FakeCommandRunner.new
-    @runner.stub "boost create", stdout: error_envelope("not_found"), exit_status: 2
-
-    dispatcher.dispatch event
-
-    assert_equal 1, @claude.spawns.length
-    assert_includes @claude.spawns.first.prompt, "boost create"
-  end
-
-  def test_a_failed_boost_does_not_stop_the_dispatch
-    @runner = FakeCommandRunner.new
-    @runner.stub "boost create", stdout: error_envelope("not_found"), exit_status: 2
+  # A session that could not be opened says so on the recording, which is
+  # receipt enough; no boost is added on top.
+  def test_a_failed_spawn_is_reported_without_a_boost
+    @claude.spawn_succeeds = false
 
     assert dispatcher.dispatch(event)
+
+    assert_empty @runner.commands_matching(/boost create/)
+    assert_equal 1, @runner.commands_matching(/comments create/).length
   end
 
   # What the session is told is the whole briefing; these are the parts that

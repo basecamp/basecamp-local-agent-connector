@@ -1,9 +1,11 @@
 # Turns a verified event into a Claude session, one per thing of work.
 #
 # This is the half of the connector that replaces a watching session. Where a
-# model sitting on STDOUT used to boost, resolve a repo and spawn a worker, all
-# three happen here — in the same code path that verified the event, a few
-# milliseconds after it arrived, whether or not anything is watching.
+# model sitting on STDOUT used to boost, resolve a repo and spawn a worker, the
+# last two happen here — in the same code path that verified the event, a few
+# milliseconds after it arrived, whether or not anything is watching. The boost
+# is left to the session itself, as its first step: a model reading the
+# message picks a receipt that fits it, which a fixed token from code cannot.
 #
 # Three things follow from having no model in the loop, and each one shows up
 # below:
@@ -25,7 +27,7 @@ class BasecampAgentConnector::Session::Dispatcher
 
   # Events that are not a directive: a boost is a reaction to work already
   # done, and a comment on a followed thread is context somebody else is
-  # having. Neither earns a receipt boost of its own.
+  # having. Neither is owed a receipt.
   UNACKED_KINDS = %w[boost_created].freeze
 
   def initialize(agent:, basecamp_cli:, claude: BasecampAgentConnector::Session::Claude.new,
@@ -53,8 +55,7 @@ class BasecampAgentConnector::Session::Dispatcher
     return false if key.nil?
     return false unless worth_a_session?(event, key)
 
-    acked = acknowledge(event)
-    deliver(key, event, acked: acked)
+    deliver(key, event, owed: receipt_owed?(event))
   rescue StandardError => error
     # Deliberately broad. This runs on the thread handling a webhook delivery,
     # and an exception escaping here would take that thread down — leaving the
@@ -115,8 +116,8 @@ class BasecampAgentConnector::Session::Dispatcher
     # assignment. Everything else here was addressed to the agent by name and
     # needs no such test.
     #
-    # Checked before the receipt boost, so a move the agent is going to ignore
-    # does not leave a boost on the card implying somebody picked it up.
+    # Checked before anything is delivered, so a move the agent is going to
+    # ignore does not get a receipt implying somebody picked it up.
     def worth_a_session?(event, key)
       return true unless event.dig("trigger", "moved")
       return true if @registry.find(key.to_s)
@@ -130,20 +131,22 @@ class BasecampAgentConnector::Session::Dispatcher
       event.dig("recording", "parent", "title")
     end
 
-    # The receipt, posted before anything slow happens. It is the one Basecamp
-    # write this class makes on the happy path; everything else the session
-    # says, it says itself.
+    # Whether the requester is owed a visible sign that this registered. The
+    # session posts it as its first step, fitted to the message; the
+    # dispatcher posts one itself only when the message is not reaching a
+    # session now (see #acknowledge).
+    def receipt_owed?(event)
+      acknowledgeable?(event) && !event.dig("recording", "url").nil?
+    end
+
+    # The fallback receipt, for a message that is held rather than delivered:
+    # the session will not read it until it is free, which can be many
+    # minutes, and until then nothing on the recording says it arrived.
     #
-    # Returns whether the requester can see that the mention registered — which
-    # is true both when the boost landed and when none was owed. The dispatched
-    # session is told, and posts a fallback only if it is false.
+    # Returns whether the receipt landed. A held message whose receipt did not
+    # land still tells the session to post one when it gets there.
     def acknowledge(event)
-      return true unless acknowledgeable?(event)
-
-      url = event.dig("recording", "url")
-      return true if url.nil?
-
-      @basecamp_cli.create_boost url_or_id: url, content: ack_content(event),
+      @basecamp_cli.create_boost url_or_id: event.dig("recording", "url"), content: ack_content(event),
         profile: @agent, event: acknowledged_event_id(event)
       true
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
@@ -165,20 +168,25 @@ class BasecampAgentConnector::Session::Dispatcher
       !UNACKED_KINDS.include?(event["kind"]) && !event.dig("trigger", "subscribed")
     end
 
-    # Deliberately plain. A watching model could read the room and pick
-    # something apt; this cannot, and a fixed token that always means "received"
-    # is more honest than a randomly chosen emoji pretending to be a reaction.
+    # Deliberately plain. The session picks something apt when it acks; this
+    # is only for a message it has not read yet, and a fixed token that always
+    # means "received" is more honest than a random emoji posing as a reaction.
     def ack_content(_event)
       "👀"
     end
 
-    def deliver(key, event, acked:)
+    def deliver(key, event, owed:)
       requester = requester_of(event)
+      follow_up = ->(acked) { BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester, agent: @agent, acked: acked) }
+
+      # A message that will sit in the queue gets the dispatcher's receipt now,
+      # and its prompt says whether that landed.
+      held = -> { follow_up.call(!owed || acknowledge(event)) }
 
       @registry.with(key) do |entry|
-        next open(key, event, requester: requester, acked: acked) if entry.nil?
+        next open(key, event, requester: requester, owed: owed) if entry.nil?
 
-        prompt = BasecampAgentConnector::Session::Prompt.follow_up(event: event, requester: requester, agent: @agent, acked: acked)
+        prompt = follow_up.call(!owed)
         busy = @claude.busy?(entry.session_id)
 
         # Only a definite "idle" is continued now. A busy session is sent the
@@ -193,10 +201,10 @@ class BasecampAgentConnector::Session::Dispatcher
           log "session #{entry.short_id}: replied with activity on #{entry.name} while it works"
           entry
         elsif busy != false
-          hold entry, prompt, reason: busy.nil? ? "its state could not be read" : "it is busy and the reply did not go through"
+          hold entry, held.call, reason: busy.nil? ? "its state could not be read" : "it is busy and the reply did not go through"
         else
           continued, delivered = continue(entry, prompt)
-          delivered ? continued : continued.with(queue: continued.queue + [ prompt ])
+          delivered ? continued : continued.with(queue: continued.queue + [ held.call ])
         end
       end
 
@@ -205,7 +213,10 @@ class BasecampAgentConnector::Session::Dispatcher
 
     # The first event on a thing of work: resolve where it runs, brief a new
     # session, and record it so everything after this joins it.
-    def open(key, event, requester:, acked:)
+    #
+    # A session that cannot be opened is reported on the recording in words,
+    # which is receipt enough; one that opens acks for itself.
+    def open(key, event, requester:, owed:)
       repo = @repos.resolve(event.dig("recording", "bucket", "name"))
 
       if repo.nil?
@@ -214,7 +225,7 @@ class BasecampAgentConnector::Session::Dispatcher
       end
 
       prompt = BasecampAgentConnector::Session::Prompt.opening(
-        event: event, agent: @agent, key: key, requester: requester, acked: acked)
+        event: event, agent: @agent, key: key, requester: requester, acked: !owed)
 
       spawned = @claude.spawn(name: key.display_name, prompt: prompt, cwd: repo,
         permission_mode: @permission_mode, model: @model)
@@ -314,8 +325,8 @@ class BasecampAgentConnector::Session::Dispatcher
     end
 
     # The connector's own voice on a recording, used only when there is no
-    # session to speak for itself. Best effort: if this fails too, the boost is
-    # still on the recording and the log has the reason.
+    # session to speak for itself. Best effort: if this fails too, the log has
+    # the reason.
     def say(event, body)
       target = reply_target(event)
       return if target.nil?

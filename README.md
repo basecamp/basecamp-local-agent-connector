@@ -274,12 +274,12 @@ with unrelated work, and the tasks can't be told apart from outside.
 ```
   "@Clawdito fix the      ┌───>   bin/connect --dispatch session
    calendar bug"   ──webhook┘        • …same filtering and verification…
-                                     • boosts the recording as the agent (the ack)
                                      • resolves the repo from config/project_repos.toml
                                      • opens `claude --bg` for THIS card
                                               │
                                               ▼
                               one Claude session per card / message / todo
+                                     • boosts the recording as the agent first (the ack)
                                      • gathers its own context via the `basecamp` CLI
                                      • EnterWorktree + PR when it changes code
                                      • replies on the card as the agent
@@ -289,6 +289,14 @@ with unrelated work, and the tasks can't be told apart from outside.
 Nothing has to be watching. The session is opened by the connector itself, in the
 same code path that verified the event, and shows up in `claude agents` named
 after the card.
+
+**The session acks, as its first step.** Its prompt puts the receipt boost before
+anything else, so it's a reaction that fits the message, the way the watching
+session's was, and lands within seconds of the session reading it. Only a
+message the connector has to hold (its session is busy and the reply didn't go
+through) gets an immediate 👀 from the connector instead, since the session may
+not read it for minutes. A session that can't be opened is reported on the
+recording in words.
 
 **A session belongs to a card, not to a comment.** Comments don't open sessions —
 they join the one their card, message, todo or document already owns. So the
@@ -387,13 +395,13 @@ card, dragged across a board it merely watches — so assignment is how the boar
 says a card is the agent's, and every emitted move carries `trigger.assigned`.
 Under `--dispatch session` a move also drives a session the card already has,
 since a card mid-conversation is exactly what a move is meant to push along.
-Anything else is ignored and gets no receipt boost, so nothing on the card
-implies somebody picked it up.
+Anything else is ignored and gets no receipt, so nothing on the card implies
+somebody picked it up.
 
 **The receipt goes on the move, not the card.** A card may be weeks old and
 already carry boosts from earlier rounds, so a boost there wouldn't say *which*
 move was picked up. bc3 lets the events in a card's history carry boosts too, so
-the 👀 lands on the "moved this card to In progress" line itself.
+the ack lands on the "moved this card to In progress" line itself.
 
 **The session is told to leave the card where it is.** You chose that column
 deliberately; moving it on would both override you and erase the signal. (A

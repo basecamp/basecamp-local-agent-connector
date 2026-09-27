@@ -22,9 +22,10 @@ class BasecampAgentConnector::Session::Prompt
     new(event: event, agent: agent, key: key, requester: requester, acked: acked).opening
   end
 
-  # `acked` is false when the receipt boost for this activity did not land, so
-  # the session posts it — a follow-up is owed a receipt as much as the first
-  # message was.
+  # `acked` is false when the requester is still owed a receipt for this
+  # activity, so the session posts one first -- a follow-up is owed a receipt
+  # as much as the first message was. True when none is owed, or the
+  # dispatcher already posted one because the message was held.
   def self.follow_up(event:, requester:, agent:, acked: true)
     new(event: event, agent: agent, key: nil, requester: requester, acked: acked).follow_up
   end
@@ -58,7 +59,7 @@ class BasecampAgentConnector::Session::Prompt
 
       #{instruction}
 
-      ## Do this, in order
+      #{ack_note}## Do this, in order
 
       1. Gather context from Basecamp before acting. The event is a pointer, not the whole story:
          `basecamp show #{recording_app_url} -j` and the thing it hangs off, plus the thread's
@@ -69,7 +70,7 @@ class BasecampAgentConnector::Session::Prompt
          `basecamp docs documents list --all --project #{@key.bucket_id} -j` then
          `basecamp docs show <doc-id> --project #{@key.bucket_id} -j`.
       3. #{column_step}
-      4. Do the work.#{ack_note}
+      4. Do the work.
       5. Reply on the recording as yourself:
          `basecamp comments create #{reply_target} "<body>" --profile #{@agent}`
          Write it as rich text (HTML: <div>, <p>, <strong>, <ul>/<li>, <pre>). The body is a
@@ -108,7 +109,7 @@ class BasecampAgentConnector::Session::Prompt
       Posted on: #{recording_app_url}
       Reply to: #{reply_target}
 
-      Pick up from what you already know.#{" #{receipt_instruction}" unless @acked} Gather any further
+      #{"#{receipt_instruction}\n\n" unless @acked}Pick up from what you already know. Gather any further
       context you need from Basecamp, do the work, and reply on the recording as before. If you need
       something from a person, post the question as a Basecamp comment @mentioning #{@requester} and
       end your turn rather than waiting.
@@ -215,19 +216,23 @@ class BasecampAgentConnector::Session::Prompt
     def ack_note
       return "" if @acked
 
-      "\n   #{receipt_instruction}"
+      "## First, before anything else\n\n#{receipt_instruction}\n\n"
     end
 
+    # The receipt is the requester's sign that this registered, so it comes
+    # before any context gathering: judged from the message above alone, as
+    # the watching session used to.
     def receipt_instruction
-      "The receipt boost could not be posted, so post one first: `#{receipt_command}`."
+      "Acknowledge this in Basecamp right away, before gathering context or doing any work: " \
+        "`#{receipt_command}`. Make the boost fit the message: a short apt phrase or emoji (a few " \
+        "characters, the way a person would react), never the same fixed string every time."
     end
 
-    # The same receipt the dispatcher would have posted: on a move, the
-    # adoption event in the card's history rather than the card, so it says
-    # which move was picked up.
+    # On a move, the adoption event in the card's history rather than the
+    # card, so it says which move was picked up.
     def receipt_command
       event_flag = " --event #{@event["event_id"]}" if moved? && @event["event_id"]
 
-      "basecamp boost create #{recording["url"]} \"<short ack>\"#{event_flag} --profile #{@agent}"
+      "basecamp boost create #{recording["url"]} \"<ack>\"#{event_flag} --profile #{@agent}"
     end
 end
