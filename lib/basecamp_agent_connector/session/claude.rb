@@ -72,6 +72,9 @@ class BasecampAgentConnector::Session::Claude
   REPLY_CONFIRM_ATTEMPTS = 20
   REPLY_CONFIRM_DELAY = 0.25
 
+  # How the CLI wraps a reply of more than about 800 characters.
+  PASTED_WRAPPER = /<\/?pasted_content\b[^>]*>/
+
   # How long the daemon has to answer a reply before it counts as refused.
   REPLY_TIMEOUT = 5
 
@@ -328,7 +331,8 @@ class BasecampAgentConnector::Session::Claude
     end
 
     # Reads only what was written since the reply, so an earlier message with
-    # the same text cannot answer for it.
+    # the same text cannot answer for it. A long reply is recorded wrapped as
+    # pasted content; it arrived all the same, so the wrapper is looked past.
     def replied_since?(path, text, since:)
       return false if path.nil?
 
@@ -343,7 +347,7 @@ class BasecampAgentConnector::Session::Claude
 
         queued = record["type"] == "queue-operation" && record["operation"] == "enqueue" && record["content"]
         prompt = record["type"] == "user" && record.dig("message", "content")
-        [ queued, prompt ].any? { |said| said.is_a?(String) && one_line(said) == text }
+        [ queued, prompt ].any? { |said| said.is_a?(String) && one_line(said.gsub(PASTED_WRAPPER, " ")) == text }
       end
     rescue SystemCallError
       false

@@ -60,6 +60,17 @@ class SessionClaudeTest < Minitest::Test
     assert_equal "New activity: one more thing Posted on: a url", requests.pop["text"]
   end
 
+  # A long reply is recorded wrapped as pasted content -- a comment that
+  # counted as undelivered here was held, boosted and sent a second time.
+  def test_a_reply_recorded_as_pasted_content_is_delivered
+    stub_busy_listing
+    write_transcript turn_ended_at: @now
+    run_daemon { |request| append_to_transcript({ "type" => "user", "message" => { "role" => "user",
+      "content" => "\n\n<pasted_content id=\"fe01\">\n#{request["text"]}\n</pasted_content id=\"fe01\">\n" } }) }
+
+    assert @claude.message(session_id: "uuid-1", text: "one more thing " * 80)
+  end
+
   # A turn the reply starts, on a session that was idle after all, shows up
   # as the turn's prompt rather than a queued message.
   def test_a_reply_that_starts_a_turn_is_delivered

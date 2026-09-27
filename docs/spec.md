@@ -537,7 +537,12 @@ authenticated with the key in `~/.claude/daemon/control.key`, so only the OS
 user the sessions run as can do it). The session reads it between tool calls
 without interrupting the running command, and it arrives as the user's own
 message, like a resume prompt. It is sent as one line, since a reply with line
-breaks is framed as pasted content. This is an internal Claude Code interface,
+breaks is framed as pasted content — but the CLI also wraps any reply longer
+than about 800 characters that way (measured on Claude Code 2.1.283), which
+most follow-up prompts are. A wrapped reply still arrives as the user's own
+message and is acted on normally, so the delivery check looks past the
+wrapper rather than treating it as undelivered, which had held the comment,
+boosted it and sent it a second time. This is an internal Claude Code interface,
 not a documented one — the documented cross-session inbox was tried first and
 rejected, because it frames the message as coming from another session and not
 the user. So every delivery is confirmed in the session's transcript, and one
