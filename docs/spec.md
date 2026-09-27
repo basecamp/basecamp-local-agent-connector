@@ -358,6 +358,238 @@ received-boosts feed rather than a webhook: `creator` is the **booster**,
 `content` field in this feed representation), and `details.boost` carries the
 boost's own `id` and `content` (up to 16 characters, e.g. `"🔥"` or `"redo"`).
 
+### Column moves as a trigger
+
+A fifth way to trigger the agent, off unless `--on-column-move` asks for it.
+On a board whose columns say what kind of work is wanted, the move *is* the
+instruction, and requiring an @mention afterwards only restates the board.
+
+bc3 calls it `kanban_card_adopted`: a card's column is its parent, and
+`adopted` is the event for a recording acquiring a new one. `details` carries
+`parent_id_was` and `new_parent_id`; the recording's `parent` is the
+destination column, titled and typed. None of this is documented — it was
+established by reading a real delivery. Todos are re-parented by the same verb
+(`todo_adopted`, between lists), which is why the connector matches one exact
+kind rather than an `_adopted` suffix: moving a todo between lists says nothing
+about what work is wanted.
+
+**Which moves count.** Done and Not-now columns are excluded by *type*
+(`Kanban::DoneColumn`, `Kanban::NotNowColumn`), which bc3 assigns structurally
+— so the rule survives renaming and translation, where a title match would not.
+`--column-move-except` excludes further columns by title. A card landing back
+in the column it already occupied is not a change and is dropped, since bc3
+emits the adoption whenever a card acquires a parent.
+
+**Trust.** A column move is the same class of privilege as an assignment:
+operator-only in every mode unless `--allow-assignments-from-authorized` opts a
+mode's authors in, because it starts work and anyone who can see a board can
+drag a card across it. Refusing the agent's own events — which every mode does
+— is also what makes this non-looping: the agent moves cards itself as work
+progresses, and those moves die on the same branch that stops the reply loop.
+
+**Corroboration.** Neither of the existing checks applies. A move's author is
+whoever dragged the card, not the card's creator, and the agent need not be an
+assignee for the move to be real. Nor is the card's current column enough: a
+forger need not move anything, only claim a move into the column the card
+already sits in, with any `parent_id_was`.
+
+What bc3 does keep is the move itself. A card's history
+(`/buckets/:bucket/recordings/:id/events.json`) records each adoption with its
+id, author and both columns, and the webhook's id *is* that event's id —
+verified against a real delivery. So the Verifier requires this exact event to
+exist, be an `adopted` action and land in the claimed column, and the card to
+still sit there. The authoritative event then takes its author and `details`
+from that record rather than the POST, so the pipeline's second authorization
+and its "did the column actually change" check both run on what Basecamp
+recorded. That makes a move better corroborated than an assignment, whose
+assigner only the POST names.
+
+**Targeting, and why it is split.** The pipeline does not ask whether the card
+is the agent's; an assignee check there would drop moves on cards the agent is
+already mid-conversation about, which are exactly the ones a move should drive.
+Instead the Verifier stamps `agent_assigned`, and the dispatcher decides: a move
+drives a session the card already has, and opens a new one only where the agent
+is an assignee. A move on a card with neither is ignored — and ignored *before*
+the receipt boost, so nothing on the card implies somebody picked it up.
+
+**Receipt.** Every other trigger names a recording the requester wrote, and
+boosting it is the receipt. A move names only the card, which may be weeks old
+and already boosted from earlier rounds. bc3 keeps boosts on events as well as
+recordings, and the adoption is an event in the card's history whose id is the
+webhook's `event_id` — so the receipt is `boost create <card> --event
+<event_id>`, and it lands on the move itself. Verified against a live board:
+`adopted` events carry a boosts URL, and the neighbouring kinds do not.
+
+**Independent of dispatch mode.** A move is a trigger; dispatch is what happens
+after one. Under `--dispatch session` the rules above live in the session
+dispatcher. Under the default `--dispatch stdout` the `/basecamp-connect` skill
+applies the same ones from the emitted line: drop a move whose
+`trigger.assigned` is false before the boost, boost the move event with
+`--event <event_id>`, brief the column rather than the card's description, and
+leave the card where it is. The one difference is that the skill keeps no
+sessions, so "drive the session the card already has" does not arise there.
+
+**Briefing.** A move carries no words, so the card's description must not be
+handed over as though newly said; on a follow-up that reads as the requester
+repeating the brief and the agent redoes finished work. The prompt says the card
+was moved into `<column>`, points at the project's `AGENTS.md` for what that
+column means, and tells the session to leave the card where it is — the operator
+chose that column, and moving it on would override them and erase the signal.
+
+### Dispatch modes
+
+What happens to an event once it is verified is a setting, because the two
+answers suit different situations and neither should be forced on the other.
+
+**`--dispatch stdout`** (the default) is the original arrangement: print the
+NDJSON line and stop. Everything downstream — acking, resolving a repo,
+dispatching a worker, replying — belongs to whatever is reading, normally the
+`/basecamp-connect` skill below. The connector stays dumb-and-safe.
+
+**`--dispatch session`** additionally opens a Claude Code session per *thing of
+work*. STDOUT is unaffected — the line is written first and unconditionally —
+so a consumer that only reads the stream keeps working. An *active* watcher is
+another matter: the `/basecamp-connect` skill dispatches every event it reads,
+and running it against a connector that already dispatches means every event is
+handled twice. The two are alternatives, one driver per connector, not layers.
+
+The unit is the thing of work, not the event. `Session::Key` resolves a
+recording to its root — the parent for a Comment or a chat line, the recording
+itself otherwise — so a card, message, todo or document owns exactly one
+session and every comment on it joins that session. This is the whole point:
+re-reading a card from Basecamp recovers its text, never the reasoning that
+followed from it, so a follow-up handled by a fresh agent starts from nothing.
+
+The pieces, all under `lib/basecamp_agent_connector/session/`:
+
+| Class | Responsibility |
+| --- | --- |
+| `Key` | Resolves an event to the thing of work it belongs to. Pure; reads only the emitted event. |
+| `Registry` | Which session owns which key, and what is queued for it. Modelled on `RunRegistry`: atomic rename, `0600`, and a per-key lock so two events racing cannot both open a session. |
+| `Claude` | The `claude` CLI — spawn, resume, stop, list. `--background` picks the session id itself (it ignores `--session-id`), so the short id is parsed back off the spawn line and the full uuid looked up from `claude agents --json`. Both are stored: `stop` takes the short one, and `--resume` requires the full one — given the short id it starts a *copy*, which would hand one card two sessions. |
+| `RepoResolver` | Reads `config/project_repos.toml`, which until now only the skill read. |
+| `Prompt` | What a session is told: the full briefing once, then just the new comment. |
+| `Dispatcher` | The decisions below. |
+| `DispatchingEmitter` | Wraps the one `Emitter` every pipeline already shares. |
+
+Three properties follow from there being no model in the loop, and each is
+handled rather than hoped away:
+
+1. **Nothing can be asked.** A project that resolves to no repo is held, with a
+   reply on the recording saying so. Guessing a repo would run an agent
+   somewhere arbitrary.
+2. **Nothing notices a failure.** A refused spawn is reported on the recording,
+   because a boosted card with no reply is indistinguishable from a mention
+   that never arrived — the failure the ack exists to prevent.
+3. **Nothing can be interrupted safely.** A resident session must be stopped
+   before `--resume` will continue it in place; resuming a running one forks a
+   *copy* under a new id, which would give one card two sessions. So a comment
+   arriving while its session is busy is queued and delivered when the session
+   goes quiet, and a flusher thread drains the queue — the alternative,
+   delivering on the next event, leaves a comment waiting for as long as the
+   card stays quiet.
+
+Two details of `claude agents --json` decide whether that works, and both were
+learned from a live board rather than the docs:
+
+- **Busy is `status`, not `state` or liveness.** `state` is the lifecycle
+  (`working`, `blocked`, `done`); `status` is what the session is doing right
+  now (`busy`, `idle`), reported only while it is resident. A session can sit
+  at `state: working, status: idle` with a live pid — between turns, or
+  finished and not yet reaped — and treating that as busy holds the card's
+  messages for as long as the process lingers. When `status` is absent the
+  session is not resident, and the question falls back to whether its process
+  is alive, since the CLI leaves `state` at `working` when a session dies
+  mid-turn.
+- **Not knowing is not "gone".** When the listing cannot be read at all,
+  residency is unknown, and the two guesses are not equally safe: stopping a
+  session that turns out not to be resident costs nothing, while resuming one
+  that is forks the card. So only a definite "not listed" earns a plain
+  resume; anything else stops first. This matters most right after a restart,
+  when the first event arrives just as the CLI is least able to answer. The
+  same goes for busy: a follow-up is continued only on a definite "idle", and
+  a listing the CLI could not give holds it for the flusher, since stopping a
+  session that may be mid-work would throw its work away.
+- **`claude stop` returns before the session is gone.** It returns once the
+  stop is requested, and a session tearing down a dev server or a test run
+  takes a moment to exit. A resume issued in that window finds it still
+  resident and forks it — seen five times in five days, the copy claimed
+  between 14 and 573 ms before the original finished exiting. So the resume
+  waits, polling for up to ten seconds, until the session is unlisted or listed
+  without a `status`; if it has not gone, or the listing cannot be read, the
+  continue fails and the message stays queued. In case a fork ever gets
+  through anyway, the dispatcher compares the session the CLI says it
+  continued with the one it asked for, and logs a copy loudly.
+- **`busy` can outlive the turn.** The CLI has been seen to keep reporting
+  `status: busy` for hours after a turn finished, which held a card's comments
+  for seven. So a `busy` status is checked against the session's transcript and
+  overruled only when the transcript's last conversation is followed by the
+  turn's `turn_duration`, at least 30 minutes ago, with nothing since. A running
+  turn writes as it goes and never ends that way; the margin is wide because a
+  turn can end with a background task still running, which stopping the
+  session would kill. A transcript that cannot be found or read leaves the
+  CLI's answer standing.
+
+**Reaching a busy session mid-work.** A comment for a session that is busy is
+first sent to it the way a reply typed into agent view is: a `reply` request on
+the background daemon's control socket (found via `claude daemon status`,
+authenticated with the key in `~/.claude/daemon/control.key`, so only the OS
+user the sessions run as can do it). The session reads it between tool calls
+without interrupting the running command, and it arrives as the user's own
+message, like a resume prompt. It is sent as one line, since a reply with line
+breaks is framed as pasted content — but the CLI also wraps any reply longer
+than about 800 characters that way (measured on Claude Code 2.1.283), which
+most follow-up prompts are. A wrapped reply still arrives as the user's own
+message and is acted on normally, so the delivery check looks past the
+wrapper rather than treating it as undelivered, which had held the comment,
+boosted it and sent it a second time. This is an internal Claude Code interface,
+not a documented one — the documented cross-session inbox was tried first and
+rejected, because it frames the message as coming from another session and not
+the user. So every delivery is confirmed in the session's transcript, and one
+that is refused, unconfirmed within five seconds, or impossible (no daemon, no
+key) falls back to holding the comment for the flusher, which delivers with an
+ordinary resume. The flusher never uses the reply channel.
+
+A message leaves the queue only once a resume actually went through. The
+flusher's check, resume and queue update are one decision under the card's
+registry lock — the lock a webhook delivery takes too — so a comment arriving
+mid-flush waits rather than continuing the session in between. A resume that
+fails keeps every message queued, a direct follow-up whose resume fails is
+queued rather than dropped, and a stop that fails on a session still listed is
+not followed by a resume, because that resume would fork it. A spawn that
+cannot even start (a mapped repo that does not exist) is reported on the card
+like any refused spawn.
+
+**Who posts the receipt.** The session does, as its first step. The watching
+skill's receipt was a model's reaction fitted to the message, and a fixed token
+posted from code loses that, so every prompt that owes a receipt opens with the
+exact `boost create` command (with `--event` on a move) and asks for a short,
+apt reaction before any context gathering. The connector posts its own plain 👀
+only for a message it has to *hold* — busy and the reply did not go through,
+state unreadable, a continuation that failed — since the session may not read
+it for minutes; if that boost fails, the held prompt still asks the session to
+ack. The cost is latency: a new session's receipt lands once it has started and
+run its first command, seconds rather than the connector's near-instant boost,
+and a busy session's once it reads the reply between tool calls. A session that
+cannot be opened is reported on the recording in words.
+
+A dispatched session must never sit blocked on a question. Nothing watches its
+terminal, and the CLI's session log is raw terminal output rather than text, so
+a blocked session is unreadable as well as unattended. The prompt instructs it
+to post the question to Basecamp and end its turn; the answer arrives as a
+comment on the same recording, routes to the same key, and continues it. That
+makes Basecamp the input channel and needs no supervisor.
+
+Sessions deliberately outlive the connector: they are their own processes, the
+registry is on disk, and a restart picks them up again.
+
+**Security.** Dispatched sessions run unattended at
+`--session-permission-mode` (default `acceptEdits`). The operator-only trust
+filter is unchanged and is what stands between a Basecamp comment and a command
+running locally — but it is now the *only* thing, where before a person was
+watching a terminal. The mode is an explicit flag rather than an inherited
+default for that reason.
+
 ---
 
 ## Component 2: `/basecamp-connect` skill

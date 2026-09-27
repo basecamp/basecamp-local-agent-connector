@@ -17,6 +17,75 @@ class ConnectorTest < Minitest::Test
     refute options.allow_assignments
   end
 
+  # Nothing changes for anyone who does not ask for it: without --dispatch the
+  # connector prints events and stops there, exactly as it always has.
+  def test_dispatch_defaults_to_stdout
+    options = parse "@clawdito", "--project", "A"
+
+    assert_equal "stdout", options.dispatch
+  end
+
+  def test_dispatch_session_is_opt_in
+    options = parse "@clawdito", "--project", "A", "--dispatch", "session"
+
+    assert_equal "session", options.dispatch
+  end
+
+  def test_refuses_an_unknown_dispatch_mode
+    assert_raises OptionParser::InvalidArgument do
+      parse "@clawdito", "--project", "A", "--dispatch", "carrier-pigeon"
+    end
+  end
+
+  # Sessions post as the agent, so there is nothing to dispatch as without one.
+  def test_dispatch_session_refuses_without_an_agent
+    assert_raises ArgumentError do
+      parse "--repo", "acme/widgets", "--dispatch", "session"
+    end
+  end
+
+  # Dispatched sessions run unattended, so what they may do without asking is
+  # a deliberate setting rather than whatever the machine happens to default to.
+  def test_session_permission_mode_defaults_to_accepting_edits
+    options = parse "@clawdito", "--project", "A", "--dispatch", "session"
+
+    assert_equal "acceptEdits", options.session_permission_mode
+  end
+
+  def test_the_session_permission_mode_and_model_are_configurable
+    options = parse "@clawdito", "--project", "A", "--dispatch", "session",
+      "--session-permission-mode", "plan", "--session-model", "opus"
+
+    assert_equal "plan", options.session_permission_mode
+    assert_equal "opus", options.session_model
+  end
+
+  def test_column_moves_are_off_by_default
+    options = parse "@clawdito", "--project", "A"
+
+    refute options.column_moves
+    assert_empty options.column_move_except
+  end
+
+  def test_on_column_move_turns_them_on
+    assert parse("@clawdito", "--project", "A", "--on-column-move").column_moves
+  end
+
+  def test_an_excluded_column_implies_on_column_move
+    options = parse "@clawdito", "--project", "A", "--column-move-except", "Backlog, Icebox"
+
+    assert options.column_moves
+    assert_equal [ "Backlog", "Icebox" ], options.column_move_except
+  end
+
+  # A move is a trigger, and dispatch is what happens after one: the two are
+  # independent. Under STDOUT the watching skill applies the same rule the
+  # session dispatcher does — act only on a card the agent is assigned.
+  def test_column_moves_work_under_either_dispatch_mode
+    assert parse("@clawdito", "--project", "A", "--on-column-move").column_moves
+    assert parse("@clawdito", "--project", "A", "--on-column-move", "--dispatch", "session").column_moves
+  end
+
   def test_allow_implies_allowlist_trust
     options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow", "sam@example.com, ana@example.com"
 

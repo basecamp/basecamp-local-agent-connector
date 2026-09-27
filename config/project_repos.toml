@@ -1,9 +1,11 @@
-# Project → repo mapping for the /basecamp skill.
+# Project → repo mapping, read by the /basecamp-connect skill and — under
+# `bin/connect --dispatch session` — by the connector itself.
 #
-# When a trusted event arrives, the skill resolves which local repo to run the
-# agent in by matching tokens (case-insensitive) against the Basecamp project
-# name (recording.bucket.name). The first matching token wins. If nothing
-# matches, the skill asks you which repo to use — it never guesses.
+# When a trusted event arrives, the local repo to run the agent in is resolved
+# by matching tokens (case-insensitive) against the Basecamp project name
+# (recording.bucket.name). The first matching token wins. If nothing matches, it
+# never guesses: the skill asks you which repo to use, and the connector holds
+# the event with a reply on the recording saying so.
 #
 # Paths may use ~ for your home directory.
 
