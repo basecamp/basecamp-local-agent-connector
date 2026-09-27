@@ -1,4 +1,5 @@
 require "json"
+require "time"
 
 # The Claude Code CLI, as much of it as dispatching sessions needs.
 #
@@ -45,6 +46,25 @@ class BasecampAgentConnector::Session::Claude
   SETTLE_ATTEMPTS = 40
   SETTLE_DELAY = 0.25
 
+  # How long after its last turn ended a session reported `busy` is believed.
+  # The CLI's `status` can stick at `busy` after a turn has finished: a card
+  # sat seven hours with three comments held for it, its transcript ending in
+  # the turn's `turn_duration` at 11:17 and nothing after. A turn that really is
+  # running writes to the transcript as it goes, so a finished turn followed by
+  # silence is the stuck flag, not work. The margin is generous because a turn
+  # can end with a background task still running, which the CLI rightly counts
+  # as busy and which stopping the session would kill.
+  TURN_OVER_GRACE = 30 * 60
+
+  # How much of a transcript's end is read to find its last turn. Only the
+  # bookkeeping written after a turn ends has to fit; a few KB in practice.
+  TRANSCRIPT_TAIL_BYTES = 256 * 1024
+
+  # Records that are the conversation itself. Everything else in a transcript --
+  # cost, titles, modes, the last prompt -- is bookkeeping written around turns.
+  CONVERSATION_TYPES = %w[user assistant].freeze
+  TURN_ENDED = "turn_duration".freeze
+
   # `session_id` is nil when the spawn failed, or when it succeeded but the id
   # could not be read back — a running session that cannot be continued, which
   # the dispatcher records and retries resolving later rather than discarding.
@@ -55,10 +75,12 @@ class BasecampAgentConnector::Session::Claude
   end
 
   def initialize(command_runner: BasecampAgentConnector::CommandRunner.new, executable: EXECUTABLE,
-    wait: ->(seconds) { sleep seconds })
+    wait: ->(seconds) { sleep seconds }, projects_dir: default_projects_dir, clock: -> { Time.now })
     @command_runner = command_runner
     @executable = executable
     @wait = wait
+    @projects_dir = projects_dir
+    @clock = clock
   end
 
   # Refuses to start rather than discovering at the first mention that there is
@@ -164,6 +186,10 @@ class BasecampAgentConnector::Session::Claude
   # session is not busy either: the CLI leaves `state` at `working` when one
   # dies mid-turn, so that case falls through to asking the process directly.
   #
+  # A `busy` status is checked against the session's transcript, because the
+  # CLI has been seen to leave it set long after the turn ended -- see
+  # TURN_OVER_GRACE.
+  #
   # `nil` when the CLI could not be asked. That is not "not busy": a caller
   # that read it as idle would stop a session that may be mid-work.
   def busy?(session_id)
@@ -174,7 +200,7 @@ class BasecampAgentConnector::Session::Claude
     return false unless record && BUSY_STATES.include?(record["state"])
 
     status = record["status"]
-    return status == BUSY_STATUS unless status.nil?
+    return status == BUSY_STATUS && !turn_long_over?(session_id) unless status.nil?
 
     running? record["pid"]
   end
@@ -210,6 +236,57 @@ class BasecampAgentConnector::Session::Claude
   end
 
   private
+    def default_projects_dir
+      File.join(ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude")), "projects")
+    end
+
+    # Whether the session's last turn ended at least TURN_OVER_GRACE ago with
+    # nothing said since. Anything that cannot be read -- no transcript, a
+    # transcript whose tail holds no turn -- is "no", leaving the CLI's word
+    # standing: overruling it on a guess would stop a session mid-work.
+    def turn_long_over?(session_id)
+      ended = last_turn_end(transcript_of(session_id))
+      !ended.nil? && @clock.call - ended >= TURN_OVER_GRACE
+    end
+
+    # Transcripts live under a directory named for the session's working
+    # directory, which moves when a session enters a worktree, so it is found
+    # by its id rather than by where it was started.
+    def transcript_of(session_id)
+      Dir.glob(File.join(@projects_dir, "*", "#{session_id}.jsonl")).max_by { |path| File.mtime(path) }
+    rescue SystemCallError
+      nil
+    end
+
+    # When the last turn ended, or nil if the transcript's last conversation is
+    # not a finished turn -- a turn still running ends in a tool call or a
+    # result, not in `turn_duration`.
+    def last_turn_end(path)
+      return nil if path.nil?
+
+      tail(path).lines.reverse_each do |line|
+        record = JSON.parse(line) rescue next
+        next unless record.is_a?(Hash)
+        return nil if CONVERSATION_TYPES.include?(record["type"])
+        next unless record["type"] == "system" && record["subtype"] == TURN_ENDED
+
+        return Time.iso8601(record["timestamp"].to_s) rescue nil
+      end
+
+      nil
+    end
+
+    # The first line of a tail read mid-file is partial; it fails to parse and
+    # is skipped like any other unreadable line.
+    def tail(path)
+      File.open(path, "rb") do |file|
+        file.seek([ file.size - TRANSCRIPT_TAIL_BYTES, 0 ].max)
+        file.read.force_encoding(Encoding::UTF_8).scrub
+      end
+    rescue SystemCallError
+      ""
+    end
+
     # Gone from the CLI's view of what is running: no longer listed, or listed
     # without a `status`, which the CLI reports only while a session is
     # resident. A listing that cannot be read counts as not yet -- resuming on a

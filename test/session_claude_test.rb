@@ -1,4 +1,5 @@
 require_relative "test_helper"
+require "tmpdir"
 
 class SessionClaudeTest < Minitest::Test
   Claude = BasecampAgentConnector::Session::Claude
@@ -13,7 +14,13 @@ class SessionClaudeTest < Minitest::Test
 
   def setup
     @runner = FakeCommandRunner.new
-    @claude = Claude.new(command_runner: @runner, wait: ->(_seconds) { })
+    @projects = Dir.mktmpdir("claude-projects")
+    @now = Time.utc(2026, 9, 26, 18, 30)
+    @claude = Claude.new(command_runner: @runner, wait: ->(_seconds) { }, projects_dir: @projects, clock: -> { @now })
+  end
+
+  def teardown
+    FileUtils.remove_entry @projects
   end
 
   def test_spawning_names_the_session
@@ -298,6 +305,53 @@ class SessionClaudeTest < Minitest::Test
   # `status` is reported only while the session is resident. Without it there is
   # nothing to read but the process, and a session that died mid-turn keeps
   # `state: working` for good -- so the card would go deaf, silently.
+  # The CLI left a session at `busy` for seven hours after its turn ended,
+  # holding every comment on the card. The transcript said otherwise: the turn
+  # was over and nothing had been said since.
+  def test_a_busy_status_long_after_the_turn_ended_is_not_believed
+    stub_busy_listing
+    write_transcript turn_ended_at: @now - (Claude::TURN_OVER_GRACE + 60)
+
+    refute @claude.busy?("uuid-1")
+  end
+
+  # A turn can end with a background task still running, which the CLI counts
+  # as busy; stopping the session then would kill the task. So a recent end is
+  # left alone.
+  def test_a_busy_status_soon_after_the_turn_ended_is_believed
+    stub_busy_listing
+    write_transcript turn_ended_at: @now - 60
+
+    assert @claude.busy?("uuid-1")
+  end
+
+  # Bookkeeping the CLI writes after every turn -- cost, the last prompt, the
+  # title -- is not the conversation, and does not hide the turn's end.
+  def test_bookkeeping_after_the_turn_does_not_hide_its_end
+    stub_busy_listing
+    write_transcript turn_ended_at: @now - (Claude::TURN_OVER_GRACE + 60),
+      after: [ { "type" => "last-prompt" }, { "type" => "cost-state" }, { "type" => "system", "subtype" => "away_summary" } ]
+
+    refute @claude.busy?("uuid-1")
+  end
+
+  # A new turn that has started since writes its prompt and tool calls, so an
+  # old `turn_duration` further up is no evidence the session is idle.
+  def test_a_turn_running_since_the_last_end_is_busy
+    stub_busy_listing
+    write_transcript turn_ended_at: @now - (Claude::TURN_OVER_GRACE + 60),
+      after: [ { "type" => "user", "message" => { "role" => "user", "content" => "next" } } ]
+
+    assert @claude.busy?("uuid-1")
+  end
+
+  # Without a transcript to check, the CLI's word stands.
+  def test_a_busy_status_without_a_transcript_is_believed
+    stub_busy_listing
+
+    assert @claude.busy?("uuid-1")
+  end
+
   def test_without_a_status_a_gone_process_is_not_busy
     @runner.stub "claude agents --json", stdout: JSON.generate([
       { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
@@ -379,6 +433,26 @@ class SessionClaudeTest < Minitest::Test
   end
 
   private
+    def stub_busy_listing
+      @runner.stub "claude agents --json", stdout: JSON.generate([
+        { "id" => "uuid-1"[0, 8], "sessionId" => "uuid-1", "name" => "A card",
+          "state" => "working", "status" => "busy", "pid" => Process.pid }
+      ])
+    end
+
+    # A session that moved into a worktree keeps its transcript under the
+    # directory it started in, so this one is deliberately somewhere else.
+    def write_transcript(turn_ended_at:, after: [])
+      dir = File.join(@projects, "-home-agent-work-repo--claude-worktrees-a-card")
+      FileUtils.mkdir_p dir
+      records = [
+        { "type" => "user", "message" => { "role" => "user", "content" => "do it" } },
+        { "type" => "assistant", "message" => { "role" => "assistant", "content" => [] } },
+        { "type" => "system", "subtype" => "turn_duration", "timestamp" => turn_ended_at.utc.iso8601(3) }
+      ] + after
+      File.write File.join(dir, "uuid-1.jsonl"), records.map(&:to_json).join("\n") + "\n"
+    end
+
     def stub_spawn
       @runner.stub "claude --background", stdout: BACKGROUNDED
       @runner.stub "claude agents --json", stdout: JSON.generate([
