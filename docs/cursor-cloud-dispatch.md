@@ -1,7 +1,12 @@
 # Dispatching a mention to a Cursor cloud agent
 
-**Experimental.** This is a spike, not a supported path. It does not work
-end to end today, and the reason it does not is written down at the bottom.
+**Experimental, and stopped.** This is a spike, not a supported path. Work on
+it stopped on 28 Sep 2026: dispatching to Cursor from the connector is not the
+direction. A mention of a hosted agent should start Cursor from inside bc3,
+which continues on the card
+[bc3: a mention of a hosted agent triggers Cursor from inside bc3](https://app.basecamp.com/2914079/buckets/48699913/card_tables/cards/10346589921).
+What stays here is the cheapest way to learn how Cursor behaves: one live run
+is still owed, and [the live run](#the-live-run) says exactly how to make it.
 
 The connector's whole job is to notice that someone mentioned an agent and say
 so on STDOUT. What reads that line is up to you. `bin/connect` was built for a
@@ -31,7 +36,6 @@ One `POST https://api.cursor.com/v1/agents` per verified mention:
   "prompt": { "text": "… the card URL, the comment, and the job …" },
   "name": "Re: PoC test card (safe to trash)",
   "agentId": "bc-db5d738e-cd2a-3b32-5dc5-698d611fc27f",
-  "repos": [],
   "mcpServers": [
     {
       "name": "basecamp",
@@ -43,8 +47,10 @@ One `POST https://api.cursor.com/v1/agents` per verified mention:
 }
 ```
 
-`"repos": []` is what makes it a no-repo agent — there is no code in this job,
-only Basecamp. The inline `mcpServers` entry is the hands: Cursor proxies those
+No `repos` key at all is what makes it a no-repo agent — there is no code in
+this job, only Basecamp. Cursor's API reference says to "omit both `repos` and
+`env` to start a no-repo agent"; an empty list is accepted by the SDK too, but
+omission is the documented shape, so that is what goes on the wire. The inline `mcpServers` entry is the hands: Cursor proxies those
 headers to the MCP server from its backend, so the token never enters the
 agent's VM.
 
@@ -118,49 +124,126 @@ dispatcher has only `run.result`, a prose summary it would be relaying as
 fact. The fallback exists because a card that gets mentioned and then goes
 silent is worse than a duplicate comment.
 
-## What is missing
+## Getting the MCP token: the browser path
 
-**A bearer token for `https://mcp.basecamp.com/mcp` that an unattended
-process can hold.** Everything else here works; this does not, and it is a
-Basecamp-side gap rather than a Cursor one.
+The hosted MCP server accepts only tokens audienced to it (RFC 8707), and bc3
+mints those through `authorization_code` + PKCE alone: a dynamically
+registered client may hold no other grant, and a `basecamp` CLI token is the
+right class and the wrong audience. So one person signs in once, in a browser,
+**as the agent**, and the connector keeps the refresh token that comes back.
 
-- The hosted MCP server accepts only `bc_at_` tokens, and validates them by
-  exchanging them (RFC 8693) for an API token. The exchange rejects a subject
-  token that is not audienced to the MCP server's own OAuth client.
-- An agent's `bc_at_` token from the `basecamp` CLI is the right class and the
-  wrong audience.
-- Minting a correctly-audienced one means `authorization_code` + PKCE — a
-  browser, once, per agent identity. Dynamic client registration works, but
-  bc3 answers a DCR request asking for anything else with
-  `invalid_client_metadata: Dynamically registered clients only support the
-  authorization_code and refresh_token grants`, so `client_credentials` and
-  `token-exchange` are closed to a self-registered client.
-- Cursor's inline OAuth (`auth`) is not a way round it: it is per-user and
-  needs a prior authorization on cursor.com, which is the same browser step
-  moved somewhere less convenient.
+```bash
+bin/mcp-authorize @marie
+```
 
-So an unattended runner needs either a first-party OAuth client (issued by
-37signals, with `client_credentials` or token-exchange enabled) or a one-time
-human authorization whose refresh token the runner then keeps.
+registers a public loopback client the first time (RFC 7591), prints an
+authorize URL asking for `full mcp offline_access` with
+`resource=https://mcp.basecamp.com/mcp`, and waits on
+`http://127.0.0.1:8765/callback`. Open the URL in a browser **signed in to
+Basecamp as the agent** — a private window keeps the operator's own session
+out of it, and a token minted in the operator's session would make the
+operator, not the agent, the one doing the work. Approve, and it stores the
+refresh token in `~/.config/basecamp-agent-connector/mcp/<agent>.json`, mode
+0600, outside any repository.
 
-Three Cursor-side gates to check before assuming this works on an account,
-in the order they bite:
+From then on, every token is a refresh with no browser:
 
-- **The key has to be a user API key or a service-account key.** A key from
-  the dashboard's *Team API Keys* tab is for the Admin API only; every
-  Cloud Agents endpoint, `GET /v1/me` included, answers it with `401` and a
-  message saying exactly that. Found the hard way on 23 Sep 2026 with the
-  first key issued for this spike, so `bin/dispatch-cursor` never got past
-  the create — the run ended `UNDISPATCHED` and the fallback comment landed
-  on the card as the agent, which is the failure path doing its job.
-- No-repo agents must be enabled for the team (a repository-scoped API key
-  cannot create one).
-- `GET /v1/agents/{id}/usage` answers `403 feature_unavailable` until early
-  access is turned on.
+```bash
+BASECAMP_MCP_TOKEN="$(bin/mcp-token @marie)"
+```
 
-And the Basecamp-side wall above held on 23 Sep too: every `bc_at_` token,
-real or garbage, still gets `503 Authorization upstream unavailable; retry`
-from `https://mcp.basecamp.com/mcp`, with a `Retry-After` that rolls forward
-to about 01:45 UTC the next day each time it is checked. A request with no
-token gets the expected `401` with `WWW-Authenticate`, so the server is up;
-it is the token exchange behind it that is refusing.
+`bin/mcp-token` rotates the stored refresh token and refuses to print to a
+terminal. `BASECAMP_MCP_URL` and `BASECAMP_AUTH_URL` point both scripts, and
+`bin/dispatch-cursor`, at a beta instead
+(`https://betaN-mcp.3.bc4-beta.com/mcp`, `https://betaN.3.bc4-beta.com`).
+
+## The live run
+
+**Pending: the Cursor service-account key.** Nothing below has run live yet.
+
+The key goes in `CURSOR_API_KEY` in the dispatcher's own environment, read
+from 1Password at the moment of the run and nowhere else — never a file, a
+card, a commit or this doc. It must be a service-account key (Cursor dashboard
+› Settings › API Keys › Service Accounts) or a user key, not repository-scoped,
+on a team with no-repo agents enabled. The team key issued on 22 Sep is the
+wrong kind: see the gates below.
+
+With the key in 1Password and the browser step done once, the run is one
+command. Start it, then mention the agent on a card in the project with three
+to-dos:
+
+```bash
+CURSOR_API_KEY="$(op read 'op://Development/<service-account key item>/credential')" \
+BASECAMP_MCP_TOKEN="$(bin/mcp-token @marie)" \
+  bash -c 'bin/connect @marie --project "Bring your agents to Basecamp" | tee >(bin/dispatch-cursor @marie)'
+```
+
+The MCP token is minted when the command starts and is good for its access
+token lifetime, so make the mention within a few minutes of starting it.
+
+The dispatcher logs the create, polls the run, and when it ends logs one line
+with the run's status, duration and token usage from
+`GET /v1/agents/{id}/usage?runId=…` (or why usage was unavailable — it is early
+access and answers `403 feature_unavailable` until enabled). That line is what
+goes in the table below.
+
+| | Result |
+|---|---|
+| Account check (`GET /v1/me`) | pending |
+| Agent created, no repos | pending |
+| First MCP tool call | pending |
+| Three to-dos created, as the agent | pending |
+| Comment back on the card, as the agent | pending |
+| Duration | pending |
+| Tokens (input / output / cache write / cache read) | pending |
+| Cost | pending |
+
+## What we have learned so far
+
+Tested against the real endpoints, 22–28 Sep 2026.
+
+- **The MCP 503 was ours.** `https://mcp.basecamp.com/mcp` answered every
+  `bc_at_` token, real or garbage, with `503 Authorization upstream
+  unavailable; retry` from 22 to at least 23 Sep. The cause was bc3's OAuth
+  abuse tracker: every MCP user's token exchange leaves the MCP server
+  through one egress IP, a few users with stale tokens tripped the
+  `invalid_grant` threshold, and the tracker then 429ed every exchange for
+  everyone. Fixed in
+  [basecamp/bc3#13466](https://github.com/basecamp/bc3/pull/13466) (merged
+  24 Sep): a confidential client that proved its secret is no longer charged
+  for its token-exchange failures.
+- **Retested 28 Sep: the 503 is gone.** A CLI `bc_at_` token and a garbage
+  one now both get `401 invalid_token` with a `WWW-Authenticate` challenge,
+  and no token gets the plain `401`. That is the exchange working and
+  refusing a token not audienced to the MCP server — which is why the
+  browser path above is the way in.
+- **The browser path works up to the sign-in.** A loopback client
+  registered, and its authorize URL passes bc3's pre-authorization checks
+  and redirects to sign-in. The approval itself needs a person signed in as
+  the agent, so the MCP token is pending that one step.
+- **Cursor's key types.** A key from the dashboard's *Team API Keys* tab is
+  for the Admin API only; every Cloud Agents endpoint, `GET /v1/me`
+  included, answers it with `401` and a message saying so. Found on 23 Sep
+  with the first key issued for this spike, so `bin/dispatch-cursor` never
+  got past the create — the run ended `UNDISPATCHED` and the fallback
+  comment landed on the card as the agent, the failure path doing its job.
+  Cost so far: $0.
+- **No-repo agents** must be enabled for the team, and a
+  repository-scoped key cannot create one. Omit `repos` (and `env`).
+- **Inline MCP headers are proxied from Cursor's backend**, so the MCP token
+  never enters the agent's VM — but they are static for the run, so the
+  token has to outlive it. A refresh right before the create covers a
+  10-minute run.
+- **Cursor's inline OAuth (`auth`)** is per user and reuses a prior
+  authorization on cursor.com; it is not a way for an unattended runner to
+  hold an agent's identity.
+
+## Why the connector version stops here
+
+The connector can only dispatch from a machine someone keeps running, and the
+token it hands Cursor is the agent's own, minted once by a person in a
+browser. Inside bc3 neither is true: the mention is already an event there,
+and bc3 can mint the MCP-audienced token itself, riding the mentioner's
+delegation to the agent so that the agent stays the performer through
+TokenDelegation. That is the bc3 card linked at the top. This branch stays
+unmerged, as the record of what the spike learned; it owes one live run.

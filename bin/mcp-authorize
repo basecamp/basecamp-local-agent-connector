@@ -1,0 +1,23 @@
+#!/usr/bin/env ruby
+
+# The one browser step: a person signed in to Basecamp AS THE AGENT approves
+# the hosted MCP server, and the refresh token that comes back is kept for
+# bin/mcp-token. Run once per agent (and again if the refresh token is lost or
+# revoked).
+#
+#   bin/mcp-authorize @marie
+#   BASECAMP_MCP_URL=https://beta3-mcp.3.bc4-beta.com/mcp \
+#   BASECAMP_AUTH_URL=https://beta3.3.bc4-beta.com bin/mcp-authorize @marie
+#
+# Prints the authorize URL and waits for the loopback redirect. Prints no token.
+
+require_relative "../lib/basecamp_agent_connector"
+
+agent = BasecampAgentConnector::Connector.normalize_agent(ARGV.shift)
+abort "an agent is required, e.g. `mcp-authorize @marie`" if agent.nil? || agent.empty?
+
+BasecampAgentConnector::Cursor::McpAuthorization.new(
+  agent: agent,
+  resource: ENV.fetch("BASECAMP_MCP_URL", BasecampAgentConnector::Cursor::Dispatcher::MCP_URL),
+  authorization_server: ENV.fetch("BASECAMP_AUTH_URL", BasecampAgentConnector::Cursor::McpAuthorization::AUTHORIZATION_SERVER)
+).authorize!

@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+
+# Prints a fresh MCP access token for an agent bin/mcp-authorize has already
+# approved, rotating the stored refresh token. Meant for command substitution
+# straight into the environment, never for a terminal or a file:
+#
+#   BASECAMP_MCP_TOKEN="$(bin/mcp-token @marie)" bin/dispatch-cursor @marie
+
+require_relative "../lib/basecamp_agent_connector"
+
+agent = BasecampAgentConnector::Connector.normalize_agent(ARGV.shift)
+abort "an agent is required, e.g. `mcp-token @marie`" if agent.nil? || agent.empty?
+abort "refusing to print a token to a terminal; use it in $(…)" if $stdout.tty?
+
+$stdout.write BasecampAgentConnector::Cursor::McpAuthorization.new(
+  agent: agent,
+  resource: ENV.fetch("BASECAMP_MCP_URL", BasecampAgentConnector::Cursor::Dispatcher::MCP_URL),
+  authorization_server: ENV.fetch("BASECAMP_AUTH_URL", BasecampAgentConnector::Cursor::McpAuthorization::AUTHORIZATION_SERVER)
+).token

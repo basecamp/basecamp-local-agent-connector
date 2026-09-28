@@ -148,7 +148,8 @@ class BasecampAgentConnector::Cursor::Dispatcher
       "prompt" => { "text" => prompt_for(event) },
       "name" => agent_name_for(event),
       "agentId" => agent_id_for(event),
-      "repos" => [],
+      # No "repos" key at all: Cursor's API reference says to omit both
+      # `repos` and `env` to start a no-repo agent.
       "mcpServers" => [
         {
           "name" => MCP_SERVER_NAME,
@@ -175,11 +176,24 @@ class BasecampAgentConnector::Cursor::Dispatcher
     # after it could be acted on.
     def watch(event, agent_id, run_id)
       run = await_run(agent_id, run_id)
+      report_usage(agent_id, run)
       report_back(event, run) unless run["status"] == "FINISHED"
       run
     rescue Error => error
       warn_line "lost the watch on run #{run_id}: #{error.message}"
       report_back(event, { "id" => run_id, "status" => UNWATCHED_STATUS })
+    end
+
+    # What the run cost, in tokens, on the log where the operator watching the
+    # dispatch will read it — the number the spike doc records. The usage
+    # endpoint is early access and answers `403 feature_unavailable` until it
+    # is turned on, so a refusal is a line on the log, never the run's outcome.
+    def report_usage(agent_id, run)
+      query = URI.encode_www_form(runId: run["id"])
+      body = perform(Net::HTTP::Get.new(URI.join(@api_base + "/", "v1/agents/#{agent_id}/usage?#{query}")))
+      warn_line "run #{run["id"]} #{run["status"]} in #{run["durationMs"] || "?"}ms; usage #{JSON.generate(body["totalUsage"] || {})}"
+    rescue Error => error
+      warn_line "run #{run["id"]} #{run["status"]}; usage unavailable: #{error.message}"
     end
 
     def prompt_for(event)

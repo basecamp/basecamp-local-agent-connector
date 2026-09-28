@@ -65,7 +65,10 @@ class CursorDispatcherTest < Minitest::Test
   end
 
   def test_asks_for_a_no_repo_agent
-    assert_equal [], @dispatcher.request_body(fixture_event)["repos"]
+    body = @dispatcher.request_body(fixture_event)
+
+    refute body.key?("repos"), "a no-repo agent omits repos"
+    refute body.key?("env"), "a no-repo agent omits env"
   end
 
   def test_hands_the_agent_the_hosted_basecamp_mcp_server
@@ -131,12 +134,34 @@ class CursorDispatcherTest < Minitest::Test
       dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}")
       dispatcher.run(StringIO.new(File.read(FIXTURE)))
 
-      assert_equal [ "POST /v1/agents", "GET /v1/agents/bc-mock/runs/run-mock" ], requests.map { |r| "#{r[:method]} #{r[:path]}" }
+      assert_equal [ "POST /v1/agents", "GET /v1/agents/bc-mock/runs/run-mock", "GET /v1/agents/bc-mock/usage" ], requests.map { |r| "#{r[:method]} #{r[:path]}" }
 
       posted = JSON.parse(requests.first[:body])
-      assert_equal [], posted["repos"]
+      refute posted.key?("repos"), "a no-repo agent omits repos"
       assert_equal "https://mcp.basecamp.com/mcp", posted.dig("mcpServers", 0, "url")
       assert_equal "Bearer cursor-key", requests.first[:authorization]
+    end
+  end
+
+  def test_logs_what_the_run_cost
+    with_mock_cursor do |port, _requests|
+      build_dispatcher(api_base: "http://127.0.0.1:#{port}").run(StringIO.new(File.read(FIXTURE)))
+
+      assert_includes @log.string, "run run-mock FINISHED in 35000ms"
+      assert_includes @log.string, "\"totalTokens\":36170"
+    end
+  end
+
+  # Early access: the usage endpoint answers 403 feature_unavailable until it
+  # is on. That is a line on the log, not a failed run and not a comment.
+  def test_usage_that_is_not_available_is_only_logged
+    basecamp = FakeBasecamp.new
+
+    with_mock_cursor(usage_status: 403) do |port, _requests|
+      build_dispatcher(api_base: "http://127.0.0.1:#{port}", basecamp: basecamp).run(StringIO.new(File.read(FIXTURE)))
+
+      assert_includes @log.string, "usage unavailable"
+      assert_empty basecamp.comments
     end
   end
 
@@ -145,7 +170,7 @@ class CursorDispatcherTest < Minitest::Test
       dispatcher = build_dispatcher(api_base: "http://127.0.0.1:#{port}")
       dispatcher.run(StringIO.new("{\"event_id\": tru\n" + File.read(FIXTURE)))
 
-      assert_equal 2, requests.length
+      assert_equal 1, requests.count { |request| request[:method] == "POST" }
       assert_includes @log.string, "skipping unparseable line"
     end
   end
@@ -294,7 +319,7 @@ class CursorDispatcherTest < Minitest::Test
       flunk "condition never came true within #{timeout}s" unless yield
     end
 
-    def with_mock_cursor(create_status: 200, run_status: "FINISHED", run_gate: nil, create_body: nil)
+    def with_mock_cursor(create_status: 200, run_status: "FINISHED", run_gate: nil, create_body: nil, usage_status: 200)
       requests = []
       recording = Mutex.new
       port = free_port
@@ -306,8 +331,8 @@ class CursorDispatcherTest < Minitest::Test
           requests << { method: request.request_method, path: request.path,
             body: request.body, authorization: request["Authorization"] }
         end
-        run_gate.pop if run_gate && request.request_method == "GET"
-        response.status = request.request_method == "POST" ? create_status : 200
+        run_gate.pop if run_gate && request.path.include?("/runs/")
+        response.status = request.request_method == "POST" ? create_status : (request.path.end_with?("/usage") ? usage_status : 200)
         response["Content-Type"] = "application/json"
         response.body = create_body || JSON.generate(mock_body(request, run_status))
       end
@@ -332,6 +357,10 @@ class CursorDispatcherTest < Minitest::Test
 
       if request.request_method == "POST"
         { "agent" => agent, "run" => run.merge("status" => "RUNNING") }
+      elsif request.path.end_with?("/usage")
+        usage = { "inputTokens" => 6320, "outputTokens" => 1450, "cacheWriteTokens" => 7100,
+          "cacheReadTokens" => 21300, "totalTokens" => 36170 }
+        { "totalUsage" => usage, "runs" => [ { "id" => "run-mock", "usage" => usage } ] }
       else
         { "run" => run.merge("status" => run_status, "durationMs" => 35_000,
           "result" => "Created 3 to-dos and commented on the card.") }
