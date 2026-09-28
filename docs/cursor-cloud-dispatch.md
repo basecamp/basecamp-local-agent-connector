@@ -4,7 +4,9 @@
 it stopped on 28 Sep 2026: dispatching to Cursor from the connector is not the
 direction. A mention of a hosted agent should start Cursor from inside bc3,
 which continues on the card
-[bc3: a mention of a hosted agent triggers Cursor from inside bc3](https://app.basecamp.com/2914079/buckets/48699913/card_tables/cards/10346589921).
+[bc3: a mention of a hosted agent triggers Cursor from inside bc3](https://app.basecamp.com/2914079/buckets/48699913/card_tables/cards/10346589921)
+and the draft PR
+[Hosted agents: a mention of a Cursor-hosted agent starts a cloud run, with the agent as performer through TokenDelegation](https://github.com/basecamp/bc3/pull/13506).
 What stays here is the cheapest way to learn how Cursor behaves: one live run
 is still owed, and [the live run](#the-live-run) says exactly how to make it.
 
@@ -126,6 +128,9 @@ silent is worse than a duplicate comment.
 
 ## Getting the MCP token: the browser path
 
+**Done for Marie on 28 Sep 2026.** The refresh token is stored; only the
+Cursor key stands between this and the live run.
+
 The hosted MCP server accepts only tokens audienced to it (RFC 8707), and bc3
 mints those through `authorization_code` + PKCE alone: a dynamically
 registered client may hold no other grant, and a `basecamp` CLI token is the
@@ -160,6 +165,7 @@ terminal. `BASECAMP_MCP_URL` and `BASECAMP_AUTH_URL` point both scripts, and
 ## The live run
 
 **Pending: the Cursor service-account key.** Nothing below has run live yet.
+The MCP token is ready (browser step done 28 Sep).
 
 The key goes in `CURSOR_API_KEY` in the dispatcher's own environment, read
 from 1Password at the moment of the run and nowhere else — never a file, a
@@ -217,10 +223,11 @@ Tested against the real endpoints, 22–28 Sep 2026.
   and no token gets the plain `401`. That is the exchange working and
   refusing a token not audienced to the MCP server — which is why the
   browser path above is the way in.
-- **The browser path works up to the sign-in.** A loopback client
-  registered, and its authorize URL passes bc3's pre-authorization checks
-  and redirects to sign-in. The approval itself needs a person signed in as
-  the agent, so the MCP token is pending that one step.
+- **The browser path works end to end (done 28 Sep).** A loopback client
+  registered, Zach approved it in a browser signed in as Marie, and the
+  refresh token is stored. A token from `bin/mcp-token @marie` gets `200` to
+  `initialize` on `https://mcp.basecamp.com/mcp`, so the MCP side of the live
+  run is ready.
 - **Cursor's key types.** A key from the dashboard's *Team API Keys* tab is
   for the Admin API only; every Cloud Agents endpoint, `GET /v1/me`
   included, answers it with `401` and a message saying so. Found on 23 Sep
