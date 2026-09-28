@@ -138,12 +138,14 @@ class BasecampAgentConnector::Basecamp::Event
     @payload["recording"] || {}
   end
 
+  # Only a string locates anything; whatever else a POST puts here is no
+  # locator at all.
   def recording_url
-    recording["url"]
+    recording["url"] if recording["url"].is_a?(String)
   end
 
   def recording_app_url
-    recording["app_url"]
+    recording["app_url"] if recording["app_url"].is_a?(String)
   end
 
   def content
@@ -156,6 +158,12 @@ class BasecampAgentConnector::Basecamp::Event
 
   def added_person_ids
     details["added_person_ids"] || []
+  end
+
+  # Basecamp's event, line and boost ids are positive integers; a payload
+  # carrying anything else is not one it sent.
+  def basecamp_id?
+    id.is_a?(Integer) && id.positive?
   end
 
   def actionable_kind?

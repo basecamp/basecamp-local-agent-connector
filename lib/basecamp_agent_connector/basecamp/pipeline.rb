@@ -128,7 +128,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
     end
 
     def actionable?(event)
-      event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
+      event.basecamp_id? && event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
     end
 
     # The pre-filter is deliberately looser than the authoritative target check:
@@ -208,7 +208,10 @@ class BasecampAgentConnector::Basecamp::Pipeline
       end
 
       !verified.nil?
-    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+    rescue StandardError
+      # No verdict was reached, whether Basecamp could not be asked or the
+      # verification failed in a way nobody anticipated, so the id is not
+      # settled: a later delivery of the same id is verified afresh.
       forget(event)
       raise
     end

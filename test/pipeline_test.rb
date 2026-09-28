@@ -544,6 +544,39 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  # A verification that fails in a way nobody anticipated has reached no
+  # verdict, so the id must not stay settled: otherwise one malformed POST
+  # naming a real event's id would have its real delivery dropped as a
+  # duplicate.
+  def test_an_unexpected_failure_verifying_an_event_does_not_settle_its_id
+    runner = corroborating_runner
+    failing = Object.new
+    calls = 0
+    failing.define_singleton_method(:run) do |*command|
+      calls += 1
+      raise TypeError, "no implicit conversion of Array into String" if calls == 1
+
+      runner.run(*command)
+    end
+    pipeline = pipeline(failing)
+
+    assert_raises(TypeError) { pipeline.process(sample_payload) }
+    pipeline.process(sample_payload)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_payload_whose_id_or_locator_is_not_one_basecamp_sends_is_not_claimed
+    runner = FakeCommandRunner.new
+
+    [ sample_payload("id" => "99001"), sample_payload("id" => -1),
+      sample_payload("recording" => sample_recording("url" => [], "app_url" => nil)) ].each do |payload|
+      pipeline(runner, webhook: true).process(payload)
+    end
+
+    assert_empty runner.commands
+  end
+
   def test_assignment_opt_in_lets_an_authorized_author_assign
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
