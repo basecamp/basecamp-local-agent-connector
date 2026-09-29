@@ -240,6 +240,43 @@ class WebhooksTest < Minitest::Test
     assert_includes deletions.first, "556"
   end
 
+  # Basecamp activates a re-created webhook before its create call answers,
+  # so a delivery can land before the replacement is recorded here. Looked up
+  # in the deleted webhook's history it would be answered 200 as undelivered
+  # and never redelivered, so while a project's webhook is being replaced a
+  # delivery not found is no answer.
+  def test_a_delivery_landing_while_its_webhook_is_being_replaced_is_no_answer
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555)), once: true
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(556))
+    runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
+    runner.stub "webhooks show 556", stdout: envelope("id" => 556, "recent_deliveries" => [ webhook_delivery ])
+    webhooks = nil
+    during_replacement = nil
+    creates = 0
+    landing = Object.new
+    landing.define_singleton_method(:run) do |*command, **options|
+      if command.join(" ").include?("webhooks create") && (creates += 1) == 2
+        during_replacement = begin
+          webhooks.recorded_delivery(99001, 222)
+        rescue => error
+          error
+        end
+      end
+
+      runner.run(*command, **options)
+    end
+    webhooks = BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(landing), logger: StringIO.new,
+      wait: ->(_seconds) { })
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    webhooks.restore(url: hook_url, types: "Comment")
+
+    assert_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, during_replacement
+    assert_equal sample_payload, webhooks.recorded_delivery(99001, 222)
+    assert_nil webhooks.recorded_delivery(99999, 222), "the project is no longer being replaced"
+  end
+
   def test_restore_keeps_a_registration_it_could_not_reactivate_and_says_so
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope(registered_webhook(555))

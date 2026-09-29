@@ -17,6 +17,8 @@ class BasecampAgentConnector::Basecamp::Webhooks
     @attempts = attempts
     @wait = wait
     @registrations = []
+    @replacing = Set.new
+    @replacing_lock = Mutex.new
   end
 
   def register_all(projects:, url:, types:)
@@ -59,13 +61,23 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # re-registered under a new id when someone deleted it by hand. Returns the
   # registrations that were restored; one that could not be is left as it was
   # and logged, so the next check tries again.
+  #
+  # A webhook re-registered here is active in Basecamp before its create call
+  # answers, so its project stays marked as being replaced (see
+  # `recorded_delivery`) until the replacement is recorded.
   def restore(url:, types:)
     restored = []
 
-    @registrations.map! do |registration|
+    @registrations.each_index do |index|
+      registration = @registrations[index]
       live = restore_registration(registration, url: url, types: types)
-      restored << live if live
-      live || registration
+
+      if live
+        @registrations[index] = live
+        restored << live
+      end
+    ensure
+      @replacing_lock.synchronize { @replacing.delete(registration.project_id) }
     end
 
     restored
@@ -84,13 +96,23 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # when it lands, and a POST anybody else made is not, even one carrying a
   # real event id. The history is the last 25 deliveries. A history Basecamp
   # refuses to show holds nothing; one the CLI could not read at all
-  # propagates, since that is no answer.
+  # propagates, since that is no answer. So does not finding the delivery
+  # while the project's webhook is being replaced, or while the registrations
+  # changed under the lookup: the delivery may have gone to a webhook not yet
+  # recorded here, and answered 200 it would never be redelivered.
   def recorded_delivery(event_id, project_id)
-    registrations.select { |registration| registration.project_id == project_id }.each do |registration|
+    looked_in = registrations
+
+    looked_in.select { |registration| registration.project_id == project_id }.each do |registration|
       recent_deliveries(registration).each do |entry|
         delivery = BasecampAgentConnector::Basecamp::Delivery.from_entry(entry)
         return delivery.body if delivery&.event_id == event_id
       end
+    end
+
+    if replacing?(project_id) || registrations != looked_in
+      raise BasecampAgentConnector::Basecamp::Client::TransientError,
+        "the webhook on project #{project_id} was being re-registered while its delivery history was read"
     end
 
     nil
@@ -242,7 +264,12 @@ class BasecampAgentConnector::Basecamp::Webhooks
       nil
     end
 
+    def replacing?(project_id)
+      @replacing_lock.synchronize { @replacing.include?(project_id) }
+    end
+
     def reregister(registration, url:, types:)
+      @replacing_lock.synchronize { @replacing << registration.project_id } if registration.project_id
       webhook = create_with_retries(project: registration.project, url: url, types: types)
       registration_of(registration.project, webhook).tap do |replacement|
         log "webhook #{registration.id} on project #{registration.project} is gone (deleted outside this connector); " \
