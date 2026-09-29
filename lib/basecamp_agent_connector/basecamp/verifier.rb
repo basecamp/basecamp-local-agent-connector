@@ -88,15 +88,19 @@ class BasecampAgentConnector::Basecamp::Verifier
     # So nobody else may have changed its text since: otherwise an operator's
     # real event, verified after a member edited their own words into the
     # recording, would carry them to the agent under the operator's name. The
-    # actor's own later edits are theirs. A refused history reads as nothing
-    # vouched for; one the CLI could not read propagates, like the fetch.
+    # actor's own later edits are theirs. An actor with no id is nobody in
+    # particular, never the same as another: an event whose own actor cannot
+    # be told is not vouched for, and a later edit by one is someone else's. A
+    # refused history reads as nothing vouched for; one the CLI could not read
+    # propagates, like the fetch.
     def vouches_for_its_text?(event, recording)
       history = @basecamp_cli.events(recording["id"].to_s, limit: EVENT_HISTORY_LIMIT)
       recorded = history.find { |entry| entry["id"] == event.id }
+      actor = actor_id(recorded) if recorded
 
-      !recorded.nil? && recorded["id"].is_a?(Integer) && history.none? do |later|
+      !actor.nil? && recorded["id"].is_a?(Integer) && history.none? do |later|
         later["id"].is_a?(Integer) && later["id"] > recorded["id"] && \
-          text_change?(later["action"]) && actor_id(later) != actor_id(recorded)
+          text_change?(later["action"]) && actor_id(later) != actor
       end
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
@@ -109,7 +113,7 @@ class BasecampAgentConnector::Basecamp::Verifier
     end
 
     # Who actually did it: the agent, for an event an agent carried out on
-    # someone's behalf. A performer record without an id is nobody's.
+    # someone's behalf. Nil when the record carries no id.
     def actor_id(entry)
       performer = entry["performed_by"]
 

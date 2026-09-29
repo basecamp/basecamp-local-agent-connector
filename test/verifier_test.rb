@@ -151,6 +151,24 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(sample_payload))
   end
 
+  # An actor with no id is nobody in particular, so two of them are not the
+  # same person: an event whose own actor cannot be told is not vouched for,
+  # and a later edit by an actor that cannot be told is someone else's.
+  def test_an_actor_that_cannot_be_told_is_nobodys
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "creator" => {})
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => "content_changed", "creator" => {}),
+      sample_payload
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+  end
+
   def test_a_later_change_of_a_kind_bc3_has_not_been_known_to_record_counts_as_an_edit
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)
