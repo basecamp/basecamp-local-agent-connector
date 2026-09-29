@@ -239,7 +239,7 @@ class PipelineTest < Minitest::Test
     stub_transient_failure runner, "basecamp show"
     runner.stub "basecamp show", stdout: envelope(sample_recording)
     gated = Object.new
-    gated.define_singleton_method(:run) { |*command| gate.pop; runner.run(*command) }
+    gated.define_singleton_method(:run) { |*command, **options| gate.pop; runner.run(*command, **options) }
     pipeline = pipeline(gated)
     original = Thread.new { pipeline.process(sample_payload) rescue $! }
     Thread.pass while original.alive? && original.status != "sleep"
@@ -265,7 +265,10 @@ class PipelineTest < Minitest::Test
     runner.stub "comments/456", stdout: envelope(sample_recording)
     runner.stub "comments/457", stdout: envelope(other_recording)
     gated = Object.new
-    gated.define_singleton_method(:run) { |*command| gate.pop if command.join(" ").include?("comments/456"); runner.run(*command) }
+    gated.define_singleton_method(:run) do |*command, **options|
+      gate.pop if command.join(" ").include?("comments/456")
+      runner.run(*command, **options)
+    end
     pipeline = pipeline(gated)
     first = Thread.new { pipeline.process(sample_payload) }
     Thread.pass while first.alive? && first.status != "sleep"
@@ -552,11 +555,11 @@ class PipelineTest < Minitest::Test
     runner = corroborating_runner
     failing = Object.new
     calls = 0
-    failing.define_singleton_method(:run) do |*command|
+    failing.define_singleton_method(:run) do |*command, **options|
       calls += 1
       raise TypeError, "no implicit conversion of Array into String" if calls == 1
 
-      runner.run(*command)
+      runner.run(*command, **options)
     end
     pipeline = pipeline(failing)
 

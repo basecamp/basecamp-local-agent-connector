@@ -175,7 +175,7 @@ class WebhookMonitorTest < Minitest::Test
       @armed = true
     end
 
-    def run(*command)
+    def run(*command, **options)
       if @armed && command.join(" ").match?(@pattern)
         @paused << true
         @resume.pop

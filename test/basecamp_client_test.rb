@@ -1,6 +1,19 @@
 require "test_helper"
 
 class BasecampClientTest < Minitest::Test
+  # The CLI's response cache is shared by every CLI process on the profile,
+  # and its body and ETag are written separately, so concurrent processes can
+  # leave one paired with the other. The connector checks what Basecamp says
+  # now, so it never answers from that cache.
+  def test_runs_the_cli_without_its_response_cache
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+
+    build_cli(runner).show("https://3.basecamp.com/000/buckets/222/comments/456.json")
+
+    assert_equal [ { "BASECAMP_CACHE_ENABLED" => "false" } ], runner.envs.uniq
+  end
+
   def test_me_returns_unwrapped_data
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: envelope("id" => 123, "email_address" => "clawdito@example.com")

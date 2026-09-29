@@ -28,10 +28,11 @@ BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY = Dir.mktmpdir("basecamp-
 Minitest.after_run { FileUtils.remove_entry BasecampAgentConnector::RunRegistry::DEFAULT_DIRECTORY, true }
 
 class FakeCommandRunner
-  attr_reader :commands
+  attr_reader :commands, :envs
 
   def initialize
     @commands = []
+    @envs = []
     @stubs = []
   end
 
@@ -43,8 +44,9 @@ class FakeCommandRunner
     @stubs << { matcher: matcher, result: result, remaining: once ? 1 : times }
   end
 
-  def run(*command)
+  def run(*command, env: {})
     @commands << command
+    @envs << env
     stub = @stubs.find { |candidate| candidate[:remaining] != 0 && matches?(command, candidate[:matcher]) }
     raise "no stub for command: #{command.join(' ')}" if stub.nil?
 

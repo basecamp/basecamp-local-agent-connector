@@ -86,6 +86,13 @@ class BasecampAgentConnector::Basecamp::Client
   # recording a drop. A spelling the CLI stamps `retryable: true` needs no
   # entry here; one it leaves at `false` does, until the CLI classifies it.
   TRANSIENT_CODES = %w[auth_required network rate_limit]
+
+  # The CLI's response cache is shared by every CLI process on the profile,
+  # and it writes a body and its ETag separately, so concurrent processes can
+  # leave one paired with the other and a 304 then serves a stale body. The
+  # connector checks what Basecamp says now, so it never answers from that
+  # cache.
+  ENV_FOR_CLI = { "BASECAMP_CACHE_ENABLED" => "false" }.freeze
   TRANSIENT_API_ERROR = /token refresh|request failed after \d+ attempts?|server error \(500\)|gateway error \(50\d\)|\bAPI error: 5\d\d\b|service temporarily unavailable|rate limit/i
 
   # `profile` is the default for every command that doesn't name one: the
@@ -269,6 +276,6 @@ class BasecampAgentConnector::Basecamp::Client
 
     def run(*arguments)
       arguments += [ "--profile", @profile ] unless @profile.nil? || arguments.include?("--profile")
-      @command_runner.run(@executable, *arguments)
+      @command_runner.run(@executable, *arguments, env: ENV_FOR_CLI)
     end
 end

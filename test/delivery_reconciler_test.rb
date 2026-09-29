@@ -36,7 +36,7 @@ class DeliveryReconcilerTest < Minitest::Test
       @resume = Queue.new
     end
 
-    def run(*command)
+    def run(*command, **options)
       if @pending && command.join(" ").match?(@pattern)
         @pending = false
         @paused << true

@@ -7,8 +7,9 @@ class BasecampAgentConnector::CommandRunner
     end
   end
 
-  def run(*command)
-    stdout, stderr, status = Open3.capture3(*command)
+  # `env` is added to the environment the command runs in.
+  def run(*command, env: {})
+    stdout, stderr, status = Open3.capture3(env, *command)
     Result.new(stdout: stdout, stderr: stderr, exit_status: status.exitstatus)
   end
 end
