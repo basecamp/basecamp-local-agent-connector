@@ -187,6 +187,7 @@ class DeliveryReconcilerTest < Minitest::Test
   def test_refuses_a_failed_delivery_the_re_fetched_recording_does_not_corroborate
     runner = registered_runner(webhook_delivery(code: 0))
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 300, "email_address" => "someone@example.com" }))
+    stub_history runner
 
     reconciler(runner).reconcile
 
@@ -197,6 +198,7 @@ class DeliveryReconcilerTest < Minitest::Test
   def test_refuses_a_failed_delivery_whose_recording_is_still_a_draft
     runner = registered_runner(webhook_delivery(code: 0))
     runner.stub "basecamp show", stdout: envelope(sample_recording("status" => "drafted"))
+    stub_history runner
 
     reconciler(runner).reconcile
 
@@ -226,6 +228,7 @@ class DeliveryReconcilerTest < Minitest::Test
     now = NOW
     runner = registered_runner(webhook_delivery(code: 0))
     runner.stub "basecamp show", stdout: envelope(sample_recording("status" => "drafted"))
+    stub_history runner
     reconciler = reconciler(runner, clock: -> { now })
 
     reconciler.reconcile
@@ -370,6 +373,7 @@ class DeliveryReconcilerTest < Minitest::Test
     assert_match(/could not corroborate reconciled event 99001/, @logs.string)
 
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     reconciler.reconcile
 
     assert_equal [ 99001 ], emitted_event_ids
@@ -383,6 +387,7 @@ class DeliveryReconcilerTest < Minitest::Test
     runner.stub "webhooks show 556", stdout: envelope("recent_deliveries" => [ webhook_delivery(code: 0, id: 70002,
       body: sample_payload("id" => 99002)) ])
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
 
     reconciler(runner, webhooks: webhooks(runner, projects: [ 1, 2 ])).reconcile
 
@@ -462,6 +467,7 @@ class DeliveryReconcilerTest < Minitest::Test
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery(code: 0) ])
     stub_transient_failure(runner, "basecamp show")
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
     reconciler = reconciler(runner, pipeline: pipeline)
 
@@ -491,6 +497,7 @@ class DeliveryReconcilerTest < Minitest::Test
     runner.stub "webhooks show 555", stdout: envelope("id" => 555,
       "recent_deliveries" => [ webhook_delivery(code: 0, created_at: "2026-06-28T10:30:00Z") ])
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
     reconciler = reconciler(runner, pipeline: pipeline)
 
@@ -590,6 +597,7 @@ class DeliveryReconcilerTest < Minitest::Test
     def corroborating_runner(*deliveries)
       registered_runner(*deliveries).tap do |runner|
         runner.stub "basecamp show", stdout: envelope(sample_recording)
+        stub_history runner
       end
     end
 

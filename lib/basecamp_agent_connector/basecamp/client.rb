@@ -122,6 +122,12 @@ class BasecampAgentConnector::Basecamp::Client
     json "show", url_or_id
   end
 
+  # The newest `limit` events of a recording's history: what bc3 itself
+  # recorded happening to it, each with its id, action, actor and details.
+  def events(url_or_id, limit:)
+    Array json("events", url_or_id, "--limit", limit.to_s)
+  end
+
   def chats(project:)
     Array json("chat", "list", "--project", project.to_s)
   end

@@ -126,6 +126,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, sample_payload
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     output = StringIO.new
     bridge = registered(bridge(runner, output: output))
 
@@ -178,6 +179,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, sample_payload("recording" => recording)
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     stub_transient_failure runner, "subscriptions show"
     output = StringIO.new
     logs = StringIO.new
@@ -213,6 +215,7 @@ class BasecampBridgeTest < Minitest::Test
     delivering runner, sample_payload
     stub_transient_failure runner, "basecamp show"
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     output = StringIO.new
     bridge = registered(bridge(runner, output: output))
 
@@ -324,6 +327,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, by_member
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
     output = StringIO.new
     logs = StringIO.new
     bridge = registered(bridge(runner, output: output, logger: logs))
@@ -340,6 +344,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, sample_payload
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     output = StringIO.new
     logs = StringIO.new
     bridge = registered(bridge(runner, output: output, logger: logs))
@@ -358,6 +363,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, sample_payload
     runner.stub "basecamp show", stdout: envelope(elsewhere)
+    stub_history runner
     output = StringIO.new
     bridge = registered(bridge(runner, output: output))
 
@@ -370,6 +376,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     delivering runner, sample_payload
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     output = StringIO.new
     bridge = registered(bridge(runner, output: output))
 

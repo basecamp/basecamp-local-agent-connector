@@ -48,6 +48,7 @@ class PipelineTest < Minitest::Test
   def test_emits_for_a_message_published_from_a_draft
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(published_message)
+    stub_history runner
 
     pipeline(runner).process(draft_published_payload)
 
@@ -62,6 +63,7 @@ class PipelineTest < Minitest::Test
   def test_does_not_emit_for_a_message_basecamp_still_marks_a_draft
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(published_message("status" => "drafted"))
+    stub_history runner
 
     refute pipeline(runner).process(draft_published_payload)
 
@@ -72,6 +74,7 @@ class PipelineTest < Minitest::Test
   def test_dedupes_a_redelivered_publication
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(published_message)
+    stub_history runner
     pipeline = pipeline(runner)
 
     pipeline.process(draft_published_payload)
@@ -84,6 +87,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     pipeline(runner).process(sample_payload("recording" => recording))
@@ -96,6 +100,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention, just an update</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner).process(sample_payload("recording" => recording))
@@ -133,6 +138,7 @@ class PipelineTest < Minitest::Test
     message = sample_recording("type" => "Message", "content" => "<p>an old message, no mention</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(message)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner).process(sample_payload("recording" => message))
@@ -149,6 +155,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     pipeline(runner).process(sample_payload("agent_subscribed" => true, "recording" => recording))
@@ -160,6 +167,7 @@ class PipelineTest < Minitest::Test
   def test_drops_uncorroborated_event
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 999 }))
+    stub_history runner
 
     pipeline = pipeline(runner)
 
@@ -172,6 +180,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found"), once: true
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
 
     refute pipeline.process(sample_payload)
@@ -188,6 +197,7 @@ class PipelineTest < Minitest::Test
     runner.stub "basecamp show", exit_status: 3, once: true,
       stdout: error_envelope("auth_required", "Not authenticated for profile:clawdito: credentials not found")
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
 
     assert pipeline.process(sample_payload)
@@ -206,6 +216,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     stub_transient_failure runner, "basecamp show"
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
 
     assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { pipeline.process(sample_payload) }
@@ -221,6 +232,7 @@ class PipelineTest < Minitest::Test
   def test_a_settled_event_reports_a_verdict
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     pipeline = pipeline(runner)
 
     assert pipeline.process(sample_payload)
@@ -238,6 +250,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     stub_transient_failure runner, "basecamp show"
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
     gated = Object.new
     gated.define_singleton_method(:run) { |*command, **options| gate.pop; runner.run(*command, **options) }
     pipeline = pipeline(gated)
@@ -246,7 +259,7 @@ class PipelineTest < Minitest::Test
     flunk "the original verification finished (#{original.value.inspect}) before blocking on the gate" unless original.alive?
 
     redelivery = Thread.new { pipeline.process(sample_payload) }
-    4.times { gate << :go }
+    5.times { gate << :go }
 
     assert_kind_of BasecampAgentConnector::Basecamp::Client::TransientError, original.value
     assert redelivery.value
@@ -262,11 +275,12 @@ class PipelineTest < Minitest::Test
     other_recording = sample_recording("id" => 457, "url" => "https://3.basecamp.com/000/buckets/222/comments/457.json",
       "app_url" => "https://3.basecamp.com/000/buckets/222/comments/457")
     runner = FakeCommandRunner.new
+    stub_history runner, sample_payload, sample_payload("id" => 99003, "recording" => other_recording)
     runner.stub "comments/456", stdout: envelope(sample_recording)
     runner.stub "comments/457", stdout: envelope(other_recording)
     gated = Object.new
     gated.define_singleton_method(:run) do |*command, **options|
-      gate.pop if command.join(" ").include?("comments/456")
+      gate.pop if command.join(" ").match?(%r{show \S*comments/456})
       runner.run(*command, **options)
     end
     pipeline = pipeline(gated)
@@ -310,6 +324,7 @@ class PipelineTest < Minitest::Test
   def test_a_forged_boosted_flag_in_the_payload_cannot_emit
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     payload = sample_payload("recording" => sample_recording("content" => "<p>no mention</p>"), "agent_boosted" => true)
@@ -375,6 +390,7 @@ class PipelineTest < Minitest::Test
   def test_emits_for_an_assignment_of_the_agent_by_the_operator
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
 
     pipeline(runner).process(assignment_payload)
 
@@ -402,6 +418,7 @@ class PipelineTest < Minitest::Test
     # corroborated creator (Sam) is who must be authorized, and isn't.
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }))
+    stub_history runner
 
     pipeline(runner).process(sample_payload("creator" => { "id" => 400, "name" => "Sam", "email_address" => "operator@example.com" }))
 
@@ -415,6 +432,7 @@ class PipelineTest < Minitest::Test
     # recording is authoritative and carries no mention, so it must not emit.
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>a plain operator note, no mention</p>"))
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     pipeline(runner).process(sample_payload)
@@ -426,6 +444,7 @@ class PipelineTest < Minitest::Test
   def test_allowlist_emits_for_an_allowed_author
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+    stub_history runner
 
     pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
       .process(sample_payload("creator" => colleague))
@@ -447,6 +466,7 @@ class PipelineTest < Minitest::Test
   def test_project_trust_emits_for_any_corroborated_author
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+    stub_history runner
 
     pipeline(runner, authorizer: authorizer(trust: :project)).process(sample_payload("creator" => colleague))
 
@@ -456,6 +476,7 @@ class PipelineTest < Minitest::Test
   def test_project_trust_drops_an_author_basecamp_marks_as_a_client
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague.merge("client" => true)))
+    stub_history runner
 
     pipeline(runner, authorizer: authorizer(trust: :project)).process(sample_payload("creator" => colleague))
 
@@ -478,6 +499,7 @@ class PipelineTest < Minitest::Test
   def test_domain_trust_emits_for_a_matching_domain
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+    stub_history runner
 
     pipeline(runner, authorizer: authorizer(trust: :domain, domains: [ "example.com" ]))
       .process(sample_payload("creator" => colleague))
@@ -511,6 +533,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention, just an update</p>", "creator" => colleague)
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
@@ -528,6 +551,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention</p>", "creator" => colleague.merge("client" => true))
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner, authorizer: authorizer(trust: :project))
@@ -639,6 +663,7 @@ class PipelineTest < Minitest::Test
     helper = { "id" => 900, "name" => "Helper", "personable_type" => "Agent" }
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
     delegated = assignment_payload("performed_by" => helper)
 
     pipeline(runner, webhook: true, recorded_delivery: ->(*) { delegated }).process(assignment_payload)
@@ -649,9 +674,26 @@ class PipelineTest < Minitest::Test
     assert_equal 2, @logs.string.scan(/authoritative author is not authorized/).length
   end
 
+  # The event vouches for the recording as its actor left it, but the agent is
+  # handed the recording as it is now. A real operator mention, replayed from
+  # the delivery history after a member edited their own instructions into
+  # the recording, must not carry the member's words under the operator's name.
+  def test_a_real_event_cannot_carry_someone_elses_later_edit
+    member = { "id" => 555, "name" => "Mallory" }
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => "content_changed", "creator" => member), sample_payload
+
+    pipeline(runner, webhook: true).process(sample_payload, attested: true)
+
+    assert_empty @output.string
+    assert_match(/dropped event 99001: not corroborated/, @logs.string)
+  end
+
   def test_assignment_opt_in_lets_an_authorized_author_assign
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
 
     pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ], allow_assignments: true))
       .process(assignment_payload("creator" => colleague))
@@ -671,6 +713,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention, just an update</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner).process(sample_payload("recording" => recording))
@@ -681,6 +724,7 @@ class PipelineTest < Minitest::Test
   def test_an_assignment_emits_neither_trigger_verdict
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
 
     pipeline(runner).process(assignment_payload)
 
@@ -690,6 +734,7 @@ class PipelineTest < Minitest::Test
   def test_mentioned_is_a_fact_about_the_content_whatever_the_kind
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording("content" => "<p>#{mention_html(person_id: 200)} owns this</p>"))
+    stub_history runner
 
     pipeline(runner).process(assignment_payload)
 
@@ -720,6 +765,7 @@ class PipelineTest < Minitest::Test
     recording = sample_recording("content" => "<p>no mention</p>")
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(recording)
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     pipeline(runner).process(sample_payload("agent_mentioned" => true, "recording" => recording))
@@ -747,6 +793,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording), once: true
     runner.stub "basecamp show", stdout: envelope(sample_recording("status" => "drafted"))
+    stub_history runner
     pipeline = pipeline(runner)
 
     pipeline.process(sample_payload)
@@ -768,6 +815,7 @@ class PipelineTest < Minitest::Test
     def corroborating_runner
       runner = FakeCommandRunner.new
       runner.stub "basecamp show", stdout: envelope(sample_recording)
+      stub_history runner
       runner
     end
 

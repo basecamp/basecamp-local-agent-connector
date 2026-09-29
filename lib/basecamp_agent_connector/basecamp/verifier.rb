@@ -7,6 +7,21 @@ class BasecampAgentConnector::Basecamp::Verifier
   # recording re-drafted since the event, and either way it stays private.
   DRAFTED_STATUS = "drafted"
 
+  # How much of a recording's history, newest first, is read to see what
+  # happened to it after the event. An event that is not among them is not
+  # vouched for: too much has happened since to see it all.
+  EVENT_HISTORY_LIMIT = 100
+
+  # The `_changed` actions bc3 records that leave a recording's text alone.
+  # Every other `_changed` action — `content_changed`, `title_changed`,
+  # `subject_changed`, `description_changed`, `blob_changed`, and any bc3 adds
+  # — may change what the agent would be handed.
+  NON_TEXT_CHANGES = %w[
+    assignment_changed column_changed due_on_changed category_changed access_changed
+    subscribers_changed addition_subscribers_changed completion_subscribers_changed
+    respondents_changed participants_changed
+  ]
+
   def initialize(basecamp_cli:, agent:)
     @basecamp_cli = basecamp_cli
     @agent = agent
@@ -18,7 +33,7 @@ class BasecampAgentConnector::Basecamp::Verifier
     else
       recording = fetch_recording(event)
 
-      if corroborated?(recording, event)
+      if corroborated?(recording, event) && (event.chat_kind? || vouches_for_its_text?(event, recording))
         authoritative_event(event, recording)
       end
     end
@@ -65,6 +80,43 @@ class BasecampAgentConnector::Basecamp::Verifier
         assigns_agent?(recording)
       else
         recording.dig("creator", "id") == event.creator_id
+      end
+    end
+
+    # The event vouches for the recording as its actor left it, but the agent
+    # is handed the recording as it is now, and the worker re-reads it live.
+    # So nobody else may have changed its text since: otherwise an operator's
+    # real event, verified after a member edited their own words into the
+    # recording, would carry them to the agent under the operator's name. The
+    # actor's own later edits are theirs. A refused history reads as nothing
+    # vouched for; one the CLI could not read propagates, like the fetch.
+    def vouches_for_its_text?(event, recording)
+      history = @basecamp_cli.events(recording["id"].to_s, limit: EVENT_HISTORY_LIMIT)
+      recorded = history.find { |entry| entry["id"] == event.id }
+
+      !recorded.nil? && recorded["id"].is_a?(Integer) && history.none? do |later|
+        later["id"].is_a?(Integer) && later["id"] > recorded["id"] && \
+          text_change?(later["action"]) && actor_id(later) != actor_id(recorded)
+      end
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      false
+    end
+
+    def text_change?(action)
+      action.to_s.end_with?("_changed") && !NON_TEXT_CHANGES.include?(action)
+    end
+
+    # Who actually did it: the agent, for an event an agent carried out on
+    # someone's behalf. A performer record without an id is nobody's.
+    def actor_id(entry)
+      performer = entry["performed_by"]
+
+      if performer.nil?
+        entry.dig("creator", "id")
+      elsif performer.is_a?(Hash)
+        performer["id"]
       end
     end
 

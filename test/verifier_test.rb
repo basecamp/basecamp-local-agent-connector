@@ -4,6 +4,7 @@ class VerifierTest < Minitest::Test
   def test_verifies_corroborated_event
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
 
     verified = verifier(runner).verify(event(sample_payload))
 
@@ -14,6 +15,7 @@ class VerifierTest < Minitest::Test
   def test_rejects_when_creator_does_not_match
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 999 }))
+    stub_history runner
 
     assert_nil verifier(runner).verify(event(sample_payload))
   end
@@ -21,6 +23,7 @@ class VerifierTest < Minitest::Test
   def test_rejects_a_recording_basecamp_still_marks_a_draft
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(published_message("status" => "drafted"))
+    stub_history runner
 
     assert_nil verifier(runner).verify(event(draft_published_payload))
   end
@@ -28,6 +31,7 @@ class VerifierTest < Minitest::Test
   def test_verifies_a_recording_published_from_a_draft
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(published_message)
+    stub_history runner
 
     verified = verifier(runner).verify(event(draft_published_payload))
 
@@ -72,6 +76,7 @@ class VerifierTest < Minitest::Test
   def test_corroborates_an_assignment_when_the_agent_is_an_assignee
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner
 
     verified = verifier(runner).verify(event(assignment_payload))
 
@@ -84,8 +89,100 @@ class VerifierTest < Minitest::Test
   def test_rejects_an_assignment_when_the_agent_is_not_an_assignee
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording("assignees" => [ { "id" => 999 } ]))
+    stub_history runner
 
     assert_nil verifier(runner).verify(event(assignment_payload))
+  end
+
+  def test_reads_the_history_of_the_fetched_recording_by_its_id
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
+
+    refute_nil verifier(runner).verify(event(sample_payload))
+    assert_equal [ [ "basecamp", "events", "456", "--limit", "100", "-j" ] ], runner.commands_matching(/basecamp events/)
+  end
+
+  def test_the_actors_own_later_edit_does_not_unvouch_their_event
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => "content_changed"), sample_payload
+
+    refute_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  def test_later_changes_that_leave_the_text_alone_do_not_unvouch_the_event
+    %w[assignment_changed subscribers_changed completion_subscribers_changed column_changed due_on_changed].each do |action|
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp show", stdout: envelope(sample_recording)
+      stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => action, "creator" => { "id" => 555 }), sample_payload
+
+      refute_nil verifier(runner).verify(event(sample_payload)), action
+    end
+  end
+
+  def test_an_earlier_edit_by_someone_else_does_not_unvouch_a_later_event
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, sample_payload,
+      recorded_event(sample_payload, "id" => 98990, "action" => "content_changed", "creator" => { "id" => 555 })
+
+    refute_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  # The operator assigned the card as it read then; the card's author editing
+  # it afterwards is someone other than the assigner changing what the agent
+  # would be handed.
+  def test_an_assignment_does_not_vouch_for_an_edit_made_after_it
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner, recorded_event(assignment_payload, "id" => 99010, "action" => "content_changed",
+      "creator" => { "id" => 777 }), assignment_payload
+
+    assert_nil verifier(runner).verify(event(assignment_payload))
+  end
+
+  def test_a_later_edit_an_agent_made_on_the_actors_behalf_unvouches_the_event
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => "content_changed",
+      "performed_by" => { "id" => 900, "personable_type" => "Agent" }), sample_payload
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  def test_a_later_change_of_a_kind_bc3_has_not_been_known_to_record_counts_as_an_edit
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, recorded_event(sample_payload, "id" => 99010, "action" => "summary_changed",
+      "creator" => { "id" => 555 }), sample_payload
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  # Not among the newest events means too much has happened since to see it.
+  def test_an_event_the_newest_history_does_not_hold_is_not_vouched_for
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner, assignment_payload
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  def test_rejects_when_the_history_is_refused
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    runner.stub "basecamp events", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
+
+    assert_nil verifier(runner).verify(event(sample_payload))
+  end
+
+  def test_a_transient_history_read_failure_propagates_instead_of_rejecting
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_transient_failure runner, "basecamp events"
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(sample_payload)) }
   end
 
   def test_corroborates_a_chat_line_through_the_chat_line_command
@@ -96,7 +193,7 @@ class VerifierTest < Minitest::Test
 
     refute_nil verified
     assert_equal 91001, verified.recording["id"]
-    assert_empty runner.commands_matching(/basecamp show/)
+    assert_empty runner.commands_matching(/basecamp show|basecamp events/)
   end
 
   def test_rejects_a_chat_line_whose_authoritative_author_does_not_match
@@ -109,6 +206,7 @@ class VerifierTest < Minitest::Test
   def test_stamps_subscribed_after_confirming_the_agent_subscribes_to_the_comments_parent
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention, just a note</p>"))
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     verified = verifier(runner).verify(event(sample_payload))
@@ -122,6 +220,7 @@ class VerifierTest < Minitest::Test
   def test_does_not_stamp_subscribed_when_the_agent_is_not_a_subscriber
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(999)
 
     verified = verifier(runner).verify(event(sample_payload))
@@ -133,6 +232,7 @@ class VerifierTest < Minitest::Test
   def test_a_mentioning_comment_needs_no_subscribers_lookup
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
 
     verified = verifier(runner).verify(event(sample_payload))
 
@@ -144,6 +244,7 @@ class VerifierTest < Minitest::Test
   def test_stamps_mentioned_from_the_authoritative_recording_not_the_claim
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)
+    stub_history runner
 
     # the POST's content mentions nobody; the re-fetched recording does
     verified = verifier(runner).verify(event(sample_payload("recording" => sample_recording("content" => "<p>no mention</p>"))))
@@ -155,6 +256,7 @@ class VerifierTest < Minitest::Test
   def test_does_not_stamp_mentioned_when_the_authoritative_recording_mentions_someone_else
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>#{mention_html(person_id: 999)}</p>"))
+    stub_history runner
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
     verified = verifier(runner).verify(event(sample_payload))
@@ -170,6 +272,7 @@ class VerifierTest < Minitest::Test
     # not treated as a subscribed comment and no subscribers lookup is made.
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("type" => "Message", "content" => "<p>an old message</p>"))
+    stub_history runner
 
     verified = verifier(runner).verify(event(sample_payload))
 
@@ -181,6 +284,7 @@ class VerifierTest < Minitest::Test
   def test_a_refused_subscribers_lookup_stamps_not_subscribed
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    stub_history runner
     runner.stub "subscriptions show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
 
     verified = verifier(runner).verify(event(sample_payload))
@@ -195,6 +299,7 @@ class VerifierTest < Minitest::Test
   def test_a_transient_subscribers_lookup_failure_propagates
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("content" => "<p>no mention</p>"))
+    stub_history runner
     stub_transient_failure runner, "subscriptions show"
 
     assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { verifier(runner).verify(event(sample_payload)) }

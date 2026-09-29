@@ -234,6 +234,32 @@ module PayloadHelpers
     }
   end
 
+  # The entry `basecamp events <recording>` lists for the event a payload
+  # names, as Basecamp recorded it: bc3 names a kind `<recordable>_<action>`.
+  def recorded_event(payload = sample_payload, overrides = {})
+    {
+      "id" => payload["id"],
+      "recording_id" => payload.dig("recording", "id"),
+      "action" => payload["kind"][/(assignment_changed|content_changed|created|active)\z/],
+      "created_at" => payload["created_at"],
+      "creator" => payload["creator"],
+      "details" => payload["details"] || {}
+    }.merge(overrides)
+  end
+
+  # A recording history, newest first, holding the event of every payload or
+  # entry given — by default, of each stock payload — so a lookup by any of
+  # their ids finds it.
+  def history_envelope(*payloads)
+    payloads = [ sample_payload, assignment_payload, draft_published_payload ] if payloads.empty?
+
+    envelope(payloads.map { |payload| payload.key?("action") ? payload : recorded_event(payload) })
+  end
+
+  def stub_history(runner, *payloads)
+    runner.stub "basecamp events", stdout: history_envelope(*payloads)
+  end
+
   # A webhook as Basecamp answers its creation: its API url names the project
   # (bucket) it is registered on.
   def registered_webhook(id, project_id: 222)
