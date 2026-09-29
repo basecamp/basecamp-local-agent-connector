@@ -64,7 +64,7 @@ class BasecampAgentConnector::Basecamp::Pipeline
   def process(payload, attested: false)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    if impostor_on_webhook?(event) || !actionable?(event)
+    if impostor_on_webhook?(event) || !actionable?(event) || settled?(event.id)
       true
     elsif (delivered = delivered_event(event, attested: attested)).nil?
       log "dropped event #{event.id}: Basecamp has no delivery of it to this connector's webhook on project " \
@@ -149,6 +149,16 @@ class BasecampAgentConnector::Basecamp::Pipeline
       else
         false
       end
+    end
+
+    # An id that reached a verdict already, checked before the delivery
+    # history is read for it: a duplicate needs no lookup, and anyone who can
+    # read the URL could otherwise spend the API budget POSTing one delivered
+    # id over and over. An id still in flight is not settled — its verification
+    # may yet find no verdict and forget it — so it goes on to `claim`, which
+    # waits for it as before.
+    def settled?(event_id)
+      @lock.synchronize { @seen_event_ids.include?(event_id) && !@in_flight_event_ids.include?(event_id) }
     end
 
     # Called under the lock.

@@ -632,6 +632,30 @@ class PipelineTest < Minitest::Test
       runner.commands_matching(/basecamp show/)
   end
 
+  # A POST of an id already settled is a duplicate, and reading the delivery
+  # history for it again would only spend the API budget: anyone who can read
+  # the URL could spend it by POSTing one delivered id over and over.
+  def test_a_settled_event_is_not_looked_up_again
+    lookups = 0
+    pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { (lookups += 1) && sample_payload })
+
+    3.times { pipeline.process(sample_payload) }
+
+    assert_equal 1, lookups
+    assert_equal 1, @output.string.lines.length
+  end
+
+  # One not settled yet is looked up afresh: it may be a real redelivery after
+  # a verification that reached no verdict.
+  def test_an_event_that_reached_no_verdict_is_looked_up_again
+    lookups = 0
+    pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { (lookups += 1) && nil })
+
+    2.times { pipeline.process(sample_payload) }
+
+    assert_equal 2, lookups
+  end
+
   def test_a_delivery_history_that_could_not_be_read_propagates_with_nothing_settled
     unreadable = ->(_event_id, _project_id) { raise BasecampAgentConnector::Basecamp::Client::TransientError, "no answer" }
     pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: unreadable)
