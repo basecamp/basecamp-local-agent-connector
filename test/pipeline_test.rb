@@ -690,6 +690,53 @@ class PipelineTest < Minitest::Test
     assert_match(/dropped event 99001: not corroborated/, @logs.string)
   end
 
+  # bc3 creates each repetition of a repeating to-do as the to-do's creator,
+  # copying the text and assignees as they stand when the last one was
+  # completed, whoever wrote them. So a genuine delivery of its creation says
+  # nothing about who wrote what the agent would be handed.
+  def test_a_trigger_on_a_repeating_to_do_is_dropped
+    todo = sample_recording("type" => "Todo", "repetition_schedule" => { "frequency" => "every_week" })
+    creation = sample_payload("kind" => "todo_created", "recording" => todo)
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(todo)
+    stub_history runner, creation
+
+    assert pipeline(runner, webhook: true, recorded_delivery: ->(*) { creation }).process(creation)
+
+    assert_empty @output.string
+    assert_match(/dropped event 99001: its recording is a repeating to-do/, @logs.string)
+  end
+
+  # Its steps, and whom they are assigned to, are copied into each repetition
+  # the same way, and a step shows no schedule of its own; the to-do's can be
+  # removed afterwards. So a step is acted on only when it is a card's.
+  def test_a_trigger_on_a_step_of_a_to_do_is_dropped
+    step = assigned_recording("id" => 460, "type" => "Kanban::Step",
+      "parent" => { "id" => 459, "type" => "Todo", "app_url" => "https://3.basecamp.com/000/buckets/222/todos/459" })
+    assignment = assignment_payload("kind" => "kanban_step_assignment_changed", "recording" => step)
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(step)
+    stub_history runner, assignment
+
+    assert pipeline(runner, webhook: true, recorded_delivery: ->(*) { assignment }).process(assignment)
+
+    assert_empty @output.string
+    assert_match(/dropped event 99002: its recording is a step on a to-do/, @logs.string)
+  end
+
+  def test_a_trigger_on_a_cards_step_is_acted_on
+    step = assigned_recording("id" => 460, "type" => "Kanban::Step",
+      "parent" => { "id" => 789, "type" => "Kanban::Card", "app_url" => "https://3.basecamp.com/000/buckets/222/card_tables/cards/789" })
+    assignment = assignment_payload("kind" => "kanban_step_assignment_changed", "recording" => step)
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(step)
+    stub_history runner, assignment
+
+    pipeline(runner, webhook: true, recorded_delivery: ->(*) { assignment }).process(assignment)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
   def test_assignment_opt_in_lets_an_authorized_author_assign
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)

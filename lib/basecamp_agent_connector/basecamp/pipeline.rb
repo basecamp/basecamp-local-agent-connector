@@ -245,6 +245,12 @@ class BasecampAgentConnector::Basecamp::Pipeline
       elsif @webhook && !@watched_projects.call.include?(verified.recording.dig("bucket", "id"))
         log "dropped event #{event.id}: its recording is in project #{verified.recording.dig("bucket", "id").inspect}, " \
           "which this connector does not watch"
+      elsif repeating_to_do?(verified)
+        log "dropped event #{event.id}: its recording is a repeating to-do, which Basecamp re-creates as its creator " \
+          "whoever wrote its text; mention the agent on a to-do that does not repeat"
+      elsif step_on_a_to_do?(verified)
+        log "dropped event #{event.id}: its recording is a step on a to-do, which Basecamp copies into each repetition " \
+          "of a repeating to-do as its creator, whoever wrote it; assign the agent the to-do or a card's step instead"
       elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)
@@ -260,6 +266,23 @@ class BasecampAgentConnector::Basecamp::Pipeline
       # settled: a later delivery of the same id is verified afresh.
       forget(event)
       raise
+    end
+
+    # bc3 creates each repetition of a repeating to-do as the to-do's creator
+    # (the schedule firing), copying the text and assignees as they stood when
+    # the last one was completed, whoever wrote them. So an event on one says
+    # nothing about who wrote what the agent would be handed. Until Basecamp
+    # says what a repetition was made from, none is acted on.
+    def repeating_to_do?(event)
+      !event.recording["repetition_schedule"].nil?
+    end
+
+    # A repeating to-do's steps, and whom they are assigned to, are copied into
+    # each repetition the same way, and a step shows no schedule of its own;
+    # the to-do's can be removed afterwards. So a step is acted on only when it
+    # is positively a card's.
+    def step_on_a_to_do?(event)
+      event.recording["type"] == "Kanban::Step" && event.recording.dig("parent", "type") != "Kanban::Card"
     end
 
     def log(message)
