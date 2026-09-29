@@ -142,6 +142,27 @@ class VerifierTest < Minitest::Test
     assert_nil verifier(runner).verify(event(assignment_payload))
   end
 
+  # An assignment vouches for the assignees as its assigner left them. If
+  # someone else changes them afterwards, the agent's current assignment may
+  # be theirs: the operator's assignment undone and a member's made, with the
+  # operator's event still in the delivery history to point at.
+  def test_an_assignment_does_not_vouch_for_a_later_assignment_by_someone_else
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner, recorded_event(assignment_payload, "id" => 99010, "action" => "assignment_changed",
+      "creator" => { "id" => 555 }), assignment_payload
+
+    assert_nil verifier(runner).verify(event(assignment_payload))
+  end
+
+  def test_an_assignment_survives_the_assigners_own_later_assignment_change
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    stub_history runner, recorded_event(assignment_payload, "id" => 99010, "action" => "assignment_changed"), assignment_payload
+
+    refute_nil verifier(runner).verify(event(assignment_payload))
+  end
+
   def test_a_later_edit_an_agent_made_on_the_actors_behalf_unvouches_the_event
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording)

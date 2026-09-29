@@ -16,6 +16,8 @@ class BasecampAgentConnector::Basecamp::Verifier
   # Every other `_changed` action — `content_changed`, `title_changed`,
   # `subject_changed`, `description_changed`, `blob_changed`, and any bc3 adds
   # — may change what the agent would be handed.
+  ASSIGNMENT_CHANGE = "assignment_changed"
+
   NON_TEXT_CHANGES = %w[
     assignment_changed column_changed due_on_changed category_changed access_changed
     subscribers_changed addition_subscribers_changed completion_subscribers_changed
@@ -88,7 +90,11 @@ class BasecampAgentConnector::Basecamp::Verifier
     # So nobody else may have changed its text since: otherwise an operator's
     # real event, verified after a member edited their own words into the
     # recording, would carry them to the agent under the operator's name. The
-    # actor's own later edits are theirs. An actor with no id is nobody in
+    # actor's own later edits are theirs. An assignment vouches for the
+    # assignees as its assigner left them too, so for one a later assignment
+    # change by anyone else counts: the operator's assignment undone and a
+    # member's made would otherwise pass as the operator's, the agent being an
+    # assignee again. An actor with no id is nobody in
     # particular, never the same as another: an event whose own actor cannot
     # be told is not vouched for, and a later edit by one is someone else's. A
     # refused history reads as nothing vouched for; one the CLI could not read
@@ -100,12 +106,16 @@ class BasecampAgentConnector::Basecamp::Verifier
 
       !actor.nil? && recorded["id"].is_a?(Integer) && history.none? do |later|
         later["id"].is_a?(Integer) && later["id"] > recorded["id"] && \
-          text_change?(later["action"]) && actor_id(later) != actor
+          vouched_away?(later["action"], event) && actor_id(later) != actor
       end
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
     rescue BasecampAgentConnector::Basecamp::Client::Error
       false
+    end
+
+    def vouched_away?(action, event)
+      text_change?(action) || (event.assignment_changed? && action == ASSIGNMENT_CHANGE)
     end
 
     def text_change?(action)
