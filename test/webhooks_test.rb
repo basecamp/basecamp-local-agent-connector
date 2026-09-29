@@ -48,6 +48,32 @@ class WebhooksTest < Minitest::Test
     assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { webhooks.recorded_delivery(99001, 222) }
   end
 
+  # An answer that is not a webhook carrying a list of deliveries says nothing
+  # about what was delivered. Reading it as an empty history would answer a
+  # real delivery 200 as undelivered, and Basecamp would never redeliver it;
+  # it is no answer, so the route defers with a 503 instead.
+  def test_a_history_in_a_shape_it_does_not_recognize_is_no_answer
+    [ envelope([ "not", "a", "webhook" ]), envelope("id" => 555, "recent_deliveries" => "not a list") ].each do |answer|
+      runner = FakeCommandRunner.new
+      runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+      runner.stub "webhooks show 555", stdout: answer
+      webhooks = webhooks(runner)
+      webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+      assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { webhooks.recorded_delivery(99001, 222) }
+    end
+  end
+
+  def test_a_webhook_with_no_deliveries_yet_has_delivered_nothing
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555)
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_nil webhooks.recorded_delivery(99001, 222)
+  end
+
   def test_a_webhook_whose_project_cannot_be_read_off_it_records_no_delivery_and_says_so
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555)

@@ -130,10 +130,21 @@ class BasecampAgentConnector::Basecamp::Webhooks
   end
 
   private
+    # A webhook with no deliveries yet has delivered nothing. An answer that is
+    # not a webhook carrying a list of deliveries says nothing either way, and
+    # reading it as empty would answer a real delivery 200 as undelivered, so
+    # it is no answer: the route defers with a 503 and Basecamp redelivers.
     def recent_deliveries(registration)
       webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
       deliveries = webhook["recent_deliveries"] if webhook.is_a?(Hash)
-      deliveries.is_a?(Array) ? deliveries : []
+
+      if webhook.is_a?(Hash) && (deliveries.nil? || deliveries.is_a?(Array))
+        Array(deliveries)
+      else
+        raise BasecampAgentConnector::Basecamp::Client::TransientError,
+          "the delivery history of webhook #{registration.id} on project #{registration.project} came back in a " \
+          "shape this connector does not recognize"
+      end
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
     rescue BasecampAgentConnector::Basecamp::Client::Error
