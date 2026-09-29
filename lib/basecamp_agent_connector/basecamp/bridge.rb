@@ -220,6 +220,8 @@ class BasecampAgentConnector::Basecamp::Bridge
         verifier: verifier,
         emitter: @emitter,
         webhook: webhook,
+        recorded_delivery: ->(event_id, project_id) { @webhooks.recorded_delivery(event_id, project_id) },
+        watched_projects: -> { @webhooks.project_ids },
         logger: @logger
     end
 

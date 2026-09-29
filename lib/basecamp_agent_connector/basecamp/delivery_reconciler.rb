@@ -162,7 +162,9 @@ class BasecampAgentConnector::Basecamp::DeliveryReconciler
         "connector (#{describe_response(delivery)}), so nothing was heard of it; reconciling it from the webhook's " \
         "delivery history"
 
-      @pipeline.process(delivery.body)
+      # The body came out of this webhook's own delivery history: it is the
+      # event as Basecamp delivered it, which the webhook route reads first.
+      @pipeline.process(delivery.body, attested: true)
     rescue BasecampAgentConnector::Basecamp::Client::TransientError => error
       settled.delete(delivery.id)
       log "could not corroborate reconciled #{describe(delivery)}: #{error.message}; retried on the next webhook check"

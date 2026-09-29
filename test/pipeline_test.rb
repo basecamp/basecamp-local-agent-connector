@@ -577,6 +577,58 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  # Only the id and the project to look in come from the POST: what is acted on
+  # is Basecamp's delivery of that id.
+  def test_the_webhook_route_acts_on_the_event_as_basecamp_delivered_it
+    delivered = sample_payload("details" => { "from" => "basecamp" })
+    asked = []
+    pipeline(corroborating_runner, webhook: true,
+      recorded_delivery: ->(event_id, project_id) { asked << [ event_id, project_id ] && delivered })
+      .process(sample_payload("details" => { "from" => "the post" }))
+
+    assert_equal [ [ 99001, 222 ] ], asked
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_delivery_history_that_could_not_be_read_propagates_with_nothing_settled
+    unreadable = ->(_event_id, _project_id) { raise BasecampAgentConnector::Basecamp::Client::TransientError, "no answer" }
+    pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: unreadable)
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { pipeline.process(sample_payload) }
+    refute pipeline.heard?(99001)
+  end
+
+  def test_a_webhook_event_naming_no_project_has_no_delivery_to_look_for
+    asked = false
+    pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { asked = true })
+
+    refute pipeline.process(sample_payload("recording" => sample_recording("bucket" => nil)))
+    refute asked
+  end
+
+  # The delivery reconciler replays bodies out of the webhook's own delivery
+  # history, which is exactly what the route looks up.
+  def test_a_replay_out_of_the_delivery_history_is_not_looked_up_again
+    pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { flunk "looked up again" })
+
+    pipeline.process(sample_payload, attested: true)
+
+    assert_equal 1, @output.string.lines.length
+  end
+
+  def test_a_delivered_event_on_a_recording_outside_the_watched_projects_is_dropped
+    pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { sample_payload }, watched_projects: -> { [ 333 ] })
+      .process(sample_payload)
+
+    assert_empty @output.string
+    assert_match(/dropped event 99001: its recording is in project 222, which this connector does not watch/, @logs.string)
+  end
+
+  def test_a_webhook_pipeline_must_be_able_to_read_what_basecamp_delivered_and_know_what_it_watches
+    assert_raises(ArgumentError) { pipeline(FakeCommandRunner.new, webhook: true, recorded_delivery: nil) }
+    assert_raises(ArgumentError) { pipeline(FakeCommandRunner.new, webhook: true, watched_projects: nil) }
+  end
+
   def test_assignment_opt_in_lets_an_authorized_author_assign
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
@@ -699,13 +751,18 @@ class PipelineTest < Minitest::Test
       runner
     end
 
-    def pipeline(runner, authorizer: authorizer(), webhook: false)
+    # A webhook pipeline finds no delivery of anything unless a test says what
+    # Basecamp delivered. The fixtures' recordings are all in project 222.
+    def pipeline(runner, authorizer: authorizer(), webhook: false, recorded_delivery: ->(_event_id, _project_id) { },
+      watched_projects: -> { [ 222 ] })
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: webhook,
+        recorded_delivery: recorded_delivery,
+        watched_projects: watched_projects,
         logger: @logs
     end
 end

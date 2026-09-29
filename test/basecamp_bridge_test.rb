@@ -124,9 +124,10 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_handler_answers_200_once_an_event_is_settled
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload
     runner.stub "basecamp show", stdout: envelope(sample_recording)
     output = StringIO.new
-    bridge = bridge(runner, output: output)
+    bridge = registered(bridge(runner, output: output))
 
     assert_nil bridge.handler.call(request(sample_payload))
     assert_equal 1, output.string.lines.length
@@ -137,10 +138,11 @@ class BasecampBridgeTest < Minitest::Test
   # is never redelivered.
   def test_handler_answers_200_for_an_uncorroborated_event
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload
     runner.stub "basecamp show", exit_status: 2, stdout: error_envelope("not_found", "Resource not found")
     output = StringIO.new
     logs = StringIO.new
-    bridge = bridge(runner, logger: logs, output: output)
+    bridge = registered(bridge(runner, logger: logs, output: output))
 
     assert_nil bridge.handler.call(request(sample_payload))
 
@@ -154,10 +156,11 @@ class BasecampBridgeTest < Minitest::Test
   # say so in the log instead of calling the event uncorroborated.
   def test_handler_answers_503_when_the_recording_could_not_be_fetched
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload
     stub_transient_failure runner, "basecamp show"
     output = StringIO.new
     logs = StringIO.new
-    bridge = bridge(runner, logger: logs, output: output)
+    bridge = registered(bridge(runner, logger: logs, output: output))
 
     assert_equal 503, bridge.handler.call(request(sample_payload))
 
@@ -173,11 +176,12 @@ class BasecampBridgeTest < Minitest::Test
   def test_handler_answers_503_naming_the_subscriber_lookup_that_could_not_be_answered
     recording = sample_recording("content" => "<p>just a normal comment, no mention</p>")
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload("recording" => recording)
     runner.stub "basecamp show", stdout: envelope(recording)
     stub_transient_failure runner, "subscriptions show"
     output = StringIO.new
     logs = StringIO.new
-    bridge = bridge(runner, logger: logs, output: output)
+    bridge = registered(bridge(runner, logger: logs, output: output))
 
     assert_equal 503, bridge.handler.call(request(sample_payload("recording" => recording)))
 
@@ -191,11 +195,12 @@ class BasecampBridgeTest < Minitest::Test
   # while a 503 brings it back seconds later.
   def test_handler_answers_503_when_basecamp_answered_5xx
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload
     stub_transient_failure runner, "basecamp show", exit_status: 7,
       stdout: error_envelope("api_error", "request failed after 3 attempts: Gateway error (503)")
     output = StringIO.new
     logs = StringIO.new
-    bridge = bridge(runner, logger: logs, output: output)
+    bridge = registered(bridge(runner, logger: logs, output: output))
 
     assert_equal 503, bridge.handler.call(request(sample_payload))
 
@@ -205,10 +210,11 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_a_redelivery_after_a_503_is_verified_afresh_and_emitted_once
     runner = FakeCommandRunner.new
+    delivering runner, sample_payload
     stub_transient_failure runner, "basecamp show"
     runner.stub "basecamp show", stdout: envelope(sample_recording)
     output = StringIO.new
-    bridge = bridge(runner, output: output)
+    bridge = registered(bridge(runner, output: output))
 
     assert_equal 503, bridge.handler.call(request(sample_payload))
     assert_nil bridge.handler.call(request(sample_payload))
@@ -309,9 +315,84 @@ class BasecampBridgeTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  # A webhook is unsigned and its URL is readable by every member of the
+  # project. A member really assigns the agent a to-do of their own, then POSTs
+  # that assignment naming the operator as the assigner. Basecamp's delivery
+  # of it names the member, and that is the event acted on.
+  def test_the_assigner_is_the_one_basecamp_delivered_not_the_one_posted
+    by_member = assignment_payload("creator" => { "id" => 555, "name" => "Mallory", "email_address" => "m@example.com" })
+    runner = FakeCommandRunner.new
+    delivering runner, by_member
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = registered(bridge(runner, output: output, logger: logs))
+
+    assert_nil bridge.handler.call(request(assignment_payload))
+
+    assert_empty output.string
+    assert_empty runner.commands_matching(/basecamp show/)
+  end
+
+  # A real operator mention POSTed again under an id Basecamp never delivered
+  # here is not a delivery, and cannot buy the agent a second run.
+  def test_ignores_an_event_basecamp_did_not_deliver_to_this_webhook
+    runner = FakeCommandRunner.new
+    delivering runner, sample_payload
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    output = StringIO.new
+    logs = StringIO.new
+    bridge = registered(bridge(runner, output: output, logger: logs))
+
+    assert_nil bridge.handler.call(request(sample_payload("id" => 99999)))
+
+    assert_empty output.string
+    assert_match(/dropped event 99999: Basecamp has no delivery of it to this connector's webhook on project 222/, logs.string)
+    assert_empty runner.commands_matching(/basecamp show/)
+  end
+
+  # A POST can name a recording in any project the agent can read; one this
+  # run has no webhook on has no delivery to find.
+  def test_ignores_an_event_on_a_project_the_run_does_not_watch
+    elsewhere = sample_recording("bucket" => { "id" => 999, "name" => "Unwatched", "type" => "Project" })
+    runner = FakeCommandRunner.new
+    delivering runner, sample_payload
+    runner.stub "basecamp show", stdout: envelope(elsewhere)
+    output = StringIO.new
+    bridge = registered(bridge(runner, output: output))
+
+    assert_nil bridge.handler.call(request(sample_payload("recording" => elsewhere)))
+
+    assert_empty output.string
+  end
+
+  def test_acts_on_the_event_basecamp_delivered
+    runner = FakeCommandRunner.new
+    delivering runner, sample_payload
+    runner.stub "basecamp show", stdout: envelope(sample_recording)
+    output = StringIO.new
+    bridge = registered(bridge(runner, output: output))
+
+    assert_nil bridge.handler.call(request(sample_payload))
+
+    assert_equal [ 99001 ], output.string.lines.map { |line| JSON.parse(line)["event_id"] }
+  end
+
   private
     def request(payload)
       BasecampAgentConnector::Server::Request.new(body: JSON.generate(payload), headers: {})
+    end
+
+    # This run's webhook on project 222, whose delivery history holds a
+    # delivery of each payload: what Basecamp records before each POST.
+    def delivering(runner, *payloads)
+      runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+      runner.stub "webhooks show 555", stdout: envelope("id" => 555,
+        "recent_deliveries" => payloads.each_with_index.map { |payload, n| webhook_delivery(body: payload, id: 70001 + n) })
+    end
+
+    def registered(bridge)
+      bridge.tap { bridge.register(base_url: "https://host.ts.net") }
     end
 
     def bridge(runner, projects: [ "A" ], types: "Comment", logger: StringIO.new, output: StringIO.new,

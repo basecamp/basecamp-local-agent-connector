@@ -1,10 +1,30 @@
 class BasecampAgentConnector::Basecamp::Pipeline
-  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, logger: $stderr)
+  # A webhook is unsigned and its URL is readable by every member of the
+  # project it is registered on, so a POST proves nothing about who sent it or
+  # what happened. The webhook pipeline takes nothing from the POST but the
+  # event id and the project to look in: it acts on the event as Basecamp
+  # delivered it, the body `recorded_delivery` finds for that id in the
+  # delivery history of this run's webhook on the project (see
+  # Webhooks#recorded_delivery). bc3 records a delivery before it sends it, so
+  # every real POST finds itself there, and one anybody else makes finds
+  # nothing, whatever real event id it carries. That settles who acted (an
+  # assigner included), that the event happened and was delivered here, and
+  # in which project. The delivery reconciler's replays come out of that
+  # history already, and say so (`attested: true`). The recording the event
+  # names must also be in one of `watched_projects`, the projects this run's
+  # webhooks are registered on.
+  def initialize(authorizer:, agent:, verifier:, emitter:, webhook: false, recorded_delivery: nil,
+    watched_projects: nil, logger: $stderr)
+    raise ArgumentError, "a webhook pipeline must be able to read what Basecamp delivered" if webhook && recorded_delivery.nil?
+    raise ArgumentError, "a webhook pipeline must be told which projects it watches" if webhook && watched_projects.nil?
+
     @authorizer = authorizer
     @agent = agent
     @verifier = verifier
     @emitter = emitter
     @webhook = webhook
+    @recorded_delivery = recorded_delivery
+    @watched_projects = watched_projects
     @logger = logger
     @seen_event_ids = Set.new
     @in_flight_event_ids = Set.new
@@ -35,16 +55,24 @@ class BasecampAgentConnector::Basecamp::Pipeline
   # verification shells out to the CLI, and a burst serialized behind one
   # slow verification would time out delivery after delivery. The pollers
   # each own a pipeline and poll from a single thread, so they never wait.
-  def process(payload)
+  #
+  # On the webhook route the POST is only asked to pass the cheap pre-filter,
+  # which can turn work away but never let any through; the event then acted
+  # on is Basecamp's delivery of it, which passes the same pre-filter afresh.
+  def process(payload, attested: false)
     event = BasecampAgentConnector::Basecamp::Event.from_payload(payload)
 
-    if impostor_on_webhook?(event)
+    if impostor_on_webhook?(event) || !actionable?(event)
       true
-    elsif actionable?(event) && claim(event)
+    elsif (delivered = delivered_event(event, attested: attested)).nil?
+      log "dropped event #{event.id}: Basecamp has no delivery of it to this connector's webhook on project " \
+        "#{claimed_project(event).inspect}"
+      false
+    elsif actionable?(delivered) && claim(delivered)
       begin
-        emit_if_verified(event)
+        emit_if_verified(delivered)
       ensure
-        release(event.id)
+        release(delivered.id)
       end
     else
       true
@@ -193,12 +221,30 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # the verifier stamps `agent_boosted` only after finding the boost in a
     # fresh fetch of the agent's own received-boosts feed, with the emitted
     # booster and content taken from that fetch.
+    # Off the webhook route, and for a replay out of the delivery history, the
+    # payload is Basecamp's own already. Otherwise it is the body recorded for
+    # the claimed id in the claimed project, or nil.
+    def delivered_event(event, attested:)
+      if attested || !@webhook
+        event
+      elsif (project = claimed_project(event)).is_a?(Integer) && (body = @recorded_delivery.call(event.id, project))
+        BasecampAgentConnector::Basecamp::Event.from_payload(body)
+      end
+    end
+
+    def claimed_project(event)
+      event.recording.dig("bucket", "id")
+    end
+
     def emit_if_verified(event)
       verified = @verifier.verify(event)
 
       if verified.nil?
         forget(event)
         log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
+      elsif @webhook && !@watched_projects.call.include?(verified.recording.dig("bucket", "id"))
+        log "dropped event #{event.id}: its recording is in project #{verified.recording.dig("bucket", "id").inspect}, " \
+          "which this connector does not watch"
       elsif !@authorizer.authorizes?(verified)
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)

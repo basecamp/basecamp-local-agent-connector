@@ -90,6 +90,16 @@ class DeliveryReconcilerTest < Minitest::Test
     assert_equal({ "mentioned" => true, "subscribed" => false }, JSON.parse(@output.string)["trigger"])
   end
 
+  # The body came out of the webhook's own delivery history, so it is not
+  # looked up again: by then a burst may have pushed it out of the last 25.
+  def test_a_replay_out_of_the_delivery_history_is_not_looked_up_again
+    runner = corroborating_runner(webhook_delivery(code: 0))
+
+    reconciler(runner, pipeline: pipeline(runner, recorded_delivery: ->(*) { })).reconcile
+
+    assert_equal [ 99001 ], emitted_event_ids
+  end
+
   def test_names_the_recovered_delivery_on_stderr
     reconciler(corroborating_runner(webhook_delivery(code: 0))).reconcile
 
@@ -335,10 +345,10 @@ class DeliveryReconcilerTest < Minitest::Test
     real = pipeline(runner)
     exploding = Object.new
     exploding.define_singleton_method(:heard?) { |event_id| real.heard?(event_id) }
-    exploding.define_singleton_method(:process) do |payload|
+    exploding.define_singleton_method(:process) do |payload, **options|
       raise "surprise" if payload["id"] == 99002
 
-      real.process(payload)
+      real.process(payload, **options)
     end
 
     reconciler(runner, pipeline: exploding).reconcile
@@ -600,13 +610,15 @@ class DeliveryReconcilerTest < Minitest::Test
 
     # Built as the Bridge builds the webhook route's pipeline, which is the one
     # the reconciler shares.
-    def pipeline(runner)
+    def pipeline(runner, recorded_delivery: ->(event_id, _project_id) { sample_payload("id" => event_id) })
       BasecampAgentConnector::Basecamp::Pipeline.new \
         authorizer: authorizer,
         agent: @agent,
         verifier: BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: @agent),
         emitter: BasecampAgentConnector::Emitter.new(output: @output),
         webhook: true,
+        recorded_delivery: recorded_delivery,
+        watched_projects: -> { [ 222 ] },
         logger: @logs
     end
 
