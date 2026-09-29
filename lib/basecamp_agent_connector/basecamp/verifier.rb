@@ -98,10 +98,25 @@ class BasecampAgentConnector::Basecamp::Verifier
         "kind" => event.kind,
         "created_at" => event.created_at,
         "details" => event.details,
-        "creator" => event.assignment_changed? ? event.creator : recording.fetch("creator"),
+        "creator" => authoritative_creator(event, recording),
         "recording" => recording,
         "agent_mentioned" => mentioned,
         "agent_subscribed" => agent_subscribed?(event, recording, mentioned: mentioned)
+    end
+
+    # An assignment's author is its assigner, and anything else's the
+    # recording's creator. But an event an agent performed on someone's behalf
+    # is the agent's, not the person's: bc3 delivers the person as the creator
+    # with the agent as `performed_by`, and it is the agent that must be
+    # authorized.
+    def authoritative_creator(event, recording)
+      if event.performer
+        event.performer
+      elsif event.assignment_changed?
+        event.creator
+      else
+        recording.fetch("creator")
+      end
     end
 
     # A comment can trigger by subscription instead of by a mention: confirm,

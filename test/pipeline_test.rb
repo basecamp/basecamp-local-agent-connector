@@ -629,6 +629,23 @@ class PipelineTest < Minitest::Test
     assert_raises(ArgumentError) { pipeline(FakeCommandRunner.new, webhook: true, watched_projects: nil) }
   end
 
+  # bc3 delivers an agent acting on someone's behalf as that person, with the
+  # agent as `performed_by`. The agent did it, not the person, so it is the
+  # agent that must be authorized.
+  def test_an_event_an_agent_performed_on_the_operators_behalf_is_not_the_operators
+    helper = { "id" => 900, "name" => "Helper", "personable_type" => "Agent" }
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(assigned_recording)
+    delegated = assignment_payload("performed_by" => helper)
+
+    pipeline(runner, webhook: true, recorded_delivery: ->(*) { delegated }).process(assignment_payload)
+    pipeline(corroborating_runner, webhook: true, recorded_delivery: ->(*) { sample_payload("performed_by" => helper) })
+      .process(sample_payload)
+
+    assert_empty @output.string
+    assert_equal 2, @logs.string.scan(/authoritative author is not authorized/).length
+  end
+
   def test_assignment_opt_in_lets_an_authorized_author_assign
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)

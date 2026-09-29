@@ -130,6 +130,12 @@ class BasecampAgentConnector::Basecamp::Event
     creator["id"]
   end
 
+  # The agent that carried the event out on the creator's behalf, when one
+  # did: bc3 records it as the creator, with the agent as `performed_by`.
+  def performer
+    @payload["performed_by"]
+  end
+
   def creator_email
     creator["email_address"]
   end
