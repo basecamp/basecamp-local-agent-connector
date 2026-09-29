@@ -367,8 +367,8 @@ class DeliveryReconcilerTest < Minitest::Test
 
   def test_reconciles_every_registration
     runner = FakeCommandRunner.new
-    runner.stub(/webhooks create .*--project 1\b/, stdout: envelope("id" => 555))
-    runner.stub(/webhooks create .*--project 2\b/, stdout: envelope("id" => 556))
+    runner.stub(/webhooks create .*--project 1\b/, stdout: envelope(registered_webhook(555)))
+    runner.stub(/webhooks create .*--project 2\b/, stdout: envelope(registered_webhook(556)))
     runner.stub "webhooks show 555", stdout: envelope("recent_deliveries" => [ webhook_delivery(code: 0) ])
     runner.stub "webhooks show 556", stdout: envelope("recent_deliveries" => [ webhook_delivery(code: 0, id: 70002,
       body: sample_payload("id" => 99002)) ])
@@ -590,7 +590,7 @@ class DeliveryReconcilerTest < Minitest::Test
     end
 
     def webhooks(runner, projects: [ 1 ])
-      runner.stub "webhooks create", stdout: envelope("id" => 555)
+      runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
 
       BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: @logs,
         wait: ->(_seconds) { }).tap do |webhooks|

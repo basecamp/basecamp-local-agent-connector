@@ -109,7 +109,7 @@ class WebhookMonitorTest < Minitest::Test
   def test_stop_lets_a_check_in_flight_finish_so_teardown_deletes_what_it_registered
     runner = PausingCommandRunner.new(/webhooks create/)
     webhooks = registered_webhooks(runner)
-    runner.stub "webhooks create", stdout: envelope("id" => 556)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(556))
     runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
     runner.stub "webhooks delete", exit_status: 0
     ticks = Queue.new
@@ -221,7 +221,7 @@ class WebhookMonitorTest < Minitest::Test
     end
 
     def registered_webhooks(runner)
-      runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
+      runner.stub "webhooks create", stdout: envelope(registered_webhook(555)), once: true
       BasecampAgentConnector::Basecamp::Webhooks.new(basecamp_cli: build_cli(runner), logger: @logs, wait: ->(_seconds) { }).tap do |webhooks|
         webhooks.register_all(projects: [ 1 ], url: "https://host.example.ts.net/bc5/abc", types: "Comment")
       end

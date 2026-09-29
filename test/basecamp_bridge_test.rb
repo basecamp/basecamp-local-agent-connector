@@ -7,7 +7,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_register_creates_a_webhook_at_the_funnel_url_for_each_project
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     bridge = bridge(runner, projects: [ "A", "B" ])
 
     bridge.register(base_url: "https://host.ts.net")
@@ -50,7 +50,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_teardown_deletes_registered_webhooks
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     bridge = bridge(runner)
 
@@ -62,7 +62,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_register_logs_the_active_trust_mode
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     logs = StringIO.new
 
     bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
@@ -72,7 +72,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_register_splits_chat_types_off_to_the_poller
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: envelope([ chat_line ])
@@ -219,7 +219,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_register_starts_the_boost_poller_and_logs_after_the_webhook_readiness_line
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     logs = StringIO.new
     bridge = bridge(runner, logger: logs, boost_poll_interval: 60)
@@ -239,7 +239,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_a_nil_boost_poll_interval_disables_the_poller
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     logs = StringIO.new
     bridge = bridge(runner, logger: logs, boost_poll_interval: nil)
@@ -252,7 +252,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_register_starts_the_webhook_monitor_and_logs_after_the_readiness_line
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     logs = StringIO.new
     bridge = bridge(runner, logger: logs, webhook_check_interval: 300)
@@ -272,7 +272,7 @@ class BasecampBridgeTest < Minitest::Test
 
   def test_a_nil_webhook_check_interval_disables_the_monitor
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     logs = StringIO.new
     bridge = bridge(runner, logger: logs, webhook_check_interval: nil)

@@ -232,6 +232,12 @@ module PayloadHelpers
     }
   end
 
+  # A webhook as Basecamp answers its creation: its API url names the project
+  # (bucket) it is registered on.
+  def registered_webhook(id, project_id: 222)
+    { "id" => id, "url" => "https://3.basecampapi.com/000/buckets/#{project_id}/webhooks/#{id}.json" }
+  end
+
   # The `basecamp subscriptions show` envelope: the subscribers of a recording,
   # each a person with an id. The connector matches the agent's Person id here.
   def subscribers_envelope(*person_ids)

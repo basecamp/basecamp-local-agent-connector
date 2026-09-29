@@ -53,7 +53,7 @@ class BasecampClientTest < Minitest::Test
 
   def test_create_webhook_passes_project_and_types
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
 
     webhook = build_cli(runner).create_webhook(url: "https://example.org/hook/x", project: 222, types: "Comment")
 

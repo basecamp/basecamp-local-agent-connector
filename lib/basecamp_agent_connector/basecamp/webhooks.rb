@@ -1,5 +1,15 @@
 class BasecampAgentConnector::Basecamp::Webhooks
-  Registration = Data.define(:project, :id)
+  # `project` is the project as the operator named it; `project_id` is the one
+  # Basecamp registered the webhook on, read off the webhook's own API url
+  # (`/buckets/<project id>/webhooks/<id>.json`). Nil for a registration this
+  # run did not create, which is only ever deleted.
+  Registration = Data.define(:project, :id, :project_id) do
+    def initialize(project:, id:, project_id: nil)
+      super
+    end
+  end
+
+  WEBHOOK_PROJECT_ID = %r{/buckets/(\d+)/webhooks/}
 
   def initialize(basecamp_cli:, logger: $stderr, attempts: 3, wait: ->(seconds) { sleep seconds })
     @basecamp_cli = basecamp_cli
@@ -61,6 +71,31 @@ class BasecampAgentConnector::Basecamp::Webhooks
     restored
   end
 
+  # The ids of the projects this run's webhooks are registered on: the only
+  # projects a delivery to this run can be about.
+  def project_ids
+    registrations.filter_map(&:project_id).uniq
+  end
+
+  # The event as Basecamp delivered it to one of this run's webhooks on the
+  # project: the request body of the delivery of that event id in the
+  # webhook's own history, or nil when there is none. bc3 records a delivery,
+  # body and all, before it sends it, so a POST Basecamp really made is there
+  # when it lands, and a POST anybody else made is not, even one carrying a
+  # real event id. The history is the last 25 deliveries. A history Basecamp
+  # refuses to show holds nothing; one the CLI could not read at all
+  # propagates, since that is no answer.
+  def recorded_delivery(event_id, project_id)
+    registrations.select { |registration| registration.project_id == project_id }.each do |registration|
+      recent_deliveries(registration).each do |entry|
+        delivery = BasecampAgentConnector::Basecamp::Delivery.from_entry(entry)
+        return delivery.body if delivery&.event_id == event_id
+      end
+    end
+
+    nil
+  end
+
   # The registrations as they stand, as a copy: a caller walking them one
   # history read at a time must not be walking the list `restore` rewrites.
   def registrations
@@ -95,6 +130,16 @@ class BasecampAgentConnector::Basecamp::Webhooks
   end
 
   private
+    def recent_deliveries(registration)
+      webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
+      deliveries = webhook["recent_deliveries"] if webhook.is_a?(Hash)
+      deliveries.is_a?(Array) ? deliveries : []
+    rescue BasecampAgentConnector::Basecamp::Client::TransientError
+      raise
+    rescue BasecampAgentConnector::Basecamp::Client::Error
+      []
+    end
+
     def unreadable_history(registration, reason)
       log "could not read the delivery history of webhook #{registration.id} on project #{registration.project}: " \
         "#{reason}"
@@ -124,7 +169,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
 
     def register(project:, url:, types:)
       webhook = create_with_retries(project: project, url: url, types: types)
-      @registrations << Registration.new(project: project, id: webhook.fetch("id"))
+      @registrations << registration_of(project, webhook)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "failed to register webhook for project #{project} after #{@attempts} attempts: #{error.message}"
     end
@@ -140,6 +185,20 @@ class BasecampAgentConnector::Basecamp::Webhooks
       end
 
       raise last_error
+    end
+
+    # A webhook whose project cannot be read off it still delivers, but the
+    # webhook route refuses every event it carries: the delivery is looked for
+    # among the webhooks registered on the event's project.
+    def registration_of(project, webhook)
+      project_id = webhook["url"].to_s[WEBHOOK_PROJECT_ID, 1]&.to_i
+
+      if project_id.nil?
+        log "could not tell which project webhook #{webhook["id"]} for project #{project} is registered on " \
+          "(its url is #{webhook["url"].inspect}); events from that project will be dropped"
+      end
+
+      Registration.new(project: project, id: webhook.fetch("id"), project_id: project_id)
     end
 
     # The live registration when it needed restoring and was; nil when it was
@@ -174,7 +233,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
 
     def reregister(registration, url:, types:)
       webhook = create_with_retries(project: registration.project, url: url, types: types)
-      Registration.new(project: registration.project, id: webhook.fetch("id")).tap do |replacement|
+      registration_of(registration.project, webhook).tap do |replacement|
         log "webhook #{registration.id} on project #{registration.project} is gone (deleted outside this connector); " \
           "re-registered it as #{replacement.id}"
       end

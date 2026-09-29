@@ -3,11 +3,61 @@ require "test_helper"
 class WebhooksTest < Minitest::Test
   def test_registers_one_webhook_per_project
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
 
     registrations = webhooks(runner).register_all(projects: [ 1, 2 ], url: hook_url, types: "Comment")
 
     assert_equal [ 1, 2 ], registrations.map(&:project)
+  end
+
+  # bc3 records a delivery, request body and all, before it sends it, so a
+  # POST Basecamp really made is in the webhook's own history when it lands,
+  # and the body recorded there is the event exactly as Basecamp sent it.
+  def test_the_recorded_delivery_is_the_event_as_basecamp_sent_it_to_this_runs_webhook_on_its_project
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+    runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery ])
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ "BC5 Calendar" ], url: hook_url, types: "Comment")
+
+    assert_equal sample_payload, webhooks.recorded_delivery(99001, 222)
+    assert_nil webhooks.recorded_delivery(99002, 222)
+    assert_nil webhooks.recorded_delivery(99001, 333)
+    assert_equal [ 222 ], webhooks.project_ids
+  end
+
+  def test_a_history_basecamp_refuses_to_show_records_no_delivery
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+    runner.stub "webhooks show 555", exit_status: 2, stdout: error_envelope("not_found", "Resource not found: webhook 555")
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_nil webhooks.recorded_delivery(99001, 222)
+  end
+
+  # No answer is no verdict: the caller defers rather than refusing a real
+  # delivery.
+  def test_a_history_that_could_not_be_read_propagates
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+    stub_transient_failure runner, "webhooks show 555"
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { webhooks.recorded_delivery(99001, 222) }
+  end
+
+  def test_a_webhook_whose_project_cannot_be_read_off_it_records_no_delivery_and_says_so
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+
+    webhooks.register_all(projects: [ "BC5 Calendar" ], url: hook_url, types: "Comment")
+
+    assert_empty webhooks.project_ids
+    assert_match(/could not tell which project webhook 555 for project BC5 Calendar is registered on.*will be dropped/, logs.string)
   end
 
   def test_continues_past_a_registration_failure
@@ -25,7 +75,7 @@ class WebhooksTest < Minitest::Test
   def test_retries_a_transient_failure_then_succeeds
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}', once: true
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
 
     registrations = webhooks(runner).register_all(projects: [ 1 ], url: hook_url, types: "Comment")
 
@@ -47,7 +97,7 @@ class WebhooksTest < Minitest::Test
 
   def test_deletes_every_registered_webhook
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 0
     webhooks = webhooks(runner)
 
@@ -59,7 +109,7 @@ class WebhooksTest < Minitest::Test
 
   def test_reports_a_failed_deletion_and_keeps_going
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks delete", exit_status: 1, stderr: "gone"
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
@@ -110,7 +160,7 @@ class WebhooksTest < Minitest::Test
 
   def test_restore_reactivates_a_webhook_basecamp_deactivated
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => false)
     runner.stub "webhooks update 555", stdout: envelope("id" => 555, "active" => true)
     logs = StringIO.new
@@ -127,7 +177,7 @@ class WebhooksTest < Minitest::Test
 
   def test_restore_leaves_an_active_webhook_alone
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => true)
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
@@ -146,8 +196,8 @@ class WebhooksTest < Minitest::Test
   # registration replaces it, and teardown deletes the replacement.
   def test_restore_re_registers_a_webhook_deleted_out_from_under_it
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
-    runner.stub "webhooks create", stdout: envelope("id" => 556)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555)), once: true
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(556))
     runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
     runner.stub "webhooks delete", exit_status: 0
     logs = StringIO.new
@@ -166,7 +216,7 @@ class WebhooksTest < Minitest::Test
 
   def test_restore_keeps_a_registration_it_could_not_reactivate_and_says_so
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "active" => false)
     runner.stub "webhooks update 555", stdout: error_envelope("api_error", "The webhook limit for this project has been reached"), exit_status: 1
     runner.stub "webhooks delete", exit_status: 0
@@ -184,7 +234,7 @@ class WebhooksTest < Minitest::Test
 
   def test_restore_keeps_a_registration_it_could_not_replace_and_says_so
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555), once: true
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555)), once: true
     runner.stub "webhooks create", exit_status: 1, stdout: '{"ok":false,"error":"400 Bad Request"}'
     runner.stub "webhooks show 555", stdout: error_envelope("not_found", "Resource not found: webhook 555"), exit_status: 2
     runner.stub "webhooks delete", exit_status: 0
@@ -203,8 +253,8 @@ class WebhooksTest < Minitest::Test
 
   def test_restore_continues_past_a_webhook_it_could_not_check
     runner = FakeCommandRunner.new
-    runner.stub(/webhooks create .*--project 1\b/, stdout: envelope("id" => 555))
-    runner.stub(/webhooks create .*--project 2\b/, stdout: envelope("id" => 556))
+    runner.stub(/webhooks create .*--project 1\b/, stdout: envelope(registered_webhook(555)))
+    runner.stub(/webhooks create .*--project 2\b/, stdout: envelope(registered_webhook(556)))
     stub_transient_failure runner, "webhooks show 555"
     runner.stub "webhooks show 556", stdout: envelope("id" => 556, "active" => false)
     runner.stub "webhooks update 556", stdout: envelope("id" => 556, "active" => true)
@@ -220,7 +270,7 @@ class WebhooksTest < Minitest::Test
 
   def test_reads_a_registrations_delivery_history
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => [ webhook_delivery ])
     webhooks = webhooks(runner)
     webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
@@ -231,7 +281,7 @@ class WebhooksTest < Minitest::Test
 
   def test_an_empty_delivery_history_is_read_as_empty
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555)
     webhooks = webhooks(runner)
     webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
@@ -243,7 +293,7 @@ class WebhooksTest < Minitest::Test
   # nothing in it, and let go of what it remembers about the real one.
   def test_reports_a_delivery_history_it_could_not_read_as_none_read
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     stub_transient_failure runner, "webhooks show 555"
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
@@ -255,7 +305,7 @@ class WebhooksTest < Minitest::Test
 
   def test_reports_a_delivery_history_that_is_not_a_list_as_none_read
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope("id" => 555, "recent_deliveries" => { "id" => 70001 })
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
@@ -270,7 +320,7 @@ class WebhooksTest < Minitest::Test
   # remembered about the real history — re-reporting its holes on the next read.
   def test_reports_an_answer_that_is_not_a_webhook_as_no_history_read
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     runner.stub "webhooks show 555", stdout: envelope([])
     logs = StringIO.new
     webhooks = webhooks(runner, logs)
@@ -282,7 +332,7 @@ class WebhooksTest < Minitest::Test
 
   def test_registrations_is_a_copy_restore_cannot_rewrite_under_a_caller
     runner = FakeCommandRunner.new
-    runner.stub "webhooks create", stdout: envelope("id" => 555)
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
     webhooks = webhooks(runner)
     webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
 
