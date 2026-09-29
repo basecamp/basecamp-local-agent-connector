@@ -617,6 +617,21 @@ class PipelineTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  # Nothing in the POST but the id and the project to look in is used, its
+  # locator included: a POST whose recording url is malformed, naming a real
+  # delivered id, is acted on as Basecamp delivered it, and only Basecamp's own
+  # locator ever reaches the CLI.
+  def test_the_webhook_route_never_uses_the_posts_locator
+    runner = corroborating_runner
+    malformed = sample_payload("recording" => sample_recording("url" => [], "app_url" => nil))
+
+    pipeline(runner, webhook: true, recorded_delivery: ->(*) { sample_payload }).process(malformed)
+
+    assert_equal 1, @output.string.lines.length
+    assert_equal [ [ "basecamp", "show", "https://3.basecamp.com/000/buckets/222/comments/456.json", "-j" ] ],
+      runner.commands_matching(/basecamp show/)
+  end
+
   def test_a_delivery_history_that_could_not_be_read_propagates_with_nothing_settled
     unreadable = ->(_event_id, _project_id) { raise BasecampAgentConnector::Basecamp::Client::TransientError, "no answer" }
     pipeline = pipeline(corroborating_runner, webhook: true, recorded_delivery: unreadable)
