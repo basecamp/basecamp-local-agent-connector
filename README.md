@@ -279,9 +279,9 @@ What `bin/connect` has in place, at a glance:
   mode, matched by email *and* Person id. Even when trust is broadened to a
   domain or project the agent belongs to, its own posts cannot re-trigger it.
 - **Assignments stay operator-only** — assigning the agent a card/todo is
-  higher-privilege (the assigner's identity is not corroborated), so broadened
-  modes apply to mentions only unless `--allow-assignments-from-authorized`
-  explicitly opts assignments in.
+  higher-privilege (it runs the agent on work somebody else may have written),
+  so broadened modes apply to mentions only unless
+  `--allow-assignments-from-authorized` explicitly opts assignments in.
 - **Mention gating** — the recording must contain a real Basecamp mention
   *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
   the agent's Person id encoded in the mention SGID. A mention typed into a
@@ -305,15 +305,28 @@ What `bin/connect` has in place, at a glance:
   fetch, never from a payload. Email-keyed trust modes (`allowlist`, `domain`)
   can't see through that redaction, so under them boosts effectively stay
   operator-only; `project` mode broadens boosts fine.
+- **Delivered by Basecamp** — the webhook route takes nothing from a POST but
+  the event id and the project to look in. It acts on the event as Basecamp
+  delivered it: the request body recorded for that id in the delivery history
+  of this run's webhook on the project. bc3 records each delivery before it
+  sends it, so a real POST finds itself there, and one anybody else makes
+  finds nothing, even carrying a real event id. Who acted (an assigner
+  included, and the agent when an agent acted on someone's behalf), that the
+  event happened, and where, are all Basecamp's. The history holds a webhook's
+  last 25 deliveries; an event pushed out of it by a burst before it is checked
+  is dropped, and the log says so.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
-  content, so both the author and the mention are re-checked against it. An
-  assignment corroborates the agent's live assignee state but keeps the POST's
-  claimed assigner — see the assignment caveat under [Trust modes](#trust-modes).
+  content, so both the author and the mention are re-checked against it. For an
+  assignment the agent must still be among the recording's assignees. And
+  since the agent is handed the recording as it is now, an event is dropped if
+  its history shows anyone but the event's actor changing its text since.
 - **Secret webhook path** — the server accepts only `POST /bc5/<secret>`, where
   `<secret>` is a fresh 128-bit random token generated per run; every other path
-  returns 404.
+  returns 404. Basecamp shows a project's webhook URLs to its members through
+  the API, so the path keeps strangers out, not project members: that is why a
+  POST must be one Basecamp delivered.
 - **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
   ingress is the Tailscale Funnel over HTTPS.
 - **Replay de-duplication** — events are de-duplicated by id within a run.
@@ -341,9 +354,8 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    domain, or the whole project membership — and for a **mention** the check is
    applied **twice**: once on the claimed webhook payload as a cheap pre-filter,
    and again on the corroborated event, so authorization binds to the author
-   Basecamp actually recorded, never to forgeable POST text. (An **assignment**
-   corroborates the agent's assignee state but not the assigner — see the
-   assignment caveat under [Trust modes](#trust-modes).)
+   Basecamp actually recorded, never to forgeable POST text. For an
+   **assignment** that is the assigner Basecamp delivered.
 2. **Targets the agent.** The event must reach the agent one of four ways:
    a real Basecamp mention *attachment* (`application/vnd.basecamp.mention`)
    naming it (not loose text that happens to contain the name); an assignment
@@ -356,13 +368,15 @@ can run commands. `bin/connect` emits an event only when **all** of these hold:
    the verifier finds it in a fresh fetch of the agent's own received-boosts
    feed — the feed files a boost under the person it was aimed at, so
    membership is the targeting fact.
-3. **Corroborated by Basecamp.** The recording is re-fetched from the Basecamp
-   API and confirmed. For a mention that means it exists **with the claimed
-   creator and the claimed mention** — so a forged POST cannot survive. For an
-   assignment it means the agent is really among the recording's current
-   assignees; the assigner's identity is not independently corroborated, so
-   there the secret URL path — a fresh 128-bit token per run — is the gate that
-   stops a forged operator-assignment, not corroboration.
+3. **Delivered and corroborated by Basecamp.** A webhook event is taken from
+   Basecamp's own record of its delivery to this run's webhook on the project,
+   never from the POST. The recording is then re-fetched and confirmed: for a
+   mention it exists **with the delivered creator and a real mention**, and for
+   an assignment the agent is still among its assignees. It is dropped if
+   anyone but the event's actor has changed its text since, and so is any
+   event on a repeating to-do or on a step of a to-do: Basecamp creates each
+   repetition, steps and assignees included, as the to-do's creator, with the
+   text as it stood, whoever wrote it.
 
 For a mention, the content acted on is the **authoritative copy fetched from
 Basecamp**, never the raw POST body.
@@ -424,26 +438,14 @@ must positively report `creator.client == false`; an absent or non-boolean flag
 is treated as untrusted, so a recording representation that omits it cannot slip
 a client author through.
 
-One limit of `project` mode is worth stating plainly, because it matters only
-against the forged-POST-with-leaked-secret-path threat (a normal Basecamp
-delivery is unaffected): **corroboration proves the recording exists with that
-author, not that it lives in a *watched* project.** The API re-fetch follows the
-URL in the payload, and the operator's CLI can read recordings beyond the
-watched projects. So `project` mode trusts any corroborated non-client author in
-*any* project the operator's account can see, not strictly the watched ones.
-Prefer `allowlist`/`domain` when you need the trust set pinned to specific
-people.
+`project` mode trusts the members of the *watched* projects: a webhook event
+is one Basecamp delivered to this run's webhook on a watched project, and its
+recording must be in one of them.
 
 **Assignments are operator-only in every mode** unless
-`--allow-assignments-from-authorized` opts the mode's authors in. An assignment
-is corroborated by the agent really being among the card's assignees — but the
-*assigner's* identity is **not** independently verifiable: the verifier confirms
-live assignee state and preserves the event's claimed creator. Against a forged
-POST on a leaked secret path, that means the "operator-only" guarantee for the
-assignment trigger rests on the secret path, not on corroboration, in a way the
-mention trigger does not. Bear that in mind before opting assignments in, and
-prefer the mention trigger when the author must be cryptographically pinned to
-the recording.
+`--allow-assignments-from-authorized` opts the mode's authors in. The assigner
+is the one Basecamp delivered, and the agent must still be among the card's
+assignees.
 
 ---
 

@@ -261,12 +261,28 @@ For each delivered event:
    asked about (the corroborating fetch failed transiently, even after the
    CLI client's retries) is forgotten the same way and, for a webhook,
    answered 503 so the redelivery actually comes.
-3. **Authoritative verification** (the real trust gate): re-fetch the recording
+3. **Delivered by Basecamp** (webhook route): a POST is unsigned and a
+   project's members can read its webhook URLs, so the route takes nothing from
+   it but the event id and the project to look in. The event acted on is the
+   request body Basecamp recorded for that id in the delivery history
+   (`recent_deliveries`, the last 25) of this run's webhook on that project;
+   bc3 records each delivery before sending it, so a genuine POST always finds
+   itself and nobody else's does. No delivery there: dropped. A history that
+   cannot be read: 503. The delivery reconciler's replays come out of that
+   history and are not looked up again. An event an agent performed on
+   someone's behalf (`performed_by`) is authorized as the agent.
+4. **Authoritative verification**: re-fetch the recording
    from Basecamp via the CLI (`basecamp show <recording.url|app_url>` /
-   `basecamp ... -j`) and confirm it **actually exists** with the claimed creator
-   and content. A forged POST (the funnel URL is public, Basecamp sends no
-   signature) cannot survive this — if Basecamp doesn't corroborate the event, it
-   is discarded. The payload's content field is never trusted directly; the
+   `basecamp ... -j`, with the CLI's response cache off) and confirm it
+   **actually exists** with the delivered creator and content, in a watched
+   project. It is refused if the recording's newest hundred history events
+   (`basecamp events <id> --limit 100`) show a change to its text after the
+   event by anyone but its actor (any `_changed` action but the few for
+   assignees, subscribers, column, due date, respondents, participants,
+   category and access), or do not include the event. An event on a repeating
+   to-do, or on a step that is not a card's, is refused: bc3 creates each
+   repetition, steps and assignees included, as the to-do's creator, copying
+   text it may not have written. The payload's content field is never trusted directly; the
    fetched content is authoritative. The mention match against the agent's
    Person id is also settled on that fetched content and stamped onto the
    authoritative event as `agent_mentioned`, which is what the emitted
@@ -285,7 +301,7 @@ For each delivered event:
    recording Basecamp still marks `drafted`: bc3 relays no event for a drafted
    recording (`Webhook.eligible_event?` — "don't leak drafts"), so a delivery
    naming one is a forgery, and a draft is visible to nobody but its author.
-4. **Emit** — print one NDJSON line to STDOUT with the verified event (see
+5. **Emit** — print one NDJSON line to STDOUT with the verified event (see
    format below). Non-matching / unverified events are dropped (logged to
    STDERR).
 
@@ -607,7 +623,7 @@ Coverage the suite must include:
 | Kind filter | `*_created`, `*_content_changed`, `*_active` and `*_assignment_changed` pass; other kinds dropped |
 | Draft publishing | a `*_active` event mentioning the agent emits exactly once; a recording Basecamp still marks `drafted` emits nothing |
 | Dedup | a repeated `event.id` is dropped; distinct ids pass |
-| Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected |
+| Verification | corroborated event (CLI returns matching recording) dispatches; forged event (CLI says not found / mismatched creator) is rejected; a webhook POST with no delivery in this run's webhook history is rejected, and a delivered one is acted on as delivered (its assigner and actor, not the POST's); an event edited since by someone else, performed by an agent on someone's behalf, outside the watched projects, or on a repeating to-do or a to-do's step is rejected |
 | Emitter | one well-formed NDJSON line per verified event |
 | Webhooks | registers one webhook per project; teardown deletes all, continuing past a single failure and reporting it |
 | Identity | expired token triggers a single `auth refresh`; still-failing exits with a clear message |
@@ -620,9 +636,14 @@ Coverage the suite must include:
 - **Forged POST is the real threat**, not just a wrong author. The funnel URL is
   public and Basecamp sends no signature, so anyone could POST a payload claiming
   `creator = <operator>`. The author filter alone cannot stop this.
-  **Mitigation: authoritative verification** — every event is re-fetched from
-  Basecamp and only acted on if Basecamp corroborates it (existence + creator +
-  content). A secret URL path is a cheap first gate on top.
+  **Mitigation: act only on what Basecamp delivered** — a webhook event is the
+  body Basecamp recorded delivering to this run's webhook, found by the POST's
+  id; nothing else in the POST is used, and no one but Basecamp can put a
+  delivery there. **Then authoritative verification** — the recording is
+  re-fetched and only acted on if Basecamp corroborates it (existence +
+  creator + content), nobody else has changed its text since the event, and it
+  is in a watched project. The secret URL path keeps out strangers only: a
+  project's members can read its webhook URLs through the API.
 - **Prompt injection** — payload text flows into an agent that can run commands.
   Two layers defend it: (1) only events authored by the **operator** (and
   @mentioning the agent) are acted on, and (2) the content is re-fetched from
@@ -669,10 +690,9 @@ Coverage the suite must include:
   `todo_assignment_changed` / `kanban_card_assignment_changed` /
   `kanban_step_assignment_changed` events (bc3 PR #12156). Actionable when
   authored by the operator **and** `details.added_person_ids` includes the agent
-  — corroborated by re-fetching the recording and confirming the agent is among
-  its current `assignees` (the recording has no "who assigned" field, so the
-  assigner identity rests on the operator-author check + the secret URL path,
-  as with mentions). To receive them, the default subscribed types now include
+  — the assigner is the one in Basecamp's own record of the delivery (the
+  recording has no "who assigned" field), and the re-fetched recording must
+  still list the agent among its current `assignees`. To receive them, the default subscribed types now include
   `Todo` and `Kanban::Step` (`Kanban::Card` already covered cards). The
   assignment is acknowledged by the same `On it!` boost as a mention (boosts
   work on todos and cards too); the dispatched agent then works the card/todo

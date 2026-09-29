@@ -5,9 +5,9 @@
 # domain the agent's email shares, a project it is a member of).
 #
 # Assignment events are higher-privilege (assigning the agent a card runs it
-# against that card, and the assigner's identity is not corroborated by the
-# verifier), so broadened modes apply to mentions only: assignments stay
-# operator-only unless `allow_assignments:` opts the mode's authors in.
+# against that card, on work somebody else may have written), so broadened
+# modes apply to mentions only: assignments stay operator-only unless
+# `allow_assignments:` opts the mode's authors in.
 #
 # The pipeline consults `authorizes?` twice: on the claimed webhook payload as
 # a cheap pre-filter, and again on the verified event so the decision binds to
