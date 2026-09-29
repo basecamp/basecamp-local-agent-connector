@@ -26,6 +26,27 @@ class WebhooksTest < Minitest::Test
     assert_equal [ 222 ], webhooks.project_ids
   end
 
+  # A project can be renamed while the connector runs, and the name the
+  # operator typed then resolves to nothing. Everything done to an established
+  # webhook goes by the project id Basecamp registered it on instead.
+  def test_an_established_webhook_is_reached_by_its_project_id_not_the_name_it_was_registered_under
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
+    runner.stub "webhooks show 555 --project 222", stdout: envelope("id" => 555, "active" => true,
+      "recent_deliveries" => [ webhook_delivery ])
+    runner.stub "--project BC5 Calendar", exit_status: 2, stdout: error_envelope("not_found", "Project not found")
+    runner.stub "webhooks delete 555 --project 222", exit_status: 0
+    webhooks = webhooks(runner)
+    webhooks.register_all(projects: [ "BC5 Calendar" ], url: hook_url, types: "Comment")
+
+    assert_equal sample_payload, webhooks.recorded_delivery(99001, 222)
+    assert_equal 1, webhooks.delivery_history(webhooks.registrations.first).length
+    assert_empty webhooks.restore(url: hook_url, types: "Comment")
+    webhooks.delete_all
+
+    assert_empty runner.commands_matching(/webhooks (show|update|delete) .*--project BC5 Calendar/)
+  end
+
   def test_a_history_basecamp_refuses_to_show_records_no_delivery
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope(registered_webhook(555))
@@ -196,7 +217,7 @@ class WebhooksTest < Minitest::Test
     restored = webhooks.restore(url: hook_url, types: "Comment")
 
     assert_equal [ 555 ], restored.map(&:id)
-    assert_equal [ [ "basecamp", "webhooks", "update", "555", "--project", "1", "--active", "-j" ] ],
+    assert_equal [ [ "basecamp", "webhooks", "update", "555", "--project", "222", "--active", "-j" ] ],
       runner.commands_matching(/webhooks update/)
     assert_match(/webhook 555 on project 1 was DEACTIVATED by Basecamp.*10 failed deliveries.*Reactivated it in place/, logs.string)
   end

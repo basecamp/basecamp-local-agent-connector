@@ -139,7 +139,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # that is a webhook and simply has no deliveries reads as empty. The next
   # check reads it again.
   def delivery_history(registration)
-    webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
+    webhook = @basecamp_cli.webhook(id: registration.id, project: project_of(registration))
 
     if !webhook.is_a?(Hash)
       unreadable_history registration, "Basecamp did not answer with a webhook"
@@ -158,7 +158,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
     # reading it as empty would answer a real delivery 200 as undelivered, so
     # it is no answer: the route defers with a 503 and Basecamp redelivers.
     def recent_deliveries(registration)
-      webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
+      webhook = @basecamp_cli.webhook(id: registration.id, project: project_of(registration))
       deliveries = webhook["recent_deliveries"] if webhook.is_a?(Hash)
 
       if webhook.is_a?(Hash) && (deliveries.nil? || deliveries.is_a?(Array))
@@ -245,7 +245,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
     end
 
     def check(registration)
-      webhook = @basecamp_cli.webhook(id: registration.id, project: registration.project)
+      webhook = @basecamp_cli.webhook(id: registration.id, project: project_of(registration))
       webhook["active"] ? :active : :inactive
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       if error.code == "not_found"
@@ -257,12 +257,19 @@ class BasecampAgentConnector::Basecamp::Webhooks
     end
 
     def reactivate(registration)
-      @basecamp_cli.activate_webhook(id: registration.id, project: registration.project)
+      @basecamp_cli.activate_webhook(id: registration.id, project: project_of(registration))
       log "#{deactivation_notice(registration)} Reactivated it in place."
       registration
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       log "#{deactivation_notice(registration)} Failed to reactivate it: #{error.message}; retrying on the next check."
       nil
+    end
+
+    # How the CLI is told which project an established webhook is on: the id
+    # Basecamp registered it on, which survives the project being renamed, and
+    # only failing that the project as the operator named it.
+    def project_of(registration)
+      registration.project_id || registration.project
     end
 
     def replacing?(project_id)
@@ -271,7 +278,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
 
     def reregister(registration, url:, types:)
       @replacing_lock.synchronize { @replacing << registration.project_id } if registration.project_id
-      webhook = create_with_retries(project: registration.project, url: url, types: types)
+      webhook = create_with_retries(project: project_of(registration), url: url, types: types)
       registration_of(registration.project, webhook).tap do |replacement|
         log "webhook #{registration.id} on project #{registration.project} is gone (deleted outside this connector); " \
           "re-registered it as #{replacement.id}"
@@ -290,7 +297,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
     end
 
     def delete(registration)
-      return true if @basecamp_cli.delete_webhook(id: registration.id, project: registration.project)
+      return true if @basecamp_cli.delete_webhook(id: registration.id, project: project_of(registration))
 
       log "failed to delete webhook #{registration.id} for project #{registration.project}"
       false
