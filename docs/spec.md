@@ -267,8 +267,10 @@ For each delivered event:
    request body Basecamp recorded for that id in the delivery history
    (`recent_deliveries`, the last 25) of this run's webhook on that project;
    bc3 records each delivery before sending it, so a genuine POST always finds
-   itself and nobody else's does. No delivery there: dropped. A history that
-   cannot be read: 503. The delivery reconciler's replays come out of that
+   itself. Anyone else can only point at an event Basecamp delivered here, and
+   what is acted on is Basecamp's record of it: a POST cannot introduce or
+   alter an event. No delivery there: dropped. A history that cannot be read,
+   or a lookup while the project's webhook is being re-registered: 503. The delivery reconciler's replays come out of that
    history and are not looked up again. An event an agent performed on
    someone's behalf (`performed_by`) is authorized as the agent.
 4. **Authoritative verification**: re-fetch the recording

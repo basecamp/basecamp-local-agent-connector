@@ -93,8 +93,9 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # project: the request body of the delivery of that event id in the
   # webhook's own history, or nil when there is none. bc3 records a delivery,
   # body and all, before it sends it, so a POST Basecamp really made is there
-  # when it lands, and a POST anybody else made is not, even one carrying a
-  # real event id. The history is the last 25 deliveries. A history Basecamp
+  # when it lands. Anybody else can only name an event Basecamp delivered here,
+  # and gets back Basecamp's record of it, not what they sent. The history is
+  # the last 25 deliveries. A history Basecamp
   # refuses to show holds nothing; one the CLI could not read at all
   # propagates, since that is no answer. So does not finding the delivery
   # while the project's webhook is being replaced, or while the registrations

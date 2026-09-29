@@ -309,8 +309,11 @@ What `bin/connect` has in place, at a glance:
   the event id and the project to look in. It acts on the event as Basecamp
   delivered it: the request body recorded for that id in the delivery history
   of this run's webhook on the project. bc3 records each delivery before it
-  sends it, so a real POST finds itself there, and one anybody else makes
-  finds nothing, even carrying a real event id. Who acted (an assigner
+  sends it, so a real POST always finds itself there. Anyone who can read the
+  URL can still POST, but only to point at an event Basecamp delivered here:
+  what is acted on is Basecamp's own record of it, so a POST cannot introduce
+  an event or alter one, and pointing again at one already handled is a
+  duplicate (see API corroboration for one that was not). Who acted (an assigner
   included, and the agent when an agent acted on someone's behalf), that the
   event happened, and where, are all Basecamp's. The history holds a webhook's
   last 25 deliveries; an event pushed out of it by a burst before it is checked
@@ -321,12 +324,14 @@ What `bin/connect` has in place, at a glance:
   content, so both the author and the mention are re-checked against it. For an
   assignment the agent must still be among the recording's assignees. And
   since the agent is handed the recording as it is now, an event is dropped if
-  its history shows anyone but the event's actor changing its text since.
+  its history shows anyone but the event's actor changing its text since, or,
+  for an assignment, its assignees.
 - **Secret webhook path** — the server accepts only `POST /bc5/<secret>`, where
   `<secret>` is a fresh 128-bit random token generated per run; every other path
   returns 404. Basecamp shows a project's webhook URLs to its members through
   the API, so the path keeps strangers out, not project members: that is why a
-  POST must be one Basecamp delivered.
+  POST can only point at an event Basecamp delivered, and nothing else in it is
+  used.
 - **Localhost binding** — WEBrick listens only on `127.0.0.1`; the sole public
   ingress is the Tailscale Funnel over HTTPS.
 - **Replay de-duplication** — events are de-duplicated by id within a run.

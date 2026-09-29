@@ -6,10 +6,12 @@ class BasecampAgentConnector::Basecamp::Pipeline
   # delivered it, the body `recorded_delivery` finds for that id in the
   # delivery history of this run's webhook on the project (see
   # Webhooks#recorded_delivery). bc3 records a delivery before it sends it, so
-  # every real POST finds itself there, and one anybody else makes finds
-  # nothing, whatever real event id it carries. That settles who acted (an
-  # assigner included), that the event happened and was delivered here, and
-  # in which project. The delivery reconciler's replays come out of that
+  # every real POST finds itself there. Anybody else can only point at an
+  # event Basecamp delivered here, and what is acted on is Basecamp's record of
+  # it, so a POST cannot introduce an event or alter one. That settles who
+  # acted (an assigner included), that the event happened and was delivered
+  # here, and in which project; pointing again at one already handled is a
+  # duplicate. The delivery reconciler's replays come out of that
   # history already, and say so (`attested: true`). The recording the event
   # names must also be in one of `watched_projects`, the projects this run's
   # webhooks are registered on.
