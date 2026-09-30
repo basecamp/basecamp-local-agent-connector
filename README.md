@@ -55,6 +55,7 @@ You need three things in place:
    local profile authenticated **as that agent user**:
 
    ```bash
+   basecamp profile create clawdito         # the profile must exist before you can log in to it
    basecamp auth login --profile clawdito   # log in as the Clawdito account
    basecamp me --profile clawdito           # verify it's Clawdito, not you
    ```
@@ -66,9 +67,12 @@ You need three things in place:
 3. **The skill** — install it into Claude Code:
 
    ```bash
-   npx skills add basecamp/basecamp-local-agent-connector       # this project only
-   npx skills add basecamp/basecamp-local-agent-connector -g    # user-level, all projects
+   npx skills add basecamp/basecamp-local-agent-connector -g -a claude-code
    ```
+
+   Install it user-level (`-g`) so it is available in whichever repo you start
+   Claude from; a project-level install lands in the current directory only.
+   Start a new Claude session afterwards so it picks the skill up.
 
    (Or just run Claude Code from a clone of this repo — the skill is
    auto-discovered via `.claude/skills`.)
