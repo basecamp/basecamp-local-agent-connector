@@ -179,6 +179,7 @@ bin/connect @AGENT --project <project>... [--operator <profile>] [--types <types
 
 1. **Resolve agent + operator** — validate the agent name maps to a usable local
    profile (`basecamp me --profile <agent>`); if not, exit with guidance to run
+   `basecamp profile create <agent>` (when the profile does not exist yet) and
    `basecamp auth login --profile <agent>`. Resolve the operator identity
    (default profile, or `--operator`). If a token is expired, attempt `basecamp
    auth refresh` once before failing (no `login` attempted automatically). Exit

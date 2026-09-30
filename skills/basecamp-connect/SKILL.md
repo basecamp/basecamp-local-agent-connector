@@ -223,6 +223,7 @@ If it's missing or authed as the wrong user, set it up (interactive login as the
 agent/bot account):
 
 ```bash
+basecamp profile create clawdito         # only if the profile does not exist yet
 basecamp auth login --profile clawdito
 ```
 

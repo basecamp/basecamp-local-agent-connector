@@ -483,9 +483,9 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 **What it does, in order:**
 
 1. **Resolve agent & operator.** Validates the agent name maps to a usable local
-   profile (`basecamp me --profile <agent>`); if not, it aborts with
-   `Run basecamp auth login --profile <agent>…`. Resolves the operator identity
-   (refreshing an expired token once). Warns if agent == operator. With
+   profile (`basecamp me --profile <agent>`); if not, it aborts with `Create it
+   with basecamp profile create <agent>… then run basecamp auth login --profile
+   <agent>…`. Resolves the operator identity (refreshing an expired token once). Warns if agent == operator. With
    `--repo`, also resolves the operator's GitHub login (`gh api user`, or
    `--gh-operator`) — the author of the pull requests whose reviews are
    emitted, the only reviewer whose approvals are emitted, and the login whose all-🤖

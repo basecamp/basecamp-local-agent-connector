@@ -316,7 +316,8 @@ class BasecampAgentConnector::Connector
       BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.agent)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "No usable local Basecamp profile '#{@options.agent}'.\n" \
-        "Run `basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
+        "Create it with `basecamp profile create #{@options.agent}` if it does not exist yet, then run " \
+        "`basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
     end
 
     def resolve_operator
