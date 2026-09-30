@@ -41,12 +41,12 @@ You need three things in place:
    ```bash
    git clone https://github.com/basecamp/basecamp-local-agent-connector
    cd basecamp-local-agent-connector
-   bin/setup        # bundle install + checks for the `basecamp` and `tailscale` CLIs
+   bin/setup        # mise install (if you use mise) + bundle install + checks for the `basecamp` and `tailscale` CLIs
    ```
 
    You also need [Tailscale](https://tailscale.com) with **Funnel enabled** for
    your tailnet (Basecamp has to reach your machine over the public internet) and
-   Ruby 3.4+.
+   Ruby 3.4+ (`mise.toml` pins it for [mise](https://mise.jdx.dev) users).
 
 2. **An agent user + its local profile.** The agent is a *real Basecamp user*
    (e.g. a bot account named “Clawdito”) that you can @mention. The connector
