@@ -442,5 +442,28 @@ class BasecampClientTest < Minitest::Test
 
     assert_equal 91001, line.fetch("id")
     assert_includes runner.commands.first.join(" "), "chat line https://example.org/lines/91001.json"
+    refute_includes runner.commands.first, "--room"
+  end
+
+  # A project with two Campfires has no default room, and CLI releases through
+  # 0.11.0 ignore the room in the URL, so the room rides along as --room.
+  def test_chat_line_names_the_room_its_url_names
+    [ chat_line.fetch("url"), chat_line.fetch("app_url") ].each do |url|
+      runner = FakeCommandRunner.new
+      runner.stub "chat line ", stdout: envelope(chat_line)
+
+      build_cli(runner).chat_line(url)
+
+      assert_includes runner.commands.first.join(" "), "chat line #{url} --room 333"
+    end
+  end
+
+  def test_chat_line_by_bare_id_names_no_room
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", stdout: envelope(chat_line)
+
+    build_cli(runner).chat_line("91001")
+
+    refute_includes runner.commands.first, "--room"
   end
 end

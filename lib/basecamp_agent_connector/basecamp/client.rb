@@ -123,8 +123,12 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s)
   end
 
+  # A chat-line URL names the room that owns the line, but CLI releases
+  # through 0.11.0 read only the line and project from it and ask the project
+  # for its default room — which a project with two Campfires doesn't have, so
+  # the line is refused as "Multiple chat rooms found". Name the room outright.
   def chat_line(url_or_id)
-    json "chat", "line", url_or_id
+    json "chat", "line", url_or_id, *room_flag(url_or_id)
   end
 
   def subscription(url_or_id)
@@ -265,6 +269,14 @@ class BasecampAgentConnector::Basecamp::Client
 
     def profile_flag(profile)
       profile ? [ "--profile", profile ] : []
+    end
+
+    # The room in a chat-line URL: `/chats/{room}/lines/{line}` (the API's and
+    # the web's) or `/chats/{room}@{line}` (the web's other spelling). A bare
+    # line id names no room.
+    def room_flag(url_or_id)
+      room = url_or_id.to_s[%r{/chats/(\d+)(?:/lines/|@)\d+}, 1]
+      room ? [ "--room", room ] : []
     end
 
     def run(*arguments)
