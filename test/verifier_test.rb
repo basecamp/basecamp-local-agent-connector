@@ -253,9 +253,91 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands
   end
 
+  # A ping corroborates on three things, all of them Basecamp's word: the
+  # re-fetched line's author, the bucket it says it lives in, and who else is
+  # in that room. Every call runs as the agent, because a Circle is served to
+  # nobody else.
+  def test_verifies_a_ping_line_in_a_room_private_to_the_agent_and_its_operator
+    runner = ping_runner
+    verified = ping_verifier(runner).verify(event(ping_line_payload))
+
+    refute_nil verified
+    assert_predicate verified, :pinged?
+    refute_predicate verified, :mentioned?
+    assert_includes runner.commands_matching(%r{lines/92001\.json}).first.join(" "), "--profile clawdito"
+    assert_includes runner.commands_matching(%r{recordings/666/subscription\.json}).first.join(" "), "--profile clawdito"
+  end
+
+  # A third person makes it someone else's conversation too, and the reply the
+  # agent posts lands in front of them.
+  def test_refuses_a_ping_in_a_room_with_a_third_participant
+    runner = ping_runner(subscribers: [ 100, 200, 400 ])
+
+    refute_predicate ping_verifier(runner).verify(event(ping_line_payload)), :pinged?
+  end
+
+  # A room the agent is somehow not in is not a ping at the agent.
+  def test_refuses_a_ping_the_agent_is_not_a_participant_in
+    runner = ping_runner(subscribers: [ 100, 400 ])
+
+    refute_predicate ping_verifier(runner).verify(event(ping_line_payload)), :pinged?
+  end
+
+  # The kind said ping; the re-fetch says project Campfire. Basecamp wins, and
+  # the line goes back to owing the mention every Campfire line owes.
+  def test_a_line_the_refetch_puts_in_a_campfire_is_not_corroborated_as_a_ping
+    runner = ping_runner(line: ping_line("bucket" => { "id" => 222, "name" => "BC5 Calendar", "type" => "Project" }))
+
+    assert_nil ping_verifier(runner).verify(event(ping_line_payload))
+  end
+
+  def test_drops_a_ping_line_deleted_between_poll_and_dispatch
+    runner = FakeCommandRunner.new
+    runner.stub "api get https://3.basecamp.com/000/buckets/555/chats/666/lines/92001.json",       exit_status: 2, stdout: error_envelope("not_found")
+
+    assert_nil ping_verifier(runner).verify(event(ping_line_payload))
+  end
+
+  # A subscription lookup the CLI could not complete says nothing about the
+  # room, so it propagates for the poller to retry rather than settling as
+  # "not a ping".
+  def test_a_transient_subscription_failure_propagates
+    runner = FakeCommandRunner.new
+    runner.stub "api get https://3.basecamp.com/000/buckets/555/chats/666/lines/92001.json", stdout: envelope(ping_line)
+    stub_transient_failure runner, "api get /buckets/555/recordings/666/subscription.json"
+
+    assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) do
+      ping_verifier(runner).verify(event(ping_line_payload))
+    end
+  end
+
+  # Without an operator there is nobody the room could be private *with*, so
+  # nothing is stamped — and the room is not even asked about.
+  def test_refuses_a_ping_when_no_operator_is_known
+    runner = ping_runner
+    verifier = BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)
+
+    refute_predicate verifier.verify(event(ping_line_payload)), :pinged?
+    assert_empty runner.commands_matching(%r{subscription\.json})
+  end
+
   private
     def verifier(runner)
       BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity)
+    end
+
+    # The verifier the connector builds: it knows the operator, which is what
+    # a ping's privacy check is measured against.
+    def ping_verifier(runner)
+      BasecampAgentConnector::Basecamp::Verifier.new(basecamp_cli: build_cli(runner), agent: agent_identity,
+        operator: operator_identity)
+    end
+
+    def ping_runner(line: ping_line, subscribers: [ 100, 200 ])
+      runner = FakeCommandRunner.new
+      runner.stub "api get https://3.basecamp.com/000/buckets/555/chats/666/lines/92001.json", stdout: envelope(line)
+      runner.stub "api get /buckets/555/recordings/666/subscription.json", stdout: subscribers_envelope(*subscribers)
+      runner
     end
 
     def event(payload)

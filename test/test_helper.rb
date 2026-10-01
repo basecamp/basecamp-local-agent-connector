@@ -218,6 +218,63 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Event.boost_payload(boost)
   end
 
+  # A line in a Ping, as `basecamp chat messages` returns it for a Circle: the
+  # same Chat::Lines::* shape as a Campfire line, with the Circle as `bucket`
+  # and the Ping's transcript as `parent`. No mention in it — that is the
+  # point of a ping. The PingPoller synthesizes an envelope for it with
+  # Event.chat_line_payload, exactly as the ChatPoller does.
+  def ping_line(overrides = {})
+    chat_line(
+      "id" => 92001,
+      "title" => "Ping",
+      "app_url" => "https://3.basecamp.com/000/circles/555@92001",
+      "url" => "https://3.basecamp.com/000/buckets/555/chats/666/lines/92001.json",
+      "content" => "<div>can you pick up the date picker bug?</div>",
+      "parent" => { "id" => 666, "type" => "Chat::Transcript", "title" => "Ping",
+        "app_url" => "https://3.basecamp.com/000/circles/555" },
+      "bucket" => { "id" => 555, "name" => "Clawdito + Operator", "type" => "Circle" }
+    ).merge(overrides)
+  end
+
+  def ping_line_payload(line = ping_line)
+    BasecampAgentConnector::Basecamp::Event.chat_line_payload(line)
+  end
+
+  # A row of `/my/readings.json`. A ping's `section` is "pings", and its
+  # `subscription_url` is the only field carrying the Circle id and the
+  # transcript id together — which is why discovery parses that rather than
+  # the `app_url`, which names the Circle alone.
+  def ping_notification(overrides = {})
+    {
+      "id" => 4_977_248_667,
+      "section" => "pings",
+      "type" => "Chat",
+      "title" => "Ping",
+      "bucket_name" => "Clawdito + Operator",
+      "created_at" => "2026-06-01T09:00:00Z",
+      "updated_at" => "2026-06-28T12:00:00Z",
+      "app_url" => "https://3.basecamp.com/000/circles/555",
+      "subscription_url" => "https://3.basecampapi.com/000/buckets/555/recordings/666/subscription.json"
+    }.merge(overrides)
+  end
+
+  # A row for something that is not a ping, so the poller has something to
+  # skip: same feed, different section.
+  def inbox_notification(overrides = {})
+    ping_notification(
+      "id" => 4_977_248_700,
+      "section" => "inbox",
+      "type" => "Comment",
+      "title" => "Re: a card",
+      "app_url" => "https://3.basecamp.com/000/buckets/222/comments/456",
+      "subscription_url" => "https://3.basecampapi.com/000/buckets/222/recordings/456/subscription.json"
+    ).merge(overrides)
+  end
+
+  def readings_envelope(unreads: [], reads: [])
+    envelope("unreads" => unreads, "reads" => reads, "memories" => [], "bubble_ups" => [])
+  end
+
   # An entry from a webhook's `recent_deliveries`, as `basecamp webhooks show`
   # returns it: the exact request body Basecamp POSTed, plus the response it
   # got back. `code: 0` with no headers is bc3's record of a delivery whose
@@ -287,10 +344,10 @@ module PayloadHelpers
 
   # A run the registry read as no longer running: what a startup's orphan
   # sweep is handed, and the only record of which webhooks were that run's.
-  def dead_run(projects: [], repos: [], paths: [ "/bc5/dead" ], pid: 4_194_303)
+  def dead_run(projects: [], repos: [], paths: [ "/bc5/dead" ], pid: 4_194_303, boosts: true, pings: true)
     BasecampAgentConnector::RunRegistry::Run.from_json(
       "pid" => pid, "started_at" => "2026-09-01T00:00:00Z", "agent" => "clawdito", "operator" => "jorge",
-      "projects" => projects, "repos" => repos, "paths" => paths)
+      "projects" => projects, "repos" => repos, "paths" => paths, "boosts" => boosts, "pings" => pings)
   end
 
   def build_github_cli(command_runner)

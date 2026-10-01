@@ -46,6 +46,22 @@ class BasecampAgentConnector::Basecamp::Event
   # payload arriving on the webhook route is by definition not from Basecamp.
   BOOST_KIND = "boost_created"
 
+  # A fifth way to trigger the agent: someone writes in a Ping — the
+  # direct-message space bc3 models as a `Circle` bucket holding one
+  # `Chat::Transcript`. A ping needs no @mention to be aimed at the agent;
+  # being in the room is the addressing, which is how bc3's own agent inbox
+  # files it (`reason: "pinged"` — "a participant in the Circle (Ping) the
+  # line was posted to"). That inbox is agents-only and answers 403 to a
+  # User-backed agent like this connector's, so ping events exist only as
+  # events the PingPoller synthesizes from the agent's notification feed and
+  # the Circle's own lines endpoint.
+  #
+  # A ping line *is* a chat line — same type, same endpoints — so it needs no
+  # kind of its own. What tells the two apart is the bucket the line lives
+  # in, and that is read off the recording rather than off the kind: the kind
+  # is what a payload claimed, the bucket is what Basecamp recorded.
+  CIRCLE_BUCKET_TYPE = "Circle"
+
   MENTION_CONTENT_TYPE = "application/vnd.basecamp.mention"
 
   # The webhook delivers a mention as an unexpanded attachment carrying only an
@@ -170,6 +186,30 @@ class BasecampAgentConnector::Basecamp::Event
     kind.start_with?(CHAT_KIND_PREFIX)
   end
 
+  # A chat line whose bucket is a Circle: a ping. Both halves matter. The kind
+  # keeps a forged non-chat payload from claiming ping targeting, and the
+  # bucket keeps a Campfire line from claiming it — Campfire membership is a
+  # whole project, not a direct message, so a Campfire line still owes the
+  # mention every other chat line owes.
+  def ping?
+    chat_kind? && bucket_type == CIRCLE_BUCKET_TYPE
+  end
+
+  def bucket_type
+    recording.dig("bucket", "type")
+  end
+
+  def bucket_id
+    recording.dig("bucket", "id")
+  end
+
+  # A chat line's transcript. It addresses the conversation everywhere the
+  # bucket alone cannot — the lines endpoint, and the subscription read that
+  # decides who else is in a Ping.
+  def transcript_id
+    recording.dig("parent", "id")
+  end
+
   def subscribable_comment?
     kind == COMMENT_CREATED_KIND
   end
@@ -223,12 +263,24 @@ class BasecampAgentConnector::Basecamp::Event
     @payload["agent_boosted"] == true
   end
 
+  # True only on an authoritative event the Verifier stamped after re-reading
+  # the Circle's subscription as the agent and finding the room private to the
+  # agent and its operator. Reads nothing from a forgeable payload.
+  def pinged?
+    @payload["agent_pinged"] == true
+  end
+
   # The top-level keys mirror the webhook envelope; `trigger` is the one
   # connector-owned key, carrying the Verifier's verdicts on why this event
   # targets the agent. Without it a watcher can tell a mention from a
   # followed-thread comment only by decoding the mention markup itself against
   # the agent's Person id. Assignments and boosts already announce themselves
-  # by `kind`, so these two are the verdicts a watcher cannot derive.
+  # by `kind`, so these are the verdicts a watcher cannot derive.
+  #
+  # `pinged` is the starkest of them: a ping line carries *nothing* saying the
+  # agent was addressed — no mention markup to decode, just a line in a room —
+  # and its kind is an ordinary chat kind, so without this stamp a watcher
+  # would read a direct message as any other Campfire chatter.
   def to_emitted_hash
     {
       "event_id" => id,
@@ -237,7 +289,7 @@ class BasecampAgentConnector::Basecamp::Event
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
-      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed? }
+      "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed?, "pinged" => pinged? }
     }
   end
 

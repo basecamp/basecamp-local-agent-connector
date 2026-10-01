@@ -87,7 +87,7 @@ class DeliveryReconcilerTest < Minitest::Test
     reconciler(runner).reconcile
 
     assert_equal [ 99001 ], emitted_event_ids
-    assert_equal({ "mentioned" => true, "subscribed" => false }, JSON.parse(@output.string)["trigger"])
+    assert_equal({ "mentioned" => true, "subscribed" => false, "pinged" => false }, JSON.parse(@output.string)["trigger"])
   end
 
   def test_names_the_recovered_delivery_on_stderr

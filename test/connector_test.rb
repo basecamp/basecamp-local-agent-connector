@@ -71,6 +71,9 @@ class ConnectorTest < Minitest::Test
     assert_equal 60, parse("@clawdito", "--project", "A").boost_poll
     assert_equal 120, parse("@clawdito", "--project", "A", "--boost-poll", "120").boost_poll
     assert_nil parse("@clawdito", "--project", "A", "--no-boosts").boost_poll
+    assert_equal 30, parse("@clawdito", "--project", "A").ping_poll
+    assert_equal 120, parse("@clawdito", "--project", "A", "--ping-poll", "120").ping_poll
+    assert_nil parse("@clawdito", "--project", "A", "--no-pings").ping_poll
   end
 
   def test_refuses_a_non_positive_boost_poll_interval
@@ -245,6 +248,7 @@ class ConnectorTest < Minitest::Test
     runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "api get /my/readings.json", stdout: envelope({})
     runner.stub "chat list", stdout: "[]"
 
     _out, err = start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner
@@ -284,6 +288,7 @@ class ConnectorTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "api get /my/readings.json", stdout: envelope({})
 
     _out, err = with_env("BASECAMP_PROFILE" => "clawdito") do
       start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner, expect_exit: true
@@ -300,6 +305,7 @@ class ConnectorTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 28142355 } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "api get /my/readings.json", stdout: envelope({})
 
     _out, err = with_env("BASECAMP_PROFILE" => nil) do
       start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "clawdito" ], runner, expect_exit: true
@@ -316,10 +322,11 @@ class ConnectorTest < Minitest::Test
     with_registry do |registry, directory|
       orphan = File.join(directory, "4194303.json")
       File.write orphan, JSON.generate(pid: 4_194_303, started_at: "2026-09-01T00:00:00Z", agent: "clawdito", operator: "jorge",
-        projects: [ "123" ], repos: [], paths: [ "/bc5/orphan" ], boosts: true)
+        projects: [ "123" ], repos: [], paths: [ "/bc5/orphan" ], boosts: true, pings: true)
       runner = FakeCommandRunner.new
       runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com" } })
       runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "api get /my/readings.json", stdout: envelope({})
 
       with_env("BASECAMP_PROFILE" => nil) do
         start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "clawdito" ], runner, registry: registry, expect_exit: true
@@ -334,6 +341,7 @@ class ConnectorTest < Minitest::Test
     runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "jorge@example.com", "first_name" => "Jorge" } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
+    runner.stub "api get /my/readings.json", stdout: envelope({})
     runner.stub "chat list", stdout: "[]"
 
     start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--operator", "jorge", "--port", "4567" ], runner
@@ -352,7 +360,7 @@ class ConnectorTest < Minitest::Test
   # Basecamp delivers every event to both and the agent answers twice.
   def test_refuses_to_start_beside_a_live_run_on_the_same_agent_and_project
     with_registry do |registry|
-      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/live" ], boosts: true)
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [ "/bc5/live" ], boosts: true, pings: true)
       connector = connector(registry, "@clawdito", "--project", "Queenbee")
 
       error = assert_raises SystemExit do
@@ -365,7 +373,7 @@ class ConnectorTest < Minitest::Test
 
   def test_allow_duplicate_starts_anyway
     with_registry do |registry|
-      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true, pings: true)
       connector = connector(registry, "@clawdito", "--project", "Queenbee", "--allow-duplicate")
 
       connector.send(:reserve_run)
@@ -374,7 +382,7 @@ class ConnectorTest < Minitest::Test
 
   def test_a_live_run_on_another_agent_is_not_a_duplicate
     with_registry do |registry|
-      registry.record(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+      registry.record(agent: "chef", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true, pings: true)
 
       connector(registry, "@clawdito", "--project", "Queenbee").send(:reserve_run)
     end
@@ -408,7 +416,7 @@ class ConnectorTest < Minitest::Test
   # so both runs would dispatch every boost.
   def test_warns_when_the_same_agent_runs_elsewhere_with_boosts_on
     with_registry do |registry|
-      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true, pings: true)
 
       warnings = capture_stderr do
         connector(registry, "@clawdito", "--project", "BC5.1").send(:reserve_run)
@@ -423,7 +431,7 @@ class ConnectorTest < Minitest::Test
   # agent" and shares no per-agent feed with it.
   def test_does_not_warn_about_an_unrelated_github_only_run
     with_registry do |registry|
-      registry.record(agent: nil, operator: "jorge", projects: [], repos: [ "acme/b" ], paths: [ "/gh/live" ], boosts: false)
+      registry.record(agent: nil, operator: "jorge", projects: [], repos: [ "acme/b" ], paths: [ "/gh/live" ], boosts: false, pings: true)
 
       warnings = capture_stderr do
         connector(registry, "--repo", "acme/a").send(:reserve_run)
@@ -453,7 +461,7 @@ class ConnectorTest < Minitest::Test
   def test_status_names_the_paths_a_live_run_owns
     with_registry do |registry|
       registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [ "basecamp/bc3" ],
-        paths: [ "/bc5/abc", "/gh/def" ], boosts: false)
+        paths: [ "/bc5/abc", "/gh/def" ], boosts: false, pings: true)
 
       output = capture_stdout { BasecampAgentConnector::Connector.print_status(registry: registry) }
 
@@ -567,7 +575,7 @@ class ConnectorTest < Minitest::Test
 
   def test_status_does_not_report_a_recorded_run_as_unrecorded
     with_registry do |registry|
-      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true)
+      registry.record(agent: "clawdito", operator: "jorge", projects: [ "Queenbee" ], repos: [], paths: [], boosts: true, pings: true)
 
       output = capture_stdout do
         BasecampAgentConnector::Connector.print_status(registry: registry, command_runner: processes(Process.pid))
@@ -587,7 +595,7 @@ class ConnectorTest < Minitest::Test
     def write_dead_run(directory, projects: [ "Queenbee" ], repos: [])
       File.write File.join(directory, "4194303.json"), JSON.generate(
         pid: 4_194_303, started_at: "2026-09-01T00:00:00Z", agent: "clawdito", operator: "jorge",
-        projects: projects, repos: repos, paths: [ "/bc5/orphan" ], boosts: true)
+        projects: projects, repos: repos, paths: [ "/bc5/orphan" ], boosts: true, pings: true)
     end
 
     def connector(registry, *arguments)

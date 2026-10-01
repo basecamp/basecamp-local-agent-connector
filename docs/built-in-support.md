@@ -26,12 +26,12 @@ Every mechanism in the connector maps to a gap in Basecamp:
 | # | Limitation | Root cause in bc3 |
 |---|-----------|-------------------|
 | 1 | **Per-project watch lists** — one webhook registered per project | Webhooks are strictly per-bucket; no account-level subscription exists |
-| 2 | **Chat is polled** — Campfire mentions only reach the agent because the connector polls each watched project's chat lines | Chat events are hard-excluded from webhooks ("will have its own API" — it never came) |
+| 2 | **Chat is polled** — Campfire mentions only reach the agent because the connector polls each watched project's chat lines, and a **Ping** needs a second poller again: its Circle is not a project, so there is nothing to register a webhook against even setting the chat exclusion aside | Chat events are hard-excluded from webhooks ("will have its own API" — it never came); webhooks are per-bucket and a Circle is not a project |
 | 3 | **Agent is a full human user account** — login, Launchpad identity, seat | The existing bot type (`Integration`) can't be mentioned, can't receive notifications, can't read anything, can't use OAuth |
 | 4 | **Public inbound endpoint** — Tailscale Funnel publishes the laptop | Webhooks push to a URL; nothing lets a consumer connect *out* and receive events |
 | 5 | **Forgeable deliveries** — every event re-fetched and corroborated | Webhook deliveries carry no signature |
 | 6 | **Manual lifecycle, orphan risk** — teardown required; SIGKILL leaves stale webhooks and a live funnel; silent deactivation after 10 failures | Webhooks are durable registrations with no lease, TTL, or self-expiry |
-| 7 | **No conversation** — a plain reply to the agent's question never reaches it | Mentions already auto-subscribe the mentionee, and subscribers are notified of every comment — but no machine consumer can read a person's notification stream (the received-boosts report is the one API-readable slice, which is what makes the boost trigger possible — by polling) |
+| 7 | **No conversation** — a plain reply to the agent's question never reaches it | Mentions already auto-subscribe the mentionee, and subscribers are notified of every comment — but nothing hands a machine consumer that stream *as events*. Two API-readable slices of it exist, and each is what makes a trigger possible by polling: the received-boosts report (`/my/boosts.json`) behind the boost trigger, and the notification inbox (`/my/readings.json`) behind the ping trigger, whose `pings` rows name the Circles that have spoken to the agent. Both are rollups meant for a sidebar, not a delivery queue — a ping row is one record per *conversation*, re-marked unread as lines arrive, so it can say which rooms exist and nothing more |
 | 8 | **Client-side filtering of a project firehose** — operator and mention checks happen on the laptop | Webhooks filter by recording type only, not addressee or author |
 | 9 | **No structural events** — card-moved-to-column / todo-added means client-side diffing | Those events exist internally but aren't subscribable per-container |
 | 10 | **Two id spaces joined by email** — account Person id vs. global identity id | No stable common key surfaced in both places |
@@ -71,7 +71,10 @@ What an Agent person **is**:
 - **Reachable and subscribable** — a valid notification recipient and thread
   subscriber. This is what powers conversation.
 - **Assignable** — a valid assignee for todos and cards, and a valid
-  participant in pings and Campfires.
+  participant in pings and Campfires. (An agent can already be *added* to a
+  Ping today, since it is a full user account — which is what the ping trigger
+  polls. What it cannot be is a first-class participant that Basecamp
+  addresses as an agent.)
 - **Attributable** — its actions are authored by it, with a bot-style avatar
   and an "agent" badge so nobody mistakes it for a human.
 - **Owned** — it belongs to its operator(s); admins manage agents in Adminland.
@@ -108,6 +111,12 @@ Everything is addressed to the agent; the server filters:
 1. **Mentions** — any recording in any project the agent can access,
    *including chat lines and pings*. Chat's webhook exclusion is irrelevant:
    this rides the mention/notification path, and volume is inherently bounded.
+   Note that bc3's own agent inbox already models the ping case exactly right
+   — `GET /inbox.json` serves a `pinged` reason, "a participant in the Circle
+   (Ping) the line was posted to" — but it is agents-only and answers `403` to
+   a User-backed agent like this connector's. The ping trigger exists because
+   of that gap, and should be retired into this the day an agent here is a
+   real `Agent` person.
 2. **Thread replies without re-mention.** Basecamp already does the hard part:
    a mention auto-subscribes the mentionee, and every new comment notifies
    subscribers. Once you mention the agent (or it comments), it's in the
@@ -222,7 +231,7 @@ reply excludes itself from the next round of recipients.
 | Today | With Agent + Channel |
 |-------|----------------------|
 | `--project` watch lists, one webhook per project | Account-wide, addressed delivery; zero per-project configuration |
-| No chat | Chat mentions and ping rooms delivered like everything else |
+| No chat webhooks; Campfires and Pings each polled on their own feed | Chat mentions and ping rooms delivered like everything else |
 | Fake human account with a seat and a login | `Agent` personable: no seat, no login, one token, one id |
 | Tailscale Funnel / public endpoint | Agent connects out; no inbound surface at all |
 | Unsigned deliveries + corroboration re-fetch | Authenticated connection; deliveries authentic by construction |
