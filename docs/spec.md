@@ -246,9 +246,13 @@ For each delivered event:
    - `kind` is a `*_created`, `*_content_changed`, `*_active` or
      `*_assignment_changed` event (edits that add the mention count; `*_active`
      is a draft being published — see below).
-   - `creator.email_address` matches the **operator** (case-insensitive). Email,
-     not id — a webhook's `creator.id` is an account-scoped Person id while
-     `basecamp me` returns a global identity id; the email bridges them.
+   - The creator is **authorized**: the operator (by email or account Person id),
+     a named `--allow` operator (by email), or a participant under
+     `--allow-domain` / `--allow-project` — never the agent. A participant's
+     assignment or boost is not authorized (see
+     [Operators and participants](../README.md#operators-and-participants)).
+     The same check runs again on the verified event, and that run decides
+     the emitted `role`.
    - The event **targets the agent** — its content `@mentions` the agent (a
      mention attachment carrying the person's SGID, not literal `@name` text), or
      it assigns the agent, or it is a `comment_created` (which may target the
@@ -630,10 +634,13 @@ Coverage the suite must include:
   Basecamp and only acted on if Basecamp corroborates it (existence + creator +
   content). A secret URL path is a cheap first gate on top.
 - **Prompt injection** — payload text flows into an agent that can run commands.
-  Two layers defend it: (1) only events authored by the **operator** (and
-  @mentioning the agent) are acted on, and (2) the content is re-fetched from
-  Basecamp (not taken from the POST body). Treat all content as untrusted
-  regardless; keep agents scoped to the resolved repo.
+  Two layers defend it: (1) only events by an **authorized** author that
+  target the agent are acted on — the operator alone by default — and (2) the
+  content is re-fetched from Basecamp (not taken from the POST body). Once a
+  participant set is open, (1) admits colleagues whose word must not
+  authorize; the emitted `role` is how the watcher tells them apart, and
+  honouring it is the watcher's job, not the bridge's. Treat all content as
+  untrusted regardless; keep agents scoped to the resolved repo.
 - **Public endpoint hygiene** — the server only honors `POST /bc5/<secret>` and
   ignores everything else.
 - **Teardown** — webhook + funnel are removed on exit, minimizing the window in
@@ -659,16 +666,16 @@ Coverage the suite must include:
   received-boosts feed** (`/my/boosts.json`, the report behind the "You've got
   Boosts!" notification) every `--boost-poll` seconds (default 60) and
   synthesizes a `boost_created` event per new entry. The booster is gated
-  exactly as a mention author is (operator by default, else the active trust
-  mode's authors; the agent's own boosts never authorize), corroboration is a
+  as an assignment is — operators only, never participants (a boost on the
+  agent's work reads as approval); the agent's own boosts never authorize —
+  corroboration is a
   fresh fetch of the same feed (claimed id present with the claimed booster;
   emitted booster/content/recording all from the fetch), and feed membership is
   the targeting fact. The agent's view of the feed **redacts other users'
   emails** (bc3 shows real addresses only to yourself or an admin), so the
-  booster matches by account Person id; email-keyed trust modes (`allowlist`,
-  `domain`) therefore cannot broaden the boost trigger beyond the operator
-  unless the agent can see emails — `project` mode, keyed on the corroborated
-  Person id and client flag, broadens it fine. History is baselined by time, never dispatched; the feed
+  booster matches by account Person id; named `--allow` operators, matched by
+  email, therefore don't reach the boost trigger unless the agent can see
+  emails. History is baselined by time, never dispatched; the feed
   is account-wide, so the bound is the agent's identity rather than the
   watched-project list. `--no-boosts` disables the trigger.
 - Assignment trigger: the documented-but-previously-undocumented
