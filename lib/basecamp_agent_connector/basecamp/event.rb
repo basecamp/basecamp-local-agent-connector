@@ -228,13 +228,16 @@ class BasecampAgentConnector::Basecamp::Event
   # targets the agent. Without it a watcher can tell a mention from a
   # followed-thread comment only by decoding the mention markup itself against
   # the agent's Person id. Assignments and boosts already announce themselves
-  # by `kind`, so these two are the verdicts a watcher cannot derive.
-  def to_emitted_hash
+  # by `kind`, so these two are the verdicts a watcher cannot derive. `role` is
+  # the authorizer's verdict on the creator — "operator" or "participant" —
+  # which the pipeline passes in once the authoritative event earned it.
+  def to_emitted_hash(role: nil)
     {
       "event_id" => id,
       "kind" => kind,
       "created_at" => created_at,
       "creator" => creator.slice(*EMITTED_CREATOR_FIELDS),
+      "role" => role&.to_s,
       "details" => details.slice(*EMITTED_DETAIL_FIELDS),
       "recording" => recording.slice(*EMITTED_RECORDING_FIELDS),
       "trigger" => { "mentioned" => mentioned?, "subscribed" => subscribed? }

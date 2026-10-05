@@ -128,7 +128,19 @@ class BasecampAgentConnector::Basecamp::Pipeline
     end
 
     def actionable?(event)
-      event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
+      event.actionable_kind? && authorized?(event) && worth_verifying?(event)
+    end
+
+    # A stranger's event is dropped here without a word: that is most of what
+    # a broadened project delivers. A participant's assignment or boost is
+    # different — the person meant it as a request — so it gets a line.
+    def authorized?(event)
+      @authorizer.authorizes?(event).tap do |authorized|
+        if !authorized && @authorizer.refuses_participant_directive?(event)
+          log "ignored #{event.kind} #{event.id} by a participant: participants reach the agent by mention or comment; " \
+            "assignments and boosts are operators' only"
+        end
+      end
     end
 
     # The pre-filter is deliberately looser than the authoritative target check:
@@ -193,18 +205,23 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # the verifier stamps `agent_boosted` only after finding the boost in a
     # fresh fetch of the agent's own received-boosts feed, with the emitted
     # booster and content taken from that fetch.
+    #
+    # The role emitted is the one the authoritative event earned, so a payload
+    # claiming an operator's email on a participant's recording emits as the
+    # participant.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
+      role = @authorizer.role(verified) unless verified.nil?
 
       if verified.nil?
         forget(event)
         log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
-      elsif !@authorizer.authorizes?(verified)
+      elsif role.nil?
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)
         log "dropped event #{event.id}: authoritative recording does not target the agent"
       else
-        @emitter.emit(verified)
+        @emitter.emit(verified, role: role)
       end
 
       !verified.nil?

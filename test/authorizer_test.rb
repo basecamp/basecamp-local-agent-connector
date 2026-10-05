@@ -108,7 +108,7 @@ class AuthorizerTest < Minitest::Test
     refute allowlist.authorizes?(assignment_by(COLLEAGUE))
   end
 
-  def test_assignments_open_to_authorized_authors_only_by_explicit_opt_in
+  def test_assignments_open_to_named_operators_only_by_explicit_opt_in
     allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ], allow_assignments: true)
 
     assert allowlist.authorizes?(assignment_by(COLLEAGUE))
@@ -116,14 +116,65 @@ class AuthorizerTest < Minitest::Test
     refute allowlist.authorizes?(assignment_by(AGENT))
   end
 
+  def test_the_operator_and_named_authors_are_operators
+    allowlist = authorizer(trust: :allowlist, emails: [ "marie@example.com" ])
+
+    assert_equal :operator, allowlist.role(mention_by(OPERATOR))
+    assert_equal :operator, allowlist.role(mention_by(COLLEAGUE))
+    assert_nil allowlist.role(mention_by(STRANGER))
+  end
+
+  def test_domain_and_project_authors_are_participants
+    assert_equal :participant, authorizer(trust: :domain, domains: [ "example.com" ]).role(mention_by(COLLEAGUE))
+    assert_equal :participant, authorizer(trust: :project).role(mention_by(STRANGER))
+    assert_equal :operator, authorizer(trust: :project).role(mention_by(OPERATOR))
+  end
+
+  def test_a_named_operator_stays_an_operator_inside_the_participant_set
+    domain = authorizer(trust: :domain, emails: [ "marie@example.com" ], domains: [ "example.com" ])
+
+    assert_equal :operator, domain.role(mention_by(COLLEAGUE))
+    assert_equal :participant, domain.role(mention_by("id" => 500, "email_address" => "ana@example.com"))
+    assert_nil domain.role(mention_by(STRANGER))
+  end
+
+  def test_participants_never_trigger_by_assignment_or_boost
+    project = authorizer(trust: :project, allow_assignments: true)
+
+    refute project.authorizes?(assignment_by(COLLEAGUE))
+    refute project.authorizes?(boost_by(COLLEAGUE))
+    assert project.authorizes?(assignment_by(OPERATOR))
+    assert project.authorizes?(boost_by(OPERATOR))
+  end
+
+  def test_named_operators_boost_but_assign_only_by_opt_in
+    allowlist = authorizer(trust: :domain, emails: [ "marie@example.com" ], domains: [ "example.com" ])
+
+    assert_equal :operator, allowlist.role(boost_by(COLLEAGUE))
+    assert_nil allowlist.role(assignment_by(COLLEAGUE))
+    assert_equal :operator, authorizer(trust: :allowlist, emails: [ "marie@example.com" ], allow_assignments: true).role(assignment_by(COLLEAGUE))
+  end
+
+  def test_says_when_it_refuses_a_participants_directive
+    domain = authorizer(trust: :domain, emails: [ "marie@example.com" ], domains: [ "example.com" ])
+    participant = { "id" => 500, "email_address" => "ana@example.com" }
+
+    assert domain.refuses_participant_directive?(assignment_by(participant))
+    assert domain.refuses_participant_directive?(boost_by(participant))
+    refute domain.refuses_participant_directive?(mention_by(participant))
+    refute domain.refuses_participant_directive?(assignment_by(COLLEAGUE)), "a named operator's refused assignment is not a participant's"
+    refute domain.refuses_participant_directive?(assignment_by(STRANGER))
+    refute domain.refuses_participant_directive?(assignment_by(AGENT))
+  end
+
   def test_describes_the_active_trust_configuration
-    assert_equal "operator only (operator@example.com); assignments: operator only", authorizer.description
-    assert_equal "allowlist — operator (operator@example.com) + marie@example.com; assignments: operator only",
+    assert_equal "operators: operator@example.com; participants: none; assignments: operator only", authorizer.description
+    assert_equal "operators: operator@example.com, marie@example.com; participants: none; assignments: operator only",
       authorizer(trust: :allowlist, emails: [ "marie@example.com" ]).description
-    assert_equal "any corroborated project member (clients excluded); assignments: operator only",
+    assert_equal "operators: operator@example.com; participants: any corroborated project member (clients excluded); assignments: operator only",
       authorizer(trust: :project).description
-    assert_equal "any @37signals.com author; assignments: any authorized author",
-      authorizer(trust: :domain, allow_assignments: true).description
+    assert_equal "operators: operator@example.com, rob@37signals.com; participants: any @37signals.com author; assignments: operators",
+      authorizer(trust: :domain, emails: [ "rob@37signals.com" ], allow_assignments: true).description
   end
 
   def test_refuses_an_unknown_trust_mode
@@ -139,5 +190,9 @@ class AuthorizerTest < Minitest::Test
 
     def assignment_by(creator)
       BasecampAgentConnector::Basecamp::Event.from_payload(assignment_payload("creator" => creator))
+    end
+
+    def boost_by(booster)
+      BasecampAgentConnector::Basecamp::Event.from_payload(boost_payload(received_boost("booster" => booster)))
     end
 end

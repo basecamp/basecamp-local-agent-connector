@@ -344,18 +344,54 @@ class PipelineTest < Minitest::Test
     assert_empty runner.commands
   end
 
-  # Email-keyed trust modes reach boosts only when the agent can see the
-  # booster's address (bc3 redacts emails from non-admin viewers), so this
-  # models an agent allowed to see it.
-  def test_an_authorized_colleagues_boost_emits_under_domain_trust
+  # Email-keyed trust reaches boosts only when the agent can see the booster's
+  # address (bc3 redacts emails from non-admin viewers), so these model an
+  # agent allowed to see it.
+  def test_a_named_operators_boost_emits_as_an_operator
     runner = FakeCommandRunner.new
     booster = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => booster) ])
 
+    pipeline(runner, authorizer: authorizer(trust: :domain, emails: [ "marie@example.com" ], domains: [ "example.com" ])).process \
+      boost_payload(received_boost("booster" => booster))
+
+    emitted = JSON.parse(@output.string)
+    assert_equal "marie@example.com", emitted["creator"]["email_address"]
+    assert_equal "operator", emitted["role"]
+  end
+
+  def test_a_participants_boost_is_ignored_and_says_so
+    # A boost on the agent's work reads as approval, which a participant
+    # cannot give. Dropped at the pre-filter, before any fetch — but with a
+    # line, since the person meant something by it.
+    runner = FakeCommandRunner.new
+    booster = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
+
     pipeline(runner, authorizer: authorizer(trust: :domain, domains: [ "example.com" ])).process \
       boost_payload(received_boost("booster" => booster))
 
-    assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+    assert_empty @output.string
+    assert_empty runner.commands
+    assert_match(/ignored boost_created .* by a participant/, @logs.string)
+  end
+
+  def test_a_participants_assignment_is_ignored_and_says_so
+    runner = FakeCommandRunner.new
+
+    pipeline(runner, authorizer: authorizer(trust: :project, allow_assignments: true)).process \
+      assignment_payload("creator" => colleague)
+
+    assert_empty @output.string
+    assert_empty runner.commands
+    assert_match(/ignored kanban_card_assignment_changed .* by a participant/, @logs.string)
+  end
+
+  def test_a_strangers_event_is_dropped_without_a_word
+    pipeline(FakeCommandRunner.new, authorizer: authorizer(trust: :domain, domains: [ "example.com" ])).process \
+      assignment_payload("creator" => { "id" => 400, "email_address" => "sam@elsewhere.net", "client" => false })
+
+    assert_empty @output.string
+    assert_empty @logs.string
   end
 
   def test_a_redacted_colleagues_boost_cannot_authorize_email_keyed_trust
@@ -377,6 +413,7 @@ class PipelineTest < Minitest::Test
 
     assert_equal 1, @output.string.lines.length
     assert_equal "kanban_card_assignment_changed", JSON.parse(@output.string)["kind"]
+    assert_equal "operator", JSON.parse(@output.string)["role"]
   end
 
   def test_ignores_an_assignment_made_by_a_non_operator
@@ -429,6 +466,7 @@ class PipelineTest < Minitest::Test
 
     assert_equal 1, @output.string.lines.length
     assert_equal "marie@example.com", JSON.parse(@output.string)["creator"]["email_address"]
+    assert_equal "operator", JSON.parse(@output.string)["role"]
   end
 
   def test_allowlist_ignores_an_author_not_on_the_list
@@ -448,6 +486,20 @@ class PipelineTest < Minitest::Test
     pipeline(runner, authorizer: authorizer(trust: :project)).process(sample_payload("creator" => colleague))
 
     assert_equal 1, @output.string.lines.length
+    assert_equal "participant", JSON.parse(@output.string)["role"]
+  end
+
+  def test_the_role_emitted_is_the_authoritative_authors
+    # The POST claims the operator on Marie's Person id; Basecamp says Marie
+    # wrote it. She is a participant here, so she emits as one — the claimed
+    # operator email buys nothing.
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
+
+    pipeline(runner, authorizer: authorizer(trust: :project))
+      .process(sample_payload("creator" => colleague.merge("email_address" => "operator@example.com")))
+
+    assert_equal "participant", JSON.parse(@output.string)["role"]
   end
 
   def test_project_trust_drops_an_author_basecamp_marks_as_a_client
@@ -480,6 +532,7 @@ class PipelineTest < Minitest::Test
       .process(sample_payload("creator" => colleague))
 
     assert_equal 1, @output.string.lines.length
+    assert_equal "participant", JSON.parse(@output.string)["role"]
   end
 
   def test_domain_trust_ignores_other_domains

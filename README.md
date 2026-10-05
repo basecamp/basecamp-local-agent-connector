@@ -101,6 +101,7 @@ default and can be said in passing.
 /basecamp-connect @Clawdito on Queenbee, with jorge as the operator
 /basecamp-connect @Clawdito on On Call, and let anyone on the project trigger it
 /basecamp-connect @Clawdito on BC5.1, and let marie@37signals.com trigger it too  # admin operators only
+/basecamp-connect @Clawdito on BC5.1, with rob@37signals.com as an operator and anyone at 37signals.com as a participant
 /basecamp-connect @Clawdito on BC5.1 plus PR reviews on basecamp/bc3
 /basecamp-connect @Clawdito on On Call, poll chat every 30s, skip boosts
 /basecamp-connect watch PR reviews on basecamp/bc3
@@ -130,11 +131,14 @@ A few things worth knowing about what you can ask for:
   at once. Add as many as you like.
 - **You alone can trigger it, unless you say otherwise.** The agent acts with
   your full machine authority, so widening the trust set hands that authority to
-  more people — deliberate, never incidental. Four modes exist; ask for one in
-  the same sentence ("let anyone on the project trigger it", "let Marie trigger
-  it too"). **One caveat that decides which to pick:** unless you're a Basecamp
+  more people — deliberate, never incidental. Two kinds of people can be added:
+  **operators**, named one by one, whose word authorizes the agent as yours
+  does, and **participants** — a whole domain or project — who can ask it
+  things but whose word authorizes nothing. Ask in the same sentence ("let
+  anyone on the project ask it things", "let Marie operate it too"). **One
+  caveat that decides which to pick:** unless you're a Basecamp
   account admin, the API hands you colleagues' email addresses masked, so the
-  two email-keyed modes add nobody. Read [Trust modes](#trust-modes) before
+  two email-keyed flags add nobody. Read [Trust modes](#trust-modes) before
   relying on any of them.
 - **GitHub PR reviews ride the same server.** Ask for a repo ("plus PR reviews on
   basecamp/bc3") and review events arrive on the same funnel. A webhook watches
@@ -282,10 +286,16 @@ What `bin/connect` has in place, at a glance:
 - **Agent-self exclusion** — the agent's own identity never authorizes, in any
   mode, matched by email *and* Person id. Even when trust is broadened to a
   domain or project the agent belongs to, its own posts cannot re-trigger it.
+- **Every event says whose it is** — `role` on each emitted line is
+  `operator` (you, or someone named with `--allow`) or `participant` (admitted
+  only by `--allow-domain` / `--allow-project`). The bridge labels; the watcher
+  decides what a participant's request may lead to. See
+  [Operators and participants](#operators-and-participants).
 - **Assignments stay operator-only** — assigning the agent a card/todo is
-  higher-privilege (the assigner's identity is not corroborated), so broadened
-  modes apply to mentions only unless `--allow-assignments-from-authorized`
-  explicitly opts assignments in.
+  higher-privilege (the assigner's identity is not corroborated), so the named
+  `--allow` operators trigger by assignment only when
+  `--allow-assignments-from-authorized` opts them in, and participants never
+  do.
 - **Mention gating** — the recording must contain a real Basecamp mention
   *attachment* (`application/vnd.basecamp.mention`) for the agent user, matched by
   the agent's Person id encoded in the mention SGID. A mention typed into a
@@ -298,7 +308,8 @@ What `bin/connect` has in place, at a glance:
   participates in). Subscription is a live API fact, so it is confirmed by
   re-fetching the parent's subscribers and matching the agent's Person id — never
   taken from the payload. The comment author is gated exactly like a mention
-  (operator by default, or the active trust mode's authors).
+  (operator by default, or the active trust mode's authors, participants
+  included).
 - **Boost gating** — a boost on the agent's work triggers only when a fresh
   fetch of the **agent's own received-boosts feed** contains it: boosts never
   arrive by webhook (polling that feed is the delivery mechanism), and the feed
@@ -306,9 +317,11 @@ What `bin/connect` has in place, at a glance:
   existence proof and the targeting proof. The booster is gated exactly like a
   mention author — matched by Person id, since the agent's view of the feed
   redacts other users' emails — and the emitted booster/content come from the
-  fetch, never from a payload. Email-keyed trust modes (`allowlist`, `domain`)
-  can't see through that redaction, so under them boosts effectively stay
-  operator-only; `project` mode broadens boosts fine.
+  fetch, never from a payload. A boost is an operator's trigger only — on the
+  agent's work it reads as approval, which a participant cannot give, so a
+  participant's boost is ignored (with a line on STDERR). Named `--allow`
+  operators are matched by email, which that redaction hides, so in practice
+  boosts stay yours alone.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -387,15 +400,20 @@ operator becomes the agent.)
 
 Who may drive the agent is a per-run, explicit choice. The agent acts with the
 operator's full machine authority, so broadening trust means handing that
-authority to more people — the startup log prints the active mode and the
-concrete allowed set so it is never implicit.
+authority to more people — the startup log prints the operators, the
+participant set, and who may assign, so it is never implicit.
 
 | Mode | Who triggers | CLI | Keyed on |
 |------|--------------|-----|----------|
 | `operator` *(default)* | You only. No flags = exactly this. | — | your email **or** Person id |
-| `allowlist` | You + the named emails. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's email |
-| `domain` | Any author whose email is at a listed domain. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default | the author's email |
-| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed). | `--allow-project` or `--trust project` | the author's Person id |
+| `allowlist` | You + the named emails, as operators. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's email |
+| `domain` | Any author whose email is at a listed domain, as a participant. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default | the author's email |
+| `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed), as a participant. | `--allow-project` or `--trust project` | the author's Person id |
+
+`--allow` combines with either participant set: `--allow rob@37signals.com
+--allow-domain 37signals.com` makes Rob an operator and every other
+37signals.com author a participant. The two participant sets don't combine with
+each other.
 
 **The `Keyed on` column decides whether a mode can fire at all.** Basecamp shows
 a person's real email address only to themselves and to account admins —
@@ -439,7 +457,8 @@ Prefer `allowlist`/`domain` when you need the trust set pinned to specific
 people.
 
 **Assignments are operator-only in every mode** unless
-`--allow-assignments-from-authorized` opts the mode's authors in. An assignment
+`--allow-assignments-from-authorized` opts the named `--allow` operators in;
+participants never trigger by assignment. An assignment
 is corroborated by the agent really being among the card's assignees — but the
 *assigner's* identity is **not** independently verifiable: the verifier confirms
 live assignee state and preserves the event's claimed creator. Against a forged
@@ -448,6 +467,34 @@ assignment trigger rests on the secret path, not on corroboration, in a way the
 mention trigger does not. Bear that in mind before opting assignments in, and
 prefer the mention trigger when the author must be cryptographically pinned to
 the recording.
+
+### Operators and participants
+
+Opening a project to a whole domain is how a colleague's question reaches the
+agent at all — without it their mention is dropped, silently, like a
+stranger's. But a domain is not a list of people you would hand your machine
+to. So every emitted line carries `role`:
+
+- **`operator`** — you, or someone you named with `--allow`. Their word
+  authorizes the agent the way yours does.
+- **`participant`** — admitted only by `--allow-domain` or `--allow-project`.
+  They reach the agent by mention and by commenting on a thread it follows;
+  never by assignment or boost, both of which the bridge drops (and says so
+  on STDERR, since the person meant something by it).
+
+The bridge only labels. What a participant's request may lead to is the
+watcher's policy: the shipped skill answers, researches, files and drafts for a
+participant, and stages anything irreversible or outward-facing — a merge, a
+deploy, a production write, a message to a customer — for an operator's word
+in the same thread. The role is settled on the corroborated author, so a
+payload claiming an operator's email on a participant's recording emits as the
+participant.
+
+Participants' text is less trusted input. The agent can be asked to do anything
+a participant can phrase, and runs with your machine authority; the guarantee
+that a participant cannot get a merge or deploy out of it is the watcher
+honouring `role`, not anything the bridge enforces. Widen to a domain only with
+a watcher that does.
 
 ---
 
@@ -469,10 +516,10 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--operator` | Profile whose user is allowed to trigger. Also the profile every call not made as the agent runs under — corroborating fetches, chat polling, webhook registration. | CLI default profile |
 | `--gh-operator` | GitHub login the review loop is about (with `--repo`): reviews on pull requests opened by anyone else are dropped, and only this login's `approved` reviews are actionable. Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose body and every inline comment start with 🤖 is the dispatched agent's own reply and is dropped — anything written in it without the marker, and it passes like anyone else's. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
-| `--allow` | Author email to trust (repeatable or comma-separated). Implies `--trust allowlist`. | — |
-| `--allow-domain` | Email domain to trust (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
-| `--allow-project` | Trust any corroborated non-client author of a recording the operator's account can read. Implies `--trust project`. | off |
-| `--allow-assignments-from-authorized` | Let any authorized author trigger via assignment, not just the operator. | off — assignments are operator-only |
+| `--allow` | Author email to trust as an **operator** (repeatable or comma-separated). Implies `--trust allowlist`, or combines with a participant set. | — |
+| `--allow-domain` | Email domain whose authors are **participants** (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
+| `--allow-project` | Any corroborated non-client author of a recording the operator's account can read is a **participant**. Implies `--trust project`. | off |
+| `--allow-assignments-from-authorized` | Let the `--allow` operators trigger via assignment, not just the operator. Participants never do. | off — assignments are the operator's only |
 | `--types` | Comma-separated Basecamp event types to subscribe to. `Chat::Line` selects Campfire coverage — chat has no webhooks, so the connector polls each watched project's chats for it. | `Comment,Message,Kanban::Card,Kanban::Step,Todo,Chat::Line` |
 | `--chat-poll` | Campfire poll interval, in seconds. | `15` |
 | `--boost-poll` | Received-boosts poll interval, in seconds. Boosts have no webhooks, so the connector polls the agent's own received-boosts feed for them. | `60` |
@@ -588,8 +635,8 @@ basecamp comment <recording-url> "…" --profile <agent> # post as the agent
   Every call not made as the agent is made under this profile, so
   `--operator` also decides whose credentials corroborate events and register
   webhooks — a `BASECAMP_PROFILE` in the environment does not.
-- **Trust mode** — who beyond the operator may trigger; defaults to nobody.
-  See [Trust modes](#trust-modes).
+- **Trust mode** — who beyond the operator may trigger, as operator or
+  participant; defaults to nobody. See [Trust modes](#trust-modes).
 - **Project → repo mapping** — [`config/project_repos.toml`](config/project_repos.toml)
   maps Basecamp project-name tokens to local repo paths. The skill uses it to
   decide where to run each agent; if nothing matches, it asks you.

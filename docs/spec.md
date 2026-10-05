@@ -313,6 +313,7 @@ One JSON object per line (NDJSON), built from the **verified** recording:
   "kind": "comment_created",
   "created_at": "2026-06-28T12:00:00Z",
   "creator": { "id": 123, "name": "Clawdito", "email_address": "clawdito@37signals.com" },
+  "role": "operator",
   "recording": {
     "id": 456,
     "type": "Comment",
@@ -331,9 +332,13 @@ One JSON object per line (NDJSON), built from the **verified** recording:
 full context and resolve the working repo.
 
 The top-level keys mirror the webhook envelope (`id` → `event_id`, `kind`,
-`created_at`, `creator`, `details`, `recording`); `trigger` is the one key the
-connector owns, carrying the verifier's verdicts on **why** the event targets
-the agent, both settled on the re-fetched recording rather than on the POST:
+`created_at`, `creator`, `details`, `recording`); `role` and `trigger` are the
+keys the connector owns. `role` is the authorizer's verdict on the
+authoritative creator: `operator` (the operator, or an `--allow` email) or
+`participant` (admitted only by `--allow-domain` / `--allow-project`; never on
+an assignment or a boost). `trigger` carries the verifier's verdicts on **why**
+the event targets the agent, both settled on the re-fetched recording rather
+than on the POST:
 
 - `mentioned` — the authoritative content carries a mention attachment for the
   agent's Person id (the `agent_mentioned` stamp from verification step 3 —
