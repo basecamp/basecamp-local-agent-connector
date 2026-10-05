@@ -127,13 +127,16 @@ class BasecampAgentConnector::Basecamp::Pipeline
       @seen_event_ids.include?(event_id)
     end
 
+    # Targeting is asked before authorization so that the one drop worth a
+    # line is said only about events aimed at the agent.
     def actionable?(event)
-      event.actionable_kind? && authorized?(event) && worth_verifying?(event)
+      event.actionable_kind? && worth_verifying?(event) && authorized?(event)
     end
 
     # A stranger's event is dropped here without a word: that is most of what
-    # a broadened project delivers. A participant's assignment or boost is
-    # different — the person meant it as a request — so it gets a line.
+    # a broadened project delivers. A participant's assignment of the agent or
+    # boost of its work is different — the person meant it as a request — so
+    # it gets a line.
     def authorized?(event)
       @authorizer.authorizes?(event).tap do |authorized|
         if !authorized && @authorizer.refuses_participant_directive?(event)

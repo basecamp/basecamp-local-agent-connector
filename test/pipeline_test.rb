@@ -386,6 +386,14 @@ class PipelineTest < Minitest::Test
     assert_match(/ignored kanban_card_assignment_changed .* by a participant/, @logs.string)
   end
 
+  def test_a_participant_assigning_someone_else_says_nothing
+    pipeline(FakeCommandRunner.new, authorizer: authorizer(trust: :project)).process \
+      assignment_payload("creator" => colleague, "details" => { "added_person_ids" => [ 999 ] })
+
+    assert_empty @output.string
+    assert_empty @logs.string
+  end
+
   def test_a_strangers_event_is_dropped_without_a_word
     pipeline(FakeCommandRunner.new, authorizer: authorizer(trust: :domain, domains: [ "example.com" ])).process \
       assignment_payload("creator" => { "id" => 400, "email_address" => "sam@elsewhere.net", "client" => false })
