@@ -162,6 +162,9 @@ class AuthorizerTest < Minitest::Test
     assert domain.refuses_participant_directive?(assignment_by(participant))
     assert domain.refuses_participant_directive?(boost_by(participant))
     refute domain.refuses_participant_directive?(mention_by(participant))
+    refute domain.refuses_participant_directive?(BasecampAgentConnector::Basecamp::Event.from_payload(
+      assignment_payload("creator" => participant, "details" => { "added_person_ids" => [ 999 ] }))),
+      "an assignment of someone else is not aimed at the agent, even on a card that mentions it"
     refute domain.refuses_participant_directive?(assignment_by(COLLEAGUE)), "a named operator's refused assignment is not a participant's"
     refute domain.refuses_participant_directive?(assignment_by(STRANGER))
     refute domain.refuses_participant_directive?(assignment_by(AGENT))

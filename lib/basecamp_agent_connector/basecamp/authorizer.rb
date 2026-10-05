@@ -61,12 +61,13 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
   end
 
-  # A participant's assignment or boost: admitted author, refused trigger.
-  # Worth a diagnostic line when dropped, since the person meant it as a
-  # request and nothing else tells them it went nowhere.
+  # A participant's assignment of the agent, or boost of its work: admitted
+  # author, refused trigger. Worth a diagnostic line when dropped, since the
+  # person meant it as a request. An assignment of someone else is not aimed
+  # at the agent, whatever the card says, so it is not one of these.
   def refuses_participant_directive?(event)
     !agent_authored?(event) && !operator_authored?(event) && !named_operator?(event) && \
-      participant?(event) && participant_only_directive?(event)
+      participant?(event) && (event.assigns?(@agent) || event.boost?)
   end
 
   def description
