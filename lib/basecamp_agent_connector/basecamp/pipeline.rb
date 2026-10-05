@@ -136,11 +136,14 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # A stranger's event is dropped here without a word: that is most of what
     # a broadened project delivers. A participant's assignment of the agent or
     # boost of its work is different — the person meant it as a request — so
-    # it gets a line.
+    # it gets a line carrying who and where, enough for a watcher to answer
+    # them. The claimed payload supplies both, so the line is a lead to
+    # check, never an event to act on.
     def authorized?(event)
       @authorizer.authorizes?(event).tap do |authorized|
         if !authorized && @authorizer.refuses_participant_directive?(event)
-          log "ignored #{event.kind} #{event.id} by a participant: participants reach the agent by mention or comment; " \
+          log "ignored #{event.kind} #{event.id} by a participant (#{event.creator["name"]}, Person #{event.creator_id}) " \
+            "on #{event.recording["app_url"]}: participants reach the agent by mention or comment; " \
             "assignments and boosts are operators' only"
         end
       end

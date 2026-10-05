@@ -98,9 +98,17 @@ dispatched worker carries it:
   the request is out of bounds, say so in the thread, and who can unblock it.
 
 A participant's assignment or boost never reaches STDOUT; the bridge drops it
-with an `ignored … by a participant` line on STDERR. Surface that line: the
-person meant it as a request, so a short reply asking them to @mention the
-agent instead is usually right.
+with an `ignored … by a participant` line on STDERR, which the monitor (step
+1b) lets through so the front thread can tell the person to @mention the
+agent instead.
+
+Asking an operator needs their Person id: at startup, also run
+`basecamp people show me -j` under the operator's profile (the CLI default, or
+`--operator <profile>`) and keep `data.id` and `data.name` for the run, beside
+the agent's. Ask for the go-ahead **as an @mention of the agent** ("reply
+@Agent go to merge"): an operator's reply without one arrives as a
+followed-thread comment, which is context, not a directive, and nothing would
+act on it.
 
 ## Runs from any project — the runtime lives in the connector clone
 
@@ -354,8 +362,17 @@ run's events — and filter to the NDJSON event lines so diagnostics stay out
 of the stream:
 
 ```bash
-tail -f -n +1 <connector-output-file> | grep --line-buffered -E '^\{'
+tail -f -n +1 <connector-output-file> | grep --line-buffered -E '^\{|^ignored '
 ```
+
+The one diagnostic let through is `ignored <kind> <id> by a participant
+(<name>, Person <id>) on <url>: …` — a participant's assignment or boost the
+bridge refused (see
+[A participant asks, an operator authorizes](#a-participant-asks-an-operator-authorizes)).
+It is not an event: don't dispatch it. Post one short reply as the agent on
+that recording, @mentioning the person, saying assignments and boosts don't
+reach the agent and an @mention does. The name and URL come from the claimed
+payload, so open the recording first and skip the reply if it isn't there.
 
 Each notification the monitor delivers is one event — process it via step 2. An
 event that lands while you are waiting on the user is **not** the user's reply.
@@ -586,7 +603,8 @@ everything it needs to finish **without the front thread**:
 - the **requester's** name/id — i.e. the event `creator` (to @mention on
   failure). This is the triggering author, who under a broadened trust mode is
   not necessarily the operator — and the event's **`role`**, with the
-  participant rules above when it is `participant`;
+  participant rules above when it is `participant`, plus the **operator's**
+  name and Person id (resolved at startup) for the ask;
 - whether an **ack is still owed** (step a): the front thread's boost landed (not
   owed), failed to land (owed — the worker fallback-boosts), or was deliberately
   skipped because the reply is the ack (not owed).

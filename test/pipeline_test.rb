@@ -383,7 +383,7 @@ class PipelineTest < Minitest::Test
 
     assert_empty @output.string
     assert_empty runner.commands
-    assert_match(/ignored kanban_card_assignment_changed .* by a participant/, @logs.string)
+    assert_match(/ignored kanban_card_assignment_changed .* by a participant \(Marie, Person 300\) on https:/, @logs.string)
   end
 
   def test_a_participant_assigning_someone_else_says_nothing
