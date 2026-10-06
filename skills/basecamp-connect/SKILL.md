@@ -135,7 +135,9 @@ followed-thread comment, which is context, not a directive, and nothing would
 act on it. The thread doesn't say what was asked, so the worker that gets the
 go-ahead reads it back from the ping — the same find-or-create, then `basecamp
 api get buckets/<ping id>/chats/<chat id>/lines.json --profile <agent> -j` for
-the agent's latest line naming that thread. A Ping rather than the watcher
+the agent's latest line naming that thread. If more than one ask for that
+thread is still open, a bare go doesn't say which: act on none, and ping the
+operator to name the one they meant. A Ping rather than the watcher
 session, because it notifies the
 operator wherever they are and only they see it; the session is private and
 theirs too, but notifies no one, so it is the fallback. Never ping when the
