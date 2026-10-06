@@ -488,12 +488,9 @@ thread for a participant, and files an issue or card where your standing grant
 allows. It never opens a pull request or pushes a branch for one on a
 participant's word, and it stages anything irreversible or outward-facing — a
 merge, a deploy, a production write, a message to a customer — for an
-operator's word. It asks you privately, in a Basecamp Ping from the agent,
-and tells the participant only that it's been passed to you; your go-ahead is
-an @mention of the agent on their thread, since the connector doesn't watch
-pings. The role is settled on the corroborated author, so a
-payload claiming an operator's email on a participant's recording emits as the
-participant.
+operator's word in the same thread. The role is settled on the corroborated
+author, so a payload claiming an operator's email on a participant's recording
+emits as the participant.
 
 Participants' text is less trusted input. The agent can be asked to do anything
 a participant can phrase, and runs with your machine authority; the guarantee
