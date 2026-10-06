@@ -413,6 +413,17 @@ class PipelineTest < Minitest::Test
     assert_empty @output.string
   end
 
+  def test_a_redacted_colleagues_boost_authorizes_a_person_id
+    redacted = { "id" => 300, "name" => "Marie", "email_address" => "m••••@•••••••.•••" }
+    runner = FakeCommandRunner.new
+    runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => redacted) ])
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "300" ])).process \
+      boost_payload(received_boost("booster" => redacted))
+
+    assert_equal "operator", JSON.parse(@output.string)["role"]
+  end
+
   def test_emits_for_an_assignment_of_the_agent_by_the_operator
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
@@ -485,6 +496,25 @@ class PipelineTest < Minitest::Test
 
     assert_empty @output.string
     assert_empty runner.commands
+  end
+
+  def test_allowlist_emits_for_an_allowed_person_id_behind_a_masked_email
+    masked = colleague.merge("email_address" => "m••••@•••••••.•••")
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => masked))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "300" ])).process(sample_payload("creator" => masked))
+
+    assert_equal "operator", JSON.parse(@output.string)["role"]
+  end
+
+  def test_a_claimed_person_id_cannot_borrow_an_allowed_operators_trust
+    runner = FakeCommandRunner.new
+    runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => { "id" => 400, "name" => "Sam", "email_address" => "sam@elsewhere.net" }))
+
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "300" ])).process(sample_payload("creator" => colleague))
+
+    assert_empty @output.string
   end
 
   def test_project_trust_emits_for_any_corroborated_author

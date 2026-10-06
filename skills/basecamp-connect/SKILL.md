@@ -69,8 +69,8 @@ There are thus **four triggers**:
    `--boost-poll` seconds, default 60; `--no-boosts` disables). The booster is
    gated like an assignment: operators only, never participants — and matched
    by Person id, since the agent's view of the feed redacts other users'
-   emails, so a named `--allow` operator's boost doesn't match either and
-   boosts effectively stay the operator's. See
+   emails, so a named `--allow` operator's boost counts only when they were
+   named by Person id. See
    [When someone boosts the agent's work](#when-someone-boosts-the-agents-work).
 
 ### A participant asks, an operator authorizes
@@ -150,6 +150,7 @@ launching — the same confirmation the no-args path does.
 /basecamp-connect @Clawdito --project "BC5 Calendar" --project HEY    # several
 /basecamp-connect @Clawdito --project "BC5 Calendar" --operator jorge # explicit operator
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow marie@37signals.com  # + a named coworker
+/basecamp-connect @Clawdito --project "BC5 Calendar" --allow 3                   # + a coworker by Person id
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow-domain 37signals.com # any 37signals author, as a participant
 /basecamp-connect @Clawdito --project "BC5 Calendar" --allow rob@37signals.com --allow-domain 37signals.com # Rob operates, 37signals participates
 /basecamp-connect --repo basecamp/bc3                                 # GitHub-only, no agent
@@ -163,21 +164,25 @@ global webhook) — pass a project as a name, URL, or ID. The connector
 guidance if not.
 
 **Who may trigger** defaults to the operator alone. Broaden it deliberately with
-the trust flags — `--allow <email>` names an operator; `--allow-domain <domain>`
+the trust flags — `--allow <email or Person id>` names an operator; `--allow-domain <domain>`
 or `--allow-project` admits participants (one of the two, combinable with
 `--allow`); or explicit `--trust <mode>` — and pass them straight through to
 `bin/connect`; the bridge enforces them and logs the active set. "Let X operate
 it" / "X can approve" maps to `--allow`; "let anyone at the domain / on the
-project ask it" maps to a participant set. **`--allow` and `--allow-domain`
-only widen trust when the operator is a Basecamp account admin**: both key on the
-author's email, and Basecamp masks other people's addresses from non-admins
-(`r••••••••@•••.•••`), so the comparison matches nobody. The operator's own
+project ask it" maps to a participant set. **`--allow <email>` and
+`--allow-domain` only widen trust when the operator is a Basecamp account
+admin**: both key on the author's email, and Basecamp masks other people's
+addresses from non-admins (`r••••••••@•••.•••`), so the comparison matches
+nobody. The operator's own
 mentions still run — every mode authorizes the operator first, by email or Person
 id — but colleagues' are silently dropped as unauthorized, so a non-admin run looks
 healthy while ignoring exactly the people the flag was meant to add.
-`--allow-project` keys on the Person id instead and works either way. When a user
-asks for email-based trust, say which of the two they're in rather than letting
-them find out from an agent that never answers. See the connector README's
+`--allow <Person id>` and `--allow-project` key on the Person id instead and work
+either way. When a user names a colleague to operate the agent, pass the Person
+id (`basecamp people list --json`, the `id` beside their name) rather than an
+email unless they are an admin; when they ask for domain trust, say which of
+the two they're in rather than letting them find out from an agent that never
+answers. See the connector README's
 "Trust modes" for the full semantics and the agent-self / assignments-operator-only
 safeguards.
 

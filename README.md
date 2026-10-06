@@ -137,8 +137,9 @@ A few things worth knowing about what you can ask for:
   things but whose word authorizes nothing. Ask in the same sentence ("let
   anyone on the project ask it things", "let Marie operate it too"). **One
   caveat that decides which to pick:** unless you're a Basecamp
-  account admin, the API hands you colleagues' email addresses masked, so the
-  two email-keyed flags add nobody. Read [Trust modes](#trust-modes) before
+  account admin, the API hands you colleagues' email addresses masked, so a
+  colleague named by email, or a domain, adds nobody. Name colleagues by
+  Person id instead (`--allow 3`). Read [Trust modes](#trust-modes) before
   relying on any of them.
 - **GitHub PR reviews ride the same server.** Ask for a repo ("plus PR reviews on
   basecamp/bc3") and review events arrive on the same funnel. A webhook watches
@@ -319,9 +320,9 @@ What `bin/connect` has in place, at a glance:
   redacts other users' emails — and the emitted booster/content come from the
   fetch, never from a payload. A boost is an operator's trigger only — on the
   agent's work it reads as approval, which a participant cannot give, so a
-  participant's boost is ignored (with a line on STDERR). Named `--allow`
-  operators are matched by email, which that redaction hides, so in practice
-  boosts stay yours alone.
+  participant's boost is ignored (with a line on STDERR). A named `--allow`
+  operator's boost counts only when they were named by Person id, since the
+  redaction hides the email.
 - **API corroboration** — every event is re-fetched from the Basecamp API and the
   **authoritative fetched copy is what gets acted on**, never the raw POST body.
   For a mention the fetched recording carries the authoritative creator *and*
@@ -406,7 +407,7 @@ participant set, and who may assign, so it is never implicit.
 | Mode | Who triggers | CLI | Keyed on |
 |------|--------------|-----|----------|
 | `operator` *(default)* | You only. No flags = exactly this. | — | your email **or** Person id |
-| `allowlist` | You + the named emails, as operators. | `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's email |
+| `allowlist` | You + the named people, as operators. | `--allow 3` or `--allow marie@37signals.com` (repeatable or comma-separated; implies the mode, or `--trust allowlist`) | the author's Person id when the value is all digits, else the author's email |
 | `domain` | Any author whose email is at a listed domain, as a participant. | `--allow-domain 37signals.com` (repeatable), or bare `--trust domain` for the 37signals.com default | the author's email |
 | `project` | Any corroborated non-client author of a recording the operator's account can read (client users excluded, fail-closed), as a participant. | `--allow-project` or `--trust project` | the author's Person id |
 
@@ -427,15 +428,22 @@ $ basecamp show <a colleague's message> --json | jq .data.creator
 { "id": 51659243, "name": "Rob Zolkos", "email_address": "r••••••••@•••.•••", "client": false }
 ```
 
-`allowlist` compares that string against the email you listed and never matches.
+`allowlist` compares that string against an email you listed and never matches.
 `domain` parses `•••.•••` out of it as the domain and never matches. Both fail
 closed and silently — the event is simply dropped as unauthorized, with no hint
 that a masked address is why. As an account admin you see real addresses and both
 modes work as written.
 
-`project` is keyed on the Person id, which every viewer can see, so it works
-regardless of admin status. It is also the loosest of the three — read the limit
-below before choosing it.
+`--allow` with a Person id instead of an email works regardless of admin
+status, because the id is visible to every viewer. For a mention, a comment,
+a chat line, or a boost, the id is checked against the item re-fetched from
+Basecamp. For an assignment it is the claimed assigner's id, which nothing
+corroborates (see the assignment caveat below). Find a colleague's id with
+`basecamp people list --json`, as the `id` beside their name.
+
+`project` is keyed on the Person id too, so it also works regardless of admin
+status. It is also the loosest of the three — read the limit below before
+choosing it.
 
 Every mode implicitly includes the operator and excludes the agent itself. In
 `project` mode, membership is proven by corroboration: only project members can
@@ -516,7 +524,7 @@ bin/connect @Clawdito --project Queenbee --operator jorge --port 4567
 | `--operator` | Profile whose user is allowed to trigger. Also the profile every call not made as the agent runs under — corroborating fetches, chat polling, webhook registration. | CLI default profile |
 | `--gh-operator` | GitHub login the review loop is about (with `--repo`): reviews on pull requests opened by anyone else are dropped, and only this login's `approved` reviews are actionable. Any other reviewer's `approved` review is dropped; `changes_requested` and `commented` pass from anyone. The one exception: a `commented` review by *that* login whose body and every inline comment start with 🤖 is the dispatched agent's own reply and is dropped — anything written in it without the marker, and it passes like anyone else's. | the login `gh` is authenticated as |
 | `--trust` | Trust mode: `operator`, `allowlist`, `project`, or `domain`. Usually inferred from the value flags below. | `operator` |
-| `--allow` | Author email to trust as an **operator** (repeatable or comma-separated). Implies `--trust allowlist`, or combines with a participant set. | — |
+| `--allow` | Author email or Basecamp Person id to trust as an **operator** (repeatable or comma-separated). A value made only of digits matches the Person id. Implies `--trust allowlist`, or combines with a participant set. | — |
 | `--allow-domain` | Email domain whose authors are **participants** (repeatable or comma-separated). Implies `--trust domain`. | `37signals.com` under bare `--trust domain` |
 | `--allow-project` | Any corroborated non-client author of a recording the operator's account can read is a **participant**. Implies `--trust project`. | off |
 | `--allow-assignments-from-authorized` | Let the `--allow` operators trigger via assignment, not just the operator. Participants never do. | off — assignments are the operator's only |

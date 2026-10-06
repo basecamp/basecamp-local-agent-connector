@@ -125,7 +125,7 @@ class BasecampAgentConnector::Connector
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
-        "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
+        "[--trust MODE] [--allow EMAIL|ID]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
         "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
@@ -143,7 +143,7 @@ class BasecampAgentConnector::Connector
 
         trust = value.to_sym
       end
-      parser.on("--allow EMAIL", "Also trust this author email as an operator (repeatable or comma-separated; " \
+      parser.on("--allow EMAIL|ID", "Also trust this author, by email or Basecamp Person id, as an operator (repeatable or comma-separated; " \
         "implies --trust allowlist unless a participant set is given too)") \
         { |value| allowed_operators.concat(comma_list(value)) }
       parser.on("--allow-domain DOMAIN", "Admit any author whose email is at this domain as a participant (repeatable or comma-separated; " \
@@ -196,7 +196,7 @@ class BasecampAgentConnector::Connector
   end
 
   # Two sets, resolved separately. Operators are the operator plus every
-  # `--allow` email, in any mode. Participants come from at most one rule:
+  # `--allow` email or Person id, in any mode. Participants come from at most one rule:
   # `--allow-domain` (domain), `--allow-project` (project), or `--trust` naming
   # either. The mode reported is the participant rule when there is one, else
   # `allowlist` when operators were named, else `operator`. Flags that
@@ -214,7 +214,7 @@ class BasecampAgentConnector::Connector
       if explicit == :allowlist && implied.any?
     raise ArgumentError, "--trust #{explicit} conflicts with --allow-#{implied.first}" \
       if %i[domain project].include?(explicit) && implied.any? && implied != [ explicit ]
-    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL" if explicit == :allowlist && operators.empty?
+    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL|ID" if explicit == :allowlist && operators.empty?
 
     explicit || implied.first || (operators.any? ? :allowlist : :operator)
   end

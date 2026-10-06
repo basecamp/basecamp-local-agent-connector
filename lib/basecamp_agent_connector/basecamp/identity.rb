@@ -1,4 +1,6 @@
 class BasecampAgentConnector::Basecamp::Identity
+  PERSON_ID = /\A\d+\z/
+
   attr_reader :profile, :id, :email, :name, :person_id
 
   def self.resolve(basecamp_cli:, profile: nil)
@@ -33,7 +35,7 @@ class BasecampAgentConnector::Basecamp::Identity
   private_class_method :account_person_id
 
   def self.parse(value)
-    new(id: nil, email: value)
+    value.match?(PERSON_ID) ? new(id: nil, person_id: value.to_i) : new(id: nil, email: value)
   end
 
   def initialize(id:, profile: nil, email: nil, name: nil, person_id: nil)
@@ -51,6 +53,6 @@ class BasecampAgentConnector::Basecamp::Identity
   end
 
   def to_s
-    email.to_s
+    email || "Person #{person_id}"
   end
 end

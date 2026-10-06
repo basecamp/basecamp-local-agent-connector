@@ -1,12 +1,12 @@
 # Decides which Basecamp users may drive the agent, and in which role.
 #
 # Two roles. **Operators** are the people whose word authorizes the agent: the
-# operator always, plus anyone named with `--allow`. **Participants** are a
-# wider set — every author at a domain (`--allow-domain`), or every
-# corroborated non-client author (`--allow-project`) — whose requests reach the
-# agent but carry no authority of their own. The connector says which on every
-# emitted line (`role`); what each role may get the agent to do is the
-# watcher's policy, not the bridge's.
+# operator always, plus anyone named with `--allow`, by email or Person id.
+# **Participants** are a wider set — every author at a domain
+# (`--allow-domain`), or every corroborated non-client author
+# (`--allow-project`) — whose requests reach the agent but carry no authority
+# of their own. The connector says which on every emitted line (`role`); what
+# each role may get the agent to do is the watcher's policy, not the bridge's.
 #
 # Participants trigger by mention and by comment on a thread the agent
 # follows. Assignments and boosts are operators' only: an assignment's assigner

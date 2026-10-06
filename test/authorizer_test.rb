@@ -27,10 +27,20 @@ class AuthorizerTest < Minitest::Test
     assert allowlist.authorizes?(mention_by(COLLEAGUE))
   end
 
+  def test_allowlist_authorizes_an_allowed_person_id_behind_a_masked_email
+    allowlist = authorizer(trust: :allowlist, operators: [ "300" ])
+
+    assert_equal :operator, allowlist.role(mention_by(COLLEAGUE.merge("email_address" => "m••••@•••••••.•••")))
+    refute allowlist.authorizes?(mention_by(STRANGER))
+    refute allowlist.authorizes?(mention_by("email_address" => "300"))
+  end
+
   def test_allowlist_never_authorizes_the_agent_even_when_listed
     allowlist = authorizer(trust: :allowlist, operators: [ "clawdito@example.com" ])
 
     refute allowlist.authorizes?(mention_by(AGENT))
+    refute authorizer(trust: :allowlist, operators: [ "200" ]).authorizes?(mention_by(AGENT))
+    refute authorizer(trust: :allowlist, operators: [ "200" ], allow_assignments: true).authorizes?(assignment_by("id" => "200"))
   end
 
   def test_project_mode_authorizes_any_corroborated_author
@@ -114,6 +124,8 @@ class AuthorizerTest < Minitest::Test
     assert allowlist.authorizes?(assignment_by(COLLEAGUE))
     refute allowlist.authorizes?(assignment_by(STRANGER))
     refute allowlist.authorizes?(assignment_by(AGENT))
+    refute authorizer(trust: :allowlist, operators: [ "300" ]).authorizes?(assignment_by(COLLEAGUE))
+    assert authorizer(trust: :allowlist, operators: [ "300" ], allow_assignments: true).authorizes?(assignment_by(COLLEAGUE))
   end
 
   def test_the_operator_and_named_authors_are_operators
@@ -174,6 +186,8 @@ class AuthorizerTest < Minitest::Test
     assert_equal "operators: operator@example.com; participants: none; assignments: operator only", authorizer.description
     assert_equal "operators: operator@example.com, marie@example.com; participants: none; assignments: operator only",
       authorizer(trust: :allowlist, operators: [ "marie@example.com" ]).description
+    assert_equal "operators: operator@example.com, Person 3; participants: none; assignments: operator only",
+      authorizer(trust: :allowlist, operators: [ "3" ]).description
     assert_equal "operators: operator@example.com; participants: any corroborated project member (clients excluded); assignments: operator only",
       authorizer(trust: :project).description
     assert_equal "operators: operator@example.com, rob@37signals.com; participants: any @37signals.com author; assignments: operators",
