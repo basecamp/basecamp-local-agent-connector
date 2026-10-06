@@ -133,7 +133,7 @@ class BoostPollerTest < Minitest::Test
     colleague = { "id" => 300, "name" => "Marie", "email_address" => "m••••@•••••••.•••", "client" => false }
     runner = FakeCommandRunner.new
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => colleague) ])
-    poller = poller(runner, trust_authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+    poller = poller(runner, trust_authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ]))
 
     3.times { poller.poll }
 

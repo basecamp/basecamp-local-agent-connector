@@ -352,7 +352,7 @@ class PipelineTest < Minitest::Test
     booster = { "id" => 300, "name" => "Marie", "email_address" => "marie@example.com" }
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => booster) ])
 
-    pipeline(runner, authorizer: authorizer(trust: :domain, emails: [ "marie@example.com" ], domains: [ "example.com" ])).process \
+    pipeline(runner, authorizer: authorizer(trust: :domain, operators: [ "marie@example.com" ], domains: [ "example.com" ])).process \
       boost_payload(received_boost("booster" => booster))
 
     emitted = JSON.parse(@output.string)
@@ -407,7 +407,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "api get /my/boosts.json", stdout: envelope([ received_boost("booster" => redacted) ])
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ])).process \
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ])).process \
       boost_payload(received_boost("booster" => redacted))
 
     assert_empty @output.string
@@ -469,7 +469,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(sample_recording("creator" => colleague))
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ]))
       .process(sample_payload("creator" => colleague))
 
     assert_equal 1, @output.string.lines.length
@@ -480,7 +480,7 @@ class PipelineTest < Minitest::Test
   def test_allowlist_ignores_an_author_not_on_the_list
     runner = FakeCommandRunner.new
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ]))
       .process(sample_payload("creator" => { "id" => 400, "email_address" => "sam@elsewhere.net" }))
 
     assert_empty @output.string
@@ -571,7 +571,7 @@ class PipelineTest < Minitest::Test
     runner.stub "basecamp show", stdout: envelope(recording)
     runner.stub "subscriptions show", stdout: subscribers_envelope(200)
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ]))
       .process(sample_payload("creator" => colleague, "recording" => recording))
 
     assert_equal 1, @output.string.lines.length
@@ -598,7 +598,7 @@ class PipelineTest < Minitest::Test
   def test_broadened_trust_keeps_assignments_operator_only
     runner = FakeCommandRunner.new
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ]))
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ]))
       .process(assignment_payload("creator" => colleague))
 
     assert_empty @output.string
@@ -609,7 +609,7 @@ class PipelineTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "basecamp show", stdout: envelope(assigned_recording)
 
-    pipeline(runner, authorizer: authorizer(trust: :allowlist, emails: [ "marie@example.com" ], allow_assignments: true))
+    pipeline(runner, authorizer: authorizer(trust: :allowlist, operators: [ "marie@example.com" ], allow_assignments: true))
       .process(assignment_payload("creator" => colleague))
 
     assert_equal 1, @output.string.lines.length

@@ -242,10 +242,10 @@ module PayloadHelpers
     BasecampAgentConnector::Basecamp::Identity.new(id: 100, email: "operator@example.com", person_id: 100)
   end
 
-  def authorizer(trust: :operator, emails: [], domains: [], allow_assignments: false, operator: operator_identity, agent: agent_identity)
+  def authorizer(trust: :operator, operators: [], domains: [], allow_assignments: false, operator: operator_identity, agent: agent_identity)
     BasecampAgentConnector::Basecamp::Authorizer.build \
       trust: trust, operator: operator, agent: agent,
-      emails: emails, domains: domains, allow_assignments: allow_assignments
+      operators: operators, domains: domains, allow_assignments: allow_assignments
   end
 
   def agent_identity(name: "Clawdito", person_id: 200)

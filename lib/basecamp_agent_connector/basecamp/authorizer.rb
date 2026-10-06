@@ -26,8 +26,8 @@
 class BasecampAgentConnector::Basecamp::Authorizer
   DEFAULT_TRUSTED_DOMAIN = "37signals.com"
 
-  def self.build(trust:, operator:, agent:, emails: [], domains: [], allow_assignments: false)
-    options = { operator: operator, agent: agent, emails: emails, allow_assignments: allow_assignments }
+  def self.build(trust:, operator:, agent:, operators: [], domains: [], allow_assignments: false)
+    options = { operator: operator, agent: agent, operators: operators, allow_assignments: allow_assignments }
 
     case trust
     when :operator, :allowlist then new(**options)
@@ -37,10 +37,10 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
   end
 
-  def initialize(operator:, agent:, emails: [], allow_assignments: false)
+  def initialize(operator:, agent:, operators: [], allow_assignments: false)
     @operator = operator
     @agent = agent
-    @emails = emails
+    @operators = operators
     @allow_assignments = allow_assignments
   end
 
@@ -71,7 +71,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
   end
 
   def description
-    "operators: #{([ @operator.email ] + @emails).join(", ")}; participants: #{participant_description}; " \
+    "operators: #{([ @operator.email ] + @operators).join(", ")}; participants: #{participant_description}; " \
       "assignments: #{@allow_assignments ? "operators" : "operator only"}"
   end
 
@@ -82,7 +82,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
 
     def named_operator?(event)
       !event.creator_email.nil? && \
-        @emails.any? { |email| event.creator_email.casecmp?(email) }
+        @operators.any? { |email| event.creator_email.casecmp?(email) }
     end
 
     def agent_authored?(event)
