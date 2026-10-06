@@ -67,7 +67,7 @@ class BasecampBridgeTest < Minitest::Test
 
     bridge(runner, logger: logs).register(base_url: "https://host.ts.net")
 
-    assert_match(/Trust: operator only \(operator@example\.com\); assignments: operator only/, logs.string)
+    assert_match(/Trust: operators: operator@example\.com; participants: none; assignments: operator only/, logs.string)
   end
 
   def test_register_splits_chat_types_off_to_the_poller

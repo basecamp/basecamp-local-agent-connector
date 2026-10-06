@@ -127,8 +127,26 @@ class BasecampAgentConnector::Basecamp::Pipeline
       @seen_event_ids.include?(event_id)
     end
 
+    # Targeting is asked before authorization so that the one drop worth a
+    # line is said only about events aimed at the agent.
     def actionable?(event)
-      event.actionable_kind? && @authorizer.authorizes?(event) && worth_verifying?(event)
+      event.actionable_kind? && worth_verifying?(event) && authorized?(event)
+    end
+
+    # A stranger's event is dropped here without a word: that is most of what
+    # a broadened project delivers. A participant's assignment of the agent or
+    # boost of its work is different — the person meant it as a request — so
+    # it gets a line carrying who and where, for whoever reads the log. The
+    # claimed payload supplies both, so it is a lead, never an event; a
+    # delivery replayed from history can repeat it.
+    def authorized?(event)
+      @authorizer.authorizes?(event).tap do |authorized|
+        if !authorized && @authorizer.refuses_participant_directive?(event)
+          log "ignored #{event.kind} #{event.id} by a participant (#{event.creator["name"]}, Person #{event.creator_id}) " \
+            "on #{event.recording["app_url"]}: participants reach the agent by mention or comment; " \
+            "assignments and boosts are operators' only"
+        end
+      end
     end
 
     # The pre-filter is deliberately looser than the authoritative target check:
@@ -193,18 +211,23 @@ class BasecampAgentConnector::Basecamp::Pipeline
     # the verifier stamps `agent_boosted` only after finding the boost in a
     # fresh fetch of the agent's own received-boosts feed, with the emitted
     # booster and content taken from that fetch.
+    #
+    # The role emitted is the one the authoritative event earned, so a payload
+    # claiming an operator's email on a participant's recording emits as the
+    # participant.
     def emit_if_verified(event)
       verified = @verifier.verify(event)
+      role = @authorizer.role(verified) unless verified.nil?
 
       if verified.nil?
         forget(event)
         log "dropped event #{event.id}: not corroborated by Basecamp (id forgotten; a later delivery of it is verified afresh)"
-      elsif !@authorizer.authorizes?(verified)
+      elsif role.nil?
         log "dropped event #{event.id}: authoritative author is not authorized"
       elsif !targets_agent?(verified)
         log "dropped event #{event.id}: authoritative recording does not target the agent"
       else
-        @emitter.emit(verified)
+        @emitter.emit(verified, role: role)
       end
 
       !verified.nil?

@@ -90,9 +90,39 @@ class ConnectorTest < Minitest::Test
     end
   end
 
-  def test_refuses_value_flags_that_imply_different_trust_modes
+  def test_named_operators_combine_with_a_participant_set
+    options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"
+
+    assert_equal :domain, options.trust
+    assert_equal [ "marie@example.com" ], options.allowed_emails
+    assert_equal [ "example.com" ], options.allowed_domains
+    assert_equal :project, parse("@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-project").trust
+  end
+
+  def test_an_explicit_participant_mode_takes_named_operators_too
+    # The skill reconstructs a remembered launch as --trust <mode> plus its
+    # value flags, so a domain run with named operators must round-trip.
+    options = parse "@clawdito", "--project", "A", "--trust", "domain", "--allow", "marie@example.com"
+
+    assert_equal :domain, options.trust
+    assert_equal [ "marie@example.com" ], options.allowed_emails
+  end
+
+  def test_refuses_two_participant_sets
     assert_raises ArgumentError do
-      parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"
+      parse "@clawdito", "--project", "A", "--allow-domain", "example.com", "--allow-project"
+    end
+  end
+
+  def test_refuses_an_allowlist_mode_with_a_participant_set
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--trust", "allowlist", "--allow", "marie@example.com", "--allow-domain", "example.com"
+    end
+  end
+
+  def test_refuses_an_explicit_participant_mode_contradicted_by_the_other_set
+    assert_raises ArgumentError do
+      parse "@clawdito", "--project", "A", "--trust", "project", "--allow-domain", "example.com"
     end
   end
 
