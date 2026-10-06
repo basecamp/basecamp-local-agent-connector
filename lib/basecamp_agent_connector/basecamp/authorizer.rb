@@ -86,8 +86,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
 
     def agent_authored?(event)
-      event.authored_by?(@agent) || \
-        (!@agent.person_id.nil? && event.creator_id == @agent.person_id)
+      event.authored_by?(@agent)
     end
 
     def participant_only_directive?(event)
