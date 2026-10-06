@@ -40,7 +40,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
   def initialize(operator:, agent:, operators: [], allow_assignments: false)
     @operator = operator
     @agent = agent
-    @operators = operators
+    @operators = operators.map { |operator| BasecampAgentConnector::Basecamp::Identity.parse(operator) }
     @allow_assignments = allow_assignments
   end
 
@@ -71,7 +71,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
   end
 
   def description
-    "operators: #{([ @operator.email ] + @operators).join(", ")}; participants: #{participant_description}; " \
+    "operators: #{([ @operator ] + @operators).join(", ")}; participants: #{participant_description}; " \
       "assignments: #{@allow_assignments ? "operators" : "operator only"}"
   end
 
@@ -81,8 +81,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
 
     def named_operator?(event)
-      !event.creator_email.nil? && \
-        @operators.any? { |email| event.creator_email.casecmp?(email) }
+      @operators.any? { |operator| event.authored_by?(operator) }
     end
 
     def agent_authored?(event)

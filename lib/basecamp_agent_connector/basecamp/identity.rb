@@ -32,6 +32,10 @@ class BasecampAgentConnector::Basecamp::Identity
   end
   private_class_method :account_person_id
 
+  def self.parse(value)
+    new(id: nil, email: value)
+  end
+
   def initialize(id:, profile: nil, email: nil, name: nil, person_id: nil)
     @id = id
     @profile = profile
@@ -44,5 +48,9 @@ class BasecampAgentConnector::Basecamp::Identity
   # absent on both sides and would then compare as different users.
   def same_user_as?(other)
     id == other.id
+  end
+
+  def to_s
+    email.to_s
   end
 end
