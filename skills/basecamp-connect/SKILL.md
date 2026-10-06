@@ -932,6 +932,9 @@ Some instructions are "open a PR for X." For these the background agent follows 
 stricter lifecycle and **must not report the work done until the branch is
 green** — getting CI green is part of finishing the task, not a follow-up:
 
+For a participant's request (`role` `participant`, or none), stop after step 2
+and ask in the thread; steps 3 on run only on an operator's go.
+
 1. **Work in a fresh worktree off `main`** — `git worktree add -b <branch> <path>
    main` in the resolved repo, so the task is isolated and `main` stays clean. Do
    all the work there.
