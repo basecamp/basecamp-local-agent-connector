@@ -99,6 +99,29 @@ class VerifierTest < Minitest::Test
     assert_empty runner.commands_matching(/basecamp show/)
   end
 
+  # In a project with several Campfires, CLI 0.11.0 can't find the room from
+  # the line's URL and refuses with "ambiguous" unless the command names it.
+  def test_corroborates_a_chat_line_in_a_project_with_several_campfires
+    runner = FakeCommandRunner.new
+    runner.stub(/chat line .*--room 333/, stdout: envelope(chat_line))
+    runner.stub "chat line ", exit_status: 1, stdout: error_envelope("ambiguous", "Multiple chat rooms found")
+
+    verified = verifier(runner).verify(event(chat_line_payload))
+
+    refute_nil verified
+    assert_equal 91001, verified.recording["id"]
+  end
+
+  # A usage error is the connector asking wrong, not Basecamp saying the line
+  # is gone, so it must not pass for "not corroborated".
+  def test_a_cli_usage_error_on_a_chat_line_propagates_instead_of_rejecting
+    runner = FakeCommandRunner.new
+    runner.stub "chat line ", exit_status: 1, stdout: error_envelope("ambiguous", "Multiple chat rooms found")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) { verifier(runner).verify(event(chat_line_payload)) }
+    assert_match(/Multiple chat rooms found/, error.message)
+  end
+
   def test_rejects_a_chat_line_whose_authoritative_author_does_not_match
     runner = FakeCommandRunner.new
     runner.stub "chat line ", stdout: envelope(chat_line("creator" => { "id" => 999 }))

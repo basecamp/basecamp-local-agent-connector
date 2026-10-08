@@ -148,6 +148,39 @@ class ChatPollerTest < Minitest::Test
     assert_equal 1, @output.string.lines.length
   end
 
+  def test_a_mention_in_a_project_with_several_campfires_is_corroborated
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash, chat_hash("id" => 444, "title" => "Other") ])
+    runner.stub "chat messages", stdout: empty_envelope, times: 2
+    runner.stub(/chat messages .*--room 333/, stdout: envelope([ chat_line ]))
+    runner.stub "chat messages", stdout: empty_envelope
+    runner.stub(/chat line .*--room 333/, stdout: envelope(chat_line))
+    runner.stub "chat line ", exit_status: 1, stdout: error_envelope("ambiguous", "Multiple chat rooms found")
+    poller = poller(runner)
+
+    poller.poll
+    poller.poll
+    assert_equal 1, @output.string.lines.length
+    refute_match(/not corroborated/, @logs.string)
+  end
+
+  # A CLI usage error is a connector bug, not a verdict on the line: the log
+  # carries the CLI's own words, and the line isn't re-asked every tick.
+  def test_a_cli_usage_error_logs_the_cli_error_and_is_not_retried
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope, once: true
+    runner.stub "chat messages", stdout: envelope([ chat_line ])
+    runner.stub "chat line ", exit_status: 1, stdout: error_envelope("ambiguous", "Multiple chat rooms found")
+    poller = poller(runner)
+
+    3.times { poller.poll }
+    assert_empty @output.string
+    assert_match(/Multiple chat rooms found/, @logs.string)
+    refute_match(/not corroborated/, @logs.string)
+    assert_equal 1, runner.commands_matching(/chat line /).length
+  end
+
   def test_a_line_that_reached_a_verdict_is_not_retried
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])

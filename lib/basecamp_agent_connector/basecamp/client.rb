@@ -31,12 +31,22 @@ class BasecampAgentConnector::Basecamp::Client
     def self.rate_limited_envelope?(envelope)
       envelope["code"] == "rate_limit" || envelope["error"].to_s.match?(/rate limit/i)
     end
+
+    # The CLI refused the command line before asking Basecamp: a missing
+    # argument ("usage"), or one it can't resolve on its own ("ambiguous" —
+    # "Multiple chat rooms found" for a chat line named without its room).
+    # That is the connector asking wrong, not a verdict on the recording.
+    def usage?
+      USAGE_CODES.include?(code)
+    end
   end
 
   # The CLI never got an answer out of Basecamp — on any of ATTEMPTS tries.
   # Asking again later may well succeed, so a caller that can defer (a webhook
   # redelivery, the next poll) should, rather than read this as a verdict.
   class TransientError < Error; end
+
+  USAGE_CODES = %w[usage ambiguous]
 
   # The CLI probes the OS keyring on every invocation by writing and deleting
   # one shared item (service "credstore.probe.basecamp"). Concurrent

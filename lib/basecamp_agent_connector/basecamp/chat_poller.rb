@@ -264,7 +264,8 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # stops appearing. A fetch the CLI could not complete (even after its own
     # retries) is forgotten the same way: the next tick is this poller's
     # redelivery. A pipeline exception leaves the line seen: retrying a bug
-    # every tick would only repeat it.
+    # every tick would only repeat it. A command the CLI refused as malformed
+    # is such a bug, and it costs only its own line, not the rest of the room.
     def process(line, seen)
       seen << line["id"]
       seen.delete(line["id"]) unless @pipeline.process(BasecampAgentConnector::Basecamp::Event.chat_line_payload(line))
@@ -272,6 +273,10 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       seen.delete(line["id"])
       note_rate_limit(error)
       log "could not corroborate chat line #{line["id"]}: #{error.message}; retried on the next poll"
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      raise unless error.usage?
+
+      log "could not corroborate chat line #{line["id"]}: #{error.message}; not retried, since the CLI refused the command itself"
     end
 
     # The fetch window is a bound: if a chat produced more than FETCH_LIMIT

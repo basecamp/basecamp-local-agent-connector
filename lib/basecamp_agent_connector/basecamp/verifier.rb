@@ -36,7 +36,9 @@ class BasecampAgentConnector::Basecamp::Verifier
     # recording". A fetch the CLI could not complete even after its retries
     # says nothing about the recording, so it propagates for the caller to
     # defer — a webhook answers 503 for redelivery, a poller retries next
-    # tick — instead of masquerading as a forged or deleted event.
+    # tick — instead of masquerading as a forged or deleted event. A command
+    # the CLI refused as malformed never reached Basecamp either, so it
+    # propagates too, carrying the CLI's own words: it's a connector bug.
     def fetch_recording(event)
       locator = event.recording_url || event.recording_app_url
       return nil if locator.nil?
@@ -48,7 +50,9 @@ class BasecampAgentConnector::Basecamp::Verifier
       end
     rescue BasecampAgentConnector::Basecamp::Client::TransientError
       raise
-    rescue BasecampAgentConnector::Basecamp::Client::Error
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      raise if error.usage?
+
       nil
     end
 
