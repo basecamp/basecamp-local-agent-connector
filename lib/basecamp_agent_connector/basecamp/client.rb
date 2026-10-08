@@ -121,6 +121,11 @@ class BasecampAgentConnector::Basecamp::Client
     Array json("chat", "list", "--all")
   end
 
+  # Every project the profile can see, for reading a --project name.
+  def projects
+    Array json("projects", "list", "--all")
+  end
+
   def chat_lines(project:, chat:, limit:)
     Array json("chat", "messages", "--project", project.to_s, "--room", chat.to_s, "--limit", limit.to_s)
   end

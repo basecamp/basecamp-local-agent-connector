@@ -77,7 +77,7 @@ class BasecampBridgeTest < Minitest::Test
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: envelope([ chat_line ])
     logs = StringIO.new
-    bridge = bridge(runner, types: "Comment,Chat::Line", logger: logs)
+    bridge = bridge(runner, projects: [ "222" ], types: "Comment,Chat::Line", logger: logs)
 
     bridge.register(base_url: "https://host.ts.net")
 
@@ -97,7 +97,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     runner.stub "chat messages", stdout: empty_envelope
-    bridge = bridge(runner, types: "Chat::Line")
+    bridge = bridge(runner, projects: [ "222" ], types: "Chat::Line")
 
     bridge.register(base_url: "https://host.ts.net")
 
@@ -288,7 +288,7 @@ class BasecampBridgeTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
     logs = StringIO.new
-    bridge = bridge(runner, types: "Chat::Line", logger: logs, webhook_check_interval: 300)
+    bridge = bridge(runner, projects: [ "222" ], types: "Chat::Line", logger: logs, webhook_check_interval: 300)
 
     bridge.register(base_url: "https://host.ts.net")
     bridge.teardown

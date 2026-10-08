@@ -577,7 +577,7 @@ class ChatPollerTest < Minitest::Test
     runner.stub "chat list", stdout: envelope([ chat_hash,
       chat_hash("id" => 444, "title" => "Ops", "bucket" => { "id" => 223, "name" => "B" }) ])
     runner.stub "chat messages", stdout: empty_envelope
-    poller = poller(runner, projects: [ "A", "B" ])
+    poller = poller(runner, projects: [ "222", "223" ])
 
     poller.poll
     poller.poll
@@ -596,6 +596,7 @@ class ChatPollerTest < Minitest::Test
       "HEY² Factory" => 444, "hey² factory" => nil, "Factory" => nil }.each do |project, room|
       runner = FakeCommandRunner.new
       runner.stub "chat list", stdout: envelope(chats)
+      runner.stub "projects list", stdout: envelope(chats.map { |chat| chat["bucket"] })
 
       assert_equal [ room ].compact, poller(runner, projects: [ project ]).rooms.map(&:chat_id), project
     end
@@ -612,11 +613,11 @@ class ChatPollerTest < Minitest::Test
     runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 223, "name" => "B" }),
       chat_hash("id" => 444, "title" => "Back") ])
     runner.stub "chat messages", stdout: empty_envelope
-    poller = poller(runner, projects: [ "A", "B" ], clock: -> { now })
+    poller = poller(runner, projects: [ "222", "223" ], clock: -> { now })
 
     3.times { poller.poll }
 
-    assert_equal 1, @logs.string.lines.grep(/project A has no Campfire/).length
+    assert_equal 1, @logs.string.lines.grep(/project 222 has no Campfire/).length
     assert_empty runner.commands_matching(/chat messages --project 222/)
 
     now += BasecampAgentConnector::Basecamp::ChatPoller::REDISCOVER_AFTER
@@ -632,6 +633,19 @@ class ChatPollerTest < Minitest::Test
   def test_a_name_never_settles_on_another_project_containing_it
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops East" }) ])
+    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops East" }, { "id" => 2, "name" => "Ops" } ])
+
+    assert_empty poller(runner, projects: [ "Ops" ]).rooms
+    assert_match(/project Ops has no Campfire/, @logs.string)
+  end
+
+  # Codex's second case: two projects named "Ops", only one with a Campfire.
+  # The chat listing alone sees one "Ops" and would take it; the account's
+  # project list sees both, so the name covers neither.
+  def test_a_name_shared_with_a_chatless_project_covers_neither
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops" }) ])
+    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops" }, { "id" => 2, "name" => "Ops" } ])
 
     assert_empty poller(runner, projects: [ "Ops" ]).rooms
     assert_match(/project Ops has no Campfire/, @logs.string)
@@ -642,6 +656,7 @@ class ChatPollerTest < Minitest::Test
   def test_rooms_are_polled_by_the_bucket_discovery_found
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "projects list", stdout: envelope([ { "id" => 222, "name" => "A" } ])
     runner.stub "chat messages", stdout: empty_envelope
 
     poller(runner, projects: [ "A" ]).poll
@@ -654,6 +669,7 @@ class ChatPollerTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops" }),
       chat_hash("id" => 444, "bucket" => { "id" => 2, "name" => "Ops" }) ])
+    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops" }, { "id" => 2, "name" => "Ops" } ])
 
     assert_empty poller(runner, projects: [ "Ops" ]).rooms
     assert_match(/project Ops has no Campfire/, @logs.string)
@@ -740,7 +756,7 @@ class ChatPollerTest < Minitest::Test
     # The canonical chat_line is created at 12:00; the default clock starts the
     # poller before that, so fetched lines count as live traffic. Tests about
     # history/baselining override the clock to after 12:00 instead.
-    def poller(runner, projects: [ "A" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) },
+    def poller(runner, projects: [ "222" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) },
       interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL)
       cli = build_cli(runner)
 
