@@ -140,12 +140,12 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       bucket_id = project_id(project, buckets)
       found = bucket_id.nil? ? [] : chats \
         .select { |chat| chat.dig("bucket", "id").to_s == bucket_id.to_s }
-        .map { |chat| Room.new(project: project, chat_id: chat["id"], title: chat["title"]) }
+        .map { |chat| Room.new(project: bucket_id, chat_id: chat["id"], title: chat["title"]) }
 
       if found.empty? && !@chatless_projects.include?(project)
         @chatless_projects << project
         log "project #{project} has no Campfire the operator can see (chat is switched off there, or no project " \
-          "goes by that name); checking again every #{REDISCOVER_AFTER}s"
+          "goes by exactly that name); checking again every #{REDISCOVER_AFTER}s"
       elsif found.any?
         @chatless_projects.delete(project)
       end
@@ -153,24 +153,21 @@ class BasecampAgentConnector::Basecamp::ChatPoller
       found
     end
 
-    # The CLI's own reading of a --project token, over the projects that hold
-    # a live Campfire: a URL by its bucket id (basecamp-cli
-    # internal/urlarg/urlarg.go ExtractProjectID), an id as itself, and a name
-    # exactly, then case-insensitively, then as a unique substring
-    # (internal/names/resolver.go resolve). A name the CLI would call
-    # ambiguous among every project may resolve here among fewer; nil when
-    # nothing, or more than one, matches.
+    # A --project token names its project by URL (the bucket id in it), by
+    # id, or by exact name. Only exactly: the listing holds only projects with
+    # a live Campfire, so a looser match (the CLI's case-insensitive and
+    # substring fallbacks) would, for a watched project with chat switched
+    # off, settle on another project whose name merely resembles it. Two
+    # projects of one name cover neither; nil when nothing matches.
     def project_id(project, buckets)
       token = project.to_s
       id = token[%r{/(?:buckets|projects)/(\d+)}, 1] || token[/\A\d+\z/]
+      named = buckets.select { |bucket| bucket["name"] == token }
 
       if id
-        id
-      else
-        named = buckets.select { |bucket| bucket["name"] == token }.first(1)
-        named = buckets.select { |bucket| bucket["name"].to_s.casecmp?(token) } if named.empty?
-        named = buckets.select { |bucket| bucket["name"].to_s.downcase.include?(token.downcase) } if named.empty?
-        named.first["id"] if named.length == 1
+        id.to_i
+      elsif named.length == 1
+        named.first["id"]
       end
     end
 

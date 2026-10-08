@@ -583,23 +583,21 @@ class ChatPollerTest < Minitest::Test
     poller.poll
 
     assert_equal 1, runner.commands_matching(/chat list/).length
-    assert_equal 2, runner.commands_matching(/chat messages --project A --room 333/).length
-    assert_equal 2, runner.commands_matching(/chat messages --project B --room 444/).length
+    assert_equal 2, runner.commands_matching(/chat messages --project 222 --room 333/).length
+    assert_equal 2, runner.commands_matching(/chat messages --project 223 --room 444/).length
   end
 
-  # The CLI reads a --project token as a URL's bucket id, an id, or a name
-  # (exactly, case-insensitively, or as a unique substring); discovery reads
-  # it the same way, so a run started by name or by URL is covered too.
+  # A run started by URL, by id or by exact name is covered alike.
   def test_a_project_is_found_by_url_id_or_name
     chats = [ chat_hash("bucket" => { "id" => 48806025, "name" => "HEY²" }),
       chat_hash("id" => 444, "bucket" => { "id" => 49180808, "name" => "HEY² Factory" }) ]
 
     { "https://3.basecamp.com/2914079/projects/48806025" => 333, "48806025" => 333, "HEY²" => 333,
-      "hey² factory" => 444, "Factory" => 444 }.each do |project, room|
+      "HEY² Factory" => 444, "hey² factory" => nil, "Factory" => nil }.each do |project, room|
       runner = FakeCommandRunner.new
       runner.stub "chat list", stdout: envelope(chats)
 
-      assert_equal [ room ], poller(runner, projects: [ project ]).rooms.map(&:chat_id), project
+      assert_equal [ room ].compact, poller(runner, projects: [ project ]).rooms.map(&:chat_id), project
     end
   end
 
@@ -619,20 +617,43 @@ class ChatPollerTest < Minitest::Test
     3.times { poller.poll }
 
     assert_equal 1, @logs.string.lines.grep(/project A has no Campfire/).length
-    assert_empty runner.commands_matching(/chat messages --project A/)
+    assert_empty runner.commands_matching(/chat messages --project 222/)
 
     now += BasecampAgentConnector::Basecamp::ChatPoller::REDISCOVER_AFTER
     poller.poll
 
-    assert_equal 1, runner.commands_matching(/chat messages --project A --room 444/).length
+    assert_equal 1, runner.commands_matching(/chat messages --project 222 --room 444/).length
     refute_match(/could not list chats/, @logs.string)
   end
 
-  # Ambiguity covers nothing rather than guessing between two projects.
-  def test_a_name_matching_two_projects_covers_neither
+  # A name is matched exactly. Codex's case: the watched project "Ops" has
+  # chat switched off, so the listing holds no "Ops" bucket, and a looser
+  # match would settle on "Ops East" and poll a project nobody asked for.
+  def test_a_name_never_settles_on_another_project_containing_it
     runner = FakeCommandRunner.new
-    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops East" }),
-      chat_hash("id" => 444, "bucket" => { "id" => 2, "name" => "Ops West" }) ])
+    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops East" }) ])
+
+    assert_empty poller(runner, projects: [ "Ops" ]).rooms
+    assert_match(/project Ops has no Campfire/, @logs.string)
+  end
+
+  # Discovery settled which bucket the room is in; polling by that id keeps
+  # the CLI from resolving the token a second time, its own way.
+  def test_rooms_are_polled_by_the_bucket_discovery_found
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope
+
+    poller(runner, projects: [ "A" ]).poll
+
+    assert_equal 1, runner.commands_matching(/chat messages --project 222 --room 333/).length
+  end
+
+  # Ambiguity covers nothing rather than guessing between two projects.
+  def test_a_name_two_projects_share_covers_neither
+    runner = FakeCommandRunner.new
+    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops" }),
+      chat_hash("id" => 444, "bucket" => { "id" => 2, "name" => "Ops" }) ])
 
     assert_empty poller(runner, projects: [ "Ops" ]).rooms
     assert_match(/project Ops has no Campfire/, @logs.string)
