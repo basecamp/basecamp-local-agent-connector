@@ -124,8 +124,10 @@ what you want done. Each time you do, the agent runs and replies.
 
 A few things worth knowing about what you can ask for:
 
-- **A project can be a name, a URL, or an ID.** Any of the three resolves; a
-  partial name is fine if it's unambiguous.
+- **A project can be its exact name, a URL, or an ID.** A name is resolved to
+  its id once, at launch, and must match exactly one project: a near miss or a
+  shared name stops the launch and names the candidates, rather than watching a
+  project you didn't mean.
 - **Several projects, one connector.** One webhook per project, all multiplexed
   onto a single funnel path, so the same `@agent` watches every project you named
   at once. Add as many as you like.

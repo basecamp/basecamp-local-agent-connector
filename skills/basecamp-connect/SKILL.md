@@ -158,9 +158,12 @@ launching — the same confirmation the no-args path does.
 `<agent>` is a real Basecamp user backed by a local CLI profile (the leading `@`
 is optional; it's lowercased to the profile name). Every run needs at least one
 `--project` or `--repo`, and `--project` needs an `<agent>` (Basecamp has no
-global webhook) — pass a project as a name, URL, or ID. The connector
-**validates the agent profile exists locally at startup** and aborts with setup
-guidance if not.
+global webhook) — pass a project as its exact name, a URL, or an ID. The
+connector resolves each one to its id once, at launch, and watches that id for
+the whole run; a name that matches no project exactly, or several, **aborts the
+launch** naming the near matches or the ids — pick one and pass it, never guess
+a looser spelling. The connector also **validates the agent profile exists
+locally at startup** and aborts with setup guidance if not.
 
 **Who may trigger** defaults to the operator alone. Broaden it deliberately with
 the trust flags — `--allow <email>` names an operator; `--allow-domain <domain>`

@@ -284,20 +284,54 @@ class ConnectorTest < Minitest::Test
     assert_match(/Polling 0 Campfire\(s\)/, err)
   end
 
+  # A --project name is read once, at launch, exactly; everything after
+  # works by the id it named, so a later rename or namesake changes nothing.
+  def test_start_resolves_a_project_name_once_and_watches_it_by_id
+    runner = chat_only_identity_runner
+    runner.stub "projects list", stdout: envelope([ { "id" => 222, "name" => "Ops" }, { "id" => 223, "name" => "Ops East" } ])
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+
+    _out, err = start_connector [ "@clawdito", "--project", "Ops", "--types", "Chat::Line", "--port", "4567" ], runner
+
+    assert_equal 1, runner.commands_matching(/projects list/).length
+    assert_match(/Polling 1 Campfire\(s\)/, err)
+  end
+
+  # Which project the agent listens to is not worth a guess: a name with no
+  # exact match stops the launch and says what it nearly matched.
+  def test_start_refuses_a_project_name_without_an_exact_match_and_names_the_near_ones
+    runner = chat_only_identity_runner
+    runner.stub "projects list", stdout: envelope([ { "id" => 222, "name" => "Ops West" }, { "id" => 223, "name" => "Ops East" } ])
+
+    _out, err = start_connector [ "@clawdito", "--project", "ops", "--types", "Chat::Line", "--port", "4567" ], runner, expect_exit: true
+
+    assert_match(/no project is named exactly "ops"/i, err)
+    assert_match(/Ops West \(222\)/, err)
+    assert_match(/Ops East \(223\)/, err)
+    assert_empty runner.commands_matching(/chat list/)
+  end
+
+  def test_start_refuses_a_project_name_two_projects_share
+    runner = chat_only_identity_runner
+    runner.stub "projects list", stdout: envelope([ { "id" => 222, "name" => "Ops" }, { "id" => 223, "name" => "Ops" } ])
+
+    _out, err = start_connector [ "@clawdito", "--project", "Ops", "--types", "Chat::Line", "--port", "4567" ], runner, expect_exit: true
+
+    assert_match(/"Ops" names 2 projects: 222, 223/, err)
+  end
+
   # Chat-only is what the operator asked for — `--types` naming chat and
-  # nothing else — not a count of the rooms discovery came back with. A
-  # project whose Campfire is switched off leaves the chat poll for the rest
-  # of the run, and a run watching only that project therefore discovers no
-  # rooms at all; it must still open no funnel and register no webhooks,
-  # because widening a run's ingress on the strength of a listing that failed
-  # is how a connector ends up serving a path nobody asked it to serve.
+  # nothing else — not a count of the rooms discovery came back with. A run
+  # watching only a project whose Campfire is switched off discovers no rooms
+  # at all; it must still open no funnel and register no webhooks, because
+  # widening a run's ingress on the strength of an empty discovery is how a
+  # connector ends up serving a path nobody asked it to serve.
   def test_a_chat_only_run_whose_only_campfire_is_disabled_still_skips_the_funnel
     runner = FakeCommandRunner.new
     runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
-    runner.stub "chat list", exit_status: 2,
-      stdout: error_envelope("not_found", "chat room not found: 123", retryable: false, hint: "Chat room is disabled for this project")
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
 
     _out, err = start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner
 
@@ -672,6 +706,14 @@ class ConnectorTest < Minitest::Test
       runner.stub "/hooks", stdout: '{"id":888}'
       runner.stub "-X DELETE", exit_status: 0
       runner.stub "gh api user", stdout: JSON.generate("login" => "octocat")
+      runner
+    end
+
+    def chat_only_identity_runner
+      runner = FakeCommandRunner.new
+      runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
+      runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
+      runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
       runner
     end
 
