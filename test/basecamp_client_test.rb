@@ -26,7 +26,7 @@ class BasecampClientTest < Minitest::Test
     runner.stub "webhooks delete", exit_status: 0
 
     cli = BasecampAgentConnector::Basecamp::Client.new(command_runner: runner, profile: "jorge", wait: ->(_seconds) { })
-    cli.chats(project: 222)
+    cli.chats
     cli.delete_webhook(id: 555, project: 222)
 
     assert_equal 2, runner.commands.length
@@ -47,7 +47,7 @@ class BasecampClientTest < Minitest::Test
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit'
 
-    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { build_cli(runner).chats(project: 222) }
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::TransientError) { build_cli(runner).chats }
     assert_match(/malformed JSON/, error.message)
   end
 
@@ -303,7 +303,7 @@ class BasecampClientTest < Minitest::Test
     runner.stub "chat list", stdout: '{"data": [{"id": 333, "tit', once: true
     runner.stub "chat list", stdout: envelope([ chat_hash ])
 
-    assert_equal 333, build_cli(runner).chats(project: 222).first.fetch("id")
+    assert_equal 333, build_cli(runner).chats.first.fetch("id")
   end
 
   # A failing command prints the {"ok": false, ...} error envelope on stdout
@@ -398,14 +398,14 @@ class BasecampClientTest < Minitest::Test
     refute_predicate error, :rate_limited?
   end
 
-  def test_chats_lists_a_projects_chats
+  def test_chats_lists_the_accounts_chats
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
 
-    chats = build_cli(runner).chats(project: 222)
+    chats = build_cli(runner).chats
 
     assert_equal 333, chats.first.fetch("id")
-    assert_includes runner.commands.first.join(" "), "chat list --project 222"
+    assert_includes runner.commands.first.join(" "), "chat list --all"
   end
 
   def test_chat_lines_fetches_recent_lines_for_a_room
@@ -430,7 +430,7 @@ class BasecampClientTest < Minitest::Test
     cli = build_cli(runner)
 
     assert_equal [], cli.chat_lines(project: 222, chat: 333, limit: 25)
-    assert_equal [], cli.chats(project: 222)
+    assert_equal [], cli.chats
     assert_equal [], cli.received_boosts(profile: "clawdito")
   end
 

@@ -115,8 +115,10 @@ class BasecampAgentConnector::Basecamp::Client
     json "show", url_or_id
   end
 
-  def chats(project:)
-    Array json("chat", "list", "--project", project.to_s)
+  # Every live, switched-on Campfire in the account the profile can see,
+  # each naming its project in "bucket". The CLI follows the pages.
+  def chats
+    Array json("chat", "list", "--all")
   end
 
   def chat_lines(project:, chat:, limit:)

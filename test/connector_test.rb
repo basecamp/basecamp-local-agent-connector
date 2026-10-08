@@ -285,19 +285,17 @@ class ConnectorTest < Minitest::Test
   end
 
   # Chat-only is what the operator asked for — `--types` naming chat and
-  # nothing else — not a count of the rooms discovery came back with. A
-  # project whose Campfire is switched off leaves the chat poll for the rest
-  # of the run, and a run watching only that project therefore discovers no
-  # rooms at all; it must still open no funnel and register no webhooks,
-  # because widening a run's ingress on the strength of a listing that failed
-  # is how a connector ends up serving a path nobody asked it to serve.
+  # nothing else — not a count of the rooms discovery came back with. A run
+  # watching only a project whose Campfire is switched off discovers no rooms
+  # at all; it must still open no funnel and register no webhooks, because
+  # widening a run's ingress on the strength of an empty discovery is how a
+  # connector ends up serving a path nobody asked it to serve.
   def test_a_chat_only_run_whose_only_campfire_is_disabled_still_skips_the_funnel
     runner = FakeCommandRunner.new
     runner.stub "basecamp me --profile clawdito", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 1, "email_address" => "clawdito@example.com", "first_name" => "Clawdito" } })
     runner.stub "basecamp me", stdout: JSON.generate("ok" => true, "data" => { "identity" => { "id" => 2, "email_address" => "operator@example.com", "first_name" => "Operator" } })
     runner.stub "people show me", stdout: JSON.generate("ok" => true, "data" => { "id" => 52007412 })
-    runner.stub "chat list", exit_status: 2,
-      stdout: error_envelope("not_found", "chat room not found: 123", retryable: false, hint: "Chat room is disabled for this project")
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
 
     _out, err = start_connector [ "@clawdito", "--project", "123", "--types", "Chat::Line", "--port", "4567" ], runner
 
