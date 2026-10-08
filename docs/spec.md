@@ -247,7 +247,7 @@ For each delivered event:
      `*_assignment_changed` event (edits that add the mention count; `*_active`
      is a draft being published — see below).
    - The creator is **authorized**: the operator (by email or account Person id),
-     a named `--allow` operator (by email), or a participant under
+     a named `--allow` operator (by email or Person id), or a participant under
      `--allow-domain` / `--allow-project` — never the agent. A participant's
      assignment or boost is not authorized (see
      [Operators and participants](../README.md#operators-and-participants)).
@@ -338,7 +338,7 @@ full context and resolve the working repo.
 The top-level keys mirror the webhook envelope (`id` → `event_id`, `kind`,
 `created_at`, `creator`, `details`, `recording`); `role` and `trigger` are the
 keys the connector owns. `role` is the authorizer's verdict on the
-authoritative creator: `operator` (the operator, or an `--allow` email) or
+authoritative creator: `operator` (the operator, or an `--allow` email or Person id) or
 `participant` (admitted only by `--allow-domain` / `--allow-project`; never on
 an assignment or a boost). `trigger` carries the verifier's verdicts on **why**
 the event targets the agent, both settled on the re-fetched recording rather
@@ -673,9 +673,9 @@ Coverage the suite must include:
   emitted booster/content/recording all from the fetch), and feed membership is
   the targeting fact. The agent's view of the feed **redacts other users'
   emails** (bc3 shows real addresses only to yourself or an admin), so the
-  booster matches by account Person id; named `--allow` operators, matched by
-  email, therefore don't reach the boost trigger unless the agent can see
-  emails. History is baselined by time, never dispatched; the feed
+  booster matches by account Person id; a named `--allow` operator reaches
+  the boost trigger when named by Person id, or by email only if the agent can
+  see emails. History is baselined by time, never dispatched; the feed
   is account-wide, so the bound is the agent's identity rather than the
   watched-project list. `--no-boosts` disables the trigger.
 - Assignment trigger: the documented-but-previously-undocumented

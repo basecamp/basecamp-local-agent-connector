@@ -1,12 +1,12 @@
 # Decides which Basecamp users may drive the agent, and in which role.
 #
 # Two roles. **Operators** are the people whose word authorizes the agent: the
-# operator always, plus anyone named with `--allow`. **Participants** are a
-# wider set — every author at a domain (`--allow-domain`), or every
-# corroborated non-client author (`--allow-project`) — whose requests reach the
-# agent but carry no authority of their own. The connector says which on every
-# emitted line (`role`); what each role may get the agent to do is the
-# watcher's policy, not the bridge's.
+# operator always, plus anyone named with `--allow`, by email or Person id.
+# **Participants** are a wider set — every author at a domain
+# (`--allow-domain`), or every corroborated non-client author
+# (`--allow-project`) — whose requests reach the agent but carry no authority
+# of their own. The connector says which on every emitted line (`role`); what
+# each role may get the agent to do is the watcher's policy, not the bridge's.
 #
 # Participants trigger by mention and by comment on a thread the agent
 # follows. Assignments and boosts are operators' only: an assignment's assigner
@@ -26,8 +26,8 @@
 class BasecampAgentConnector::Basecamp::Authorizer
   DEFAULT_TRUSTED_DOMAIN = "37signals.com"
 
-  def self.build(trust:, operator:, agent:, emails: [], domains: [], allow_assignments: false)
-    options = { operator: operator, agent: agent, emails: emails, allow_assignments: allow_assignments }
+  def self.build(trust:, operator:, agent:, operators: [], domains: [], allow_assignments: false)
+    options = { operator: operator, agent: agent, operators: operators, allow_assignments: allow_assignments }
 
     case trust
     when :operator, :allowlist then new(**options)
@@ -37,10 +37,10 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
   end
 
-  def initialize(operator:, agent:, emails: [], allow_assignments: false)
+  def initialize(operator:, agent:, operators: [], allow_assignments: false)
     @operator = operator
     @agent = agent
-    @emails = emails
+    @operators = operators.map { |operator| BasecampAgentConnector::Basecamp::Identity.parse(operator) }
     @allow_assignments = allow_assignments
   end
 
@@ -71,7 +71,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
   end
 
   def description
-    "operators: #{([ @operator.email ] + @emails).join(", ")}; participants: #{participant_description}; " \
+    "operators: #{([ @operator ] + @operators).join(", ")}; participants: #{participant_description}; " \
       "assignments: #{@allow_assignments ? "operators" : "operator only"}"
   end
 
@@ -81,13 +81,11 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
 
     def named_operator?(event)
-      !event.creator_email.nil? && \
-        @emails.any? { |email| event.creator_email.casecmp?(email) }
+      @operators.any? { |operator| event.authored_by?(operator) }
     end
 
     def agent_authored?(event)
-      event.authored_by?(@agent) || \
-        (!@agent.person_id.nil? && event.creator_id == @agent.person_id)
+      event.authored_by?(@agent)
     end
 
     def participant_only_directive?(event)

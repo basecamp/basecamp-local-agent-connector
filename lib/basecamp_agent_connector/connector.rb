@@ -16,7 +16,7 @@ class BasecampAgentConnector::Connector
   TRUST_MODES = %w[operator allowlist project domain]
 
   Options = Data.define(:agent, :operator, :projects, :types, :repos, :events, :gh_operator, :port,
-    :trust, :allowed_emails, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
+    :trust, :allowed_operators, :allowed_domains, :allow_assignments, :chat_poll, :boost_poll, :webhook_check,
     :allow_duplicate)
 
   def self.start(argv)
@@ -114,7 +114,7 @@ class BasecampAgentConnector::Connector
     events = DEFAULT_EVENTS
     port = nil
     trust = nil
-    allowed_emails = []
+    allowed_operators = []
     allowed_domains = []
     allow_project = false
     allow_assignments = false
@@ -125,7 +125,7 @@ class BasecampAgentConnector::Connector
 
     OptionParser.new do |parser|
       parser.banner = "Usage: connect [@AGENT] [--project PROJECT]... [--repo OWNER/REPO]... [--operator PROFILE] [--gh-operator LOGIN] " \
-        "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
+        "[--trust MODE] [--allow EMAIL|ID]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
         "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
       parser.on("--project PROJECT", "Basecamp project exact name, URL, or ID, resolved to its id at launch (repeatable)") { |value| projects << value }
@@ -143,9 +143,9 @@ class BasecampAgentConnector::Connector
 
         trust = value.to_sym
       end
-      parser.on("--allow EMAIL", "Also trust this author email as an operator (repeatable or comma-separated; " \
+      parser.on("--allow EMAIL|ID", "Also trust this author, by email or Basecamp Person id, as an operator (repeatable or comma-separated; " \
         "implies --trust allowlist unless a participant set is given too)") \
-        { |value| allowed_emails.concat(comma_list(value)) }
+        { |value| allowed_operators.concat(comma_list(value)) }
       parser.on("--allow-domain DOMAIN", "Admit any author whose email is at this domain as a participant (repeatable or comma-separated; " \
         "implies --trust domain; --trust domain alone defaults to #{BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN})") \
         { |value| allowed_domains.concat(comma_list(value)) }
@@ -187,36 +187,36 @@ class BasecampAgentConnector::Connector
     raise ArgumentError, "an agent is required to watch Basecamp projects, e.g. `connect @clawdito --project \"My Project\"`" if projects.any? && (agent.nil? || agent.empty?)
     raise ArgumentError, "--types has no event types to watch" if projects.any? && comma_list(types).empty?
 
-    trust = resolve_trust(trust, emails: allowed_emails, domains: allowed_domains, project: allow_project)
+    trust = resolve_trust(trust, operators: allowed_operators, domains: allowed_domains, project: allow_project)
 
     Options.new(agent: normalize_agent(agent), operator: operator, projects: projects, types: types, repos: repos, events: events_list(events),
       gh_operator: gh_operator, port: port,
-      trust: trust, allowed_emails: allowed_emails, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
+      trust: trust, allowed_operators: allowed_operators, allowed_domains: allowed_domains, allow_assignments: allow_assignments,
       chat_poll: chat_poll, boost_poll: boost_poll, webhook_check: webhook_check, allow_duplicate: allow_duplicate)
   end
 
   # Two sets, resolved separately. Operators are the operator plus every
-  # `--allow` email, in any mode. Participants come from at most one rule:
+  # `--allow` email or Person id, in any mode. Participants come from at most one rule:
   # `--allow-domain` (domain), `--allow-project` (project), or `--trust` naming
   # either. The mode reported is the participant rule when there is one, else
   # `allowlist` when operators were named, else `operator`. Flags that
   # contradict each other — two participant rules, or `--trust operator` with
   # anyone named — are refused rather than guessed at.
-  def self.resolve_trust(explicit, emails:, domains:, project:)
+  def self.resolve_trust(explicit, operators:, domains:, project:)
     implied = []
     implied << :domain if domains.any?
     implied << :project if project
 
     raise ArgumentError, "pick one participant set: --allow-domain and --allow-project are different rules" if implied.length > 1
     raise ArgumentError, "--trust operator conflicts with --allow, --allow-domain and --allow-project" \
-      if explicit == :operator && (emails.any? || implied.any?)
+      if explicit == :operator && (operators.any? || implied.any?)
     raise ArgumentError, "--trust allowlist names operators only; drop it to add --allow-#{implied.first}" \
       if explicit == :allowlist && implied.any?
     raise ArgumentError, "--trust #{explicit} conflicts with --allow-#{implied.first}" \
       if %i[domain project].include?(explicit) && implied.any? && implied != [ explicit ]
-    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL" if explicit == :allowlist && emails.empty?
+    raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL|ID" if explicit == :allowlist && operators.empty?
 
-    explicit || implied.first || (emails.any? ? :allowlist : :operator)
+    explicit || implied.first || (operators.any? ? :allowlist : :operator)
   end
 
   def self.comma_list(value)
@@ -303,7 +303,7 @@ class BasecampAgentConnector::Connector
     def authorizer(operator, agent)
       BasecampAgentConnector::Basecamp::Authorizer.build \
         trust: @options.trust, operator: operator, agent: agent,
-        emails: @options.allowed_emails, domains: @options.allowed_domains,
+        operators: @options.allowed_operators, domains: @options.allowed_domains,
         allow_assignments: @options.allow_assignments
     end
 

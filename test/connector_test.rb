@@ -12,7 +12,7 @@ class ConnectorTest < Minitest::Test
     assert_equal [ "pull_request_review" ], options.events
     assert_nil options.port
     assert_equal :operator, options.trust
-    assert_empty options.allowed_emails
+    assert_empty options.allowed_operators
     assert_empty options.allowed_domains
     refute options.allow_assignments
   end
@@ -21,7 +21,7 @@ class ConnectorTest < Minitest::Test
     options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow", "sam@example.com, ana@example.com"
 
     assert_equal :allowlist, options.trust
-    assert_equal [ "marie@example.com", "sam@example.com", "ana@example.com" ], options.allowed_emails
+    assert_equal [ "marie@example.com", "sam@example.com", "ana@example.com" ], options.allowed_operators
   end
 
   def test_allow_domain_implies_domain_trust
@@ -94,7 +94,7 @@ class ConnectorTest < Minitest::Test
     options = parse "@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-domain", "example.com"
 
     assert_equal :domain, options.trust
-    assert_equal [ "marie@example.com" ], options.allowed_emails
+    assert_equal [ "marie@example.com" ], options.allowed_operators
     assert_equal [ "example.com" ], options.allowed_domains
     assert_equal :project, parse("@clawdito", "--project", "A", "--allow", "marie@example.com", "--allow-project").trust
   end
@@ -105,7 +105,7 @@ class ConnectorTest < Minitest::Test
     options = parse "@clawdito", "--project", "A", "--trust", "domain", "--allow", "marie@example.com"
 
     assert_equal :domain, options.trust
-    assert_equal [ "marie@example.com" ], options.allowed_emails
+    assert_equal [ "marie@example.com" ], options.allowed_operators
   end
 
   def test_refuses_two_participant_sets
@@ -132,7 +132,7 @@ class ConnectorTest < Minitest::Test
     end
   end
 
-  def test_refuses_an_allowlist_with_no_allowed_emails
+  def test_refuses_an_allowlist_with_no_allowed_operators
     assert_raises ArgumentError do
       parse "@clawdito", "--project", "A", "--trust", "allowlist"
     end

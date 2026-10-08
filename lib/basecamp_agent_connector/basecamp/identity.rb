@@ -1,4 +1,6 @@
 class BasecampAgentConnector::Basecamp::Identity
+  PERSON_ID = /\A\d+\z/
+
   attr_reader :profile, :id, :email, :name, :person_id
 
   def self.resolve(basecamp_cli:, profile: nil)
@@ -32,6 +34,10 @@ class BasecampAgentConnector::Basecamp::Identity
   end
   private_class_method :account_person_id
 
+  def self.parse(value)
+    value.match?(PERSON_ID) ? new(id: nil, person_id: value.to_i) : new(id: nil, email: value)
+  end
+
   def initialize(id:, profile: nil, email: nil, name: nil, person_id: nil)
     @id = id
     @profile = profile
@@ -44,5 +50,9 @@ class BasecampAgentConnector::Basecamp::Identity
   # absent on both sides and would then compare as different users.
   def same_user_as?(other)
     id == other.id
+  end
+
+  def to_s
+    email || "Person #{person_id}"
   end
 end
