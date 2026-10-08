@@ -587,21 +587,6 @@ class ChatPollerTest < Minitest::Test
     assert_equal 2, runner.commands_matching(/chat messages --project 223 --room 444/).length
   end
 
-  # A run started by URL, by id or by exact name is covered alike.
-  def test_a_project_is_found_by_url_id_or_name
-    chats = [ chat_hash("bucket" => { "id" => 48806025, "name" => "HEY²" }),
-      chat_hash("id" => 444, "bucket" => { "id" => 49180808, "name" => "HEY² Factory" }) ]
-
-    { "https://3.basecamp.com/2914079/projects/48806025" => 333, "48806025" => 333, "HEY²" => 333,
-      "HEY² Factory" => 444, "hey² factory" => nil, "Factory" => nil }.each do |project, room|
-      runner = FakeCommandRunner.new
-      runner.stub "chat list", stdout: envelope(chats)
-      runner.stub "projects list", stdout: envelope(chats.map { |chat| chat["bucket"] })
-
-      assert_equal [ room ].compact, poller(runner, projects: [ project ]).rooms.map(&:chat_id), project
-    end
-  end
-
   # The live noise the once-only line prevents: one of twelve watched
   # projects had chat switched off, and every 15s tick logged it again.
   # Switched off is just no room in the listing: it is said once, and the
@@ -627,52 +612,15 @@ class ChatPollerTest < Minitest::Test
     refute_match(/could not list chats/, @logs.string)
   end
 
-  # A name is matched exactly. Codex's case: the watched project "Ops" has
-  # chat switched off, so the listing holds no "Ops" bucket, and a looser
-  # match would settle on "Ops East" and poll a project nobody asked for.
-  def test_a_name_never_settles_on_another_project_containing_it
-    runner = FakeCommandRunner.new
-    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops East" }) ])
-    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops East" }, { "id" => 2, "name" => "Ops" } ])
-
-    assert_empty poller(runner, projects: [ "Ops" ]).rooms
-    assert_match(/project Ops has no Campfire/, @logs.string)
-  end
-
-  # Codex's second case: two projects named "Ops", only one with a Campfire.
-  # The chat listing alone sees one "Ops" and would take it; the account's
-  # project list sees both, so the name covers neither.
-  def test_a_name_shared_with_a_chatless_project_covers_neither
-    runner = FakeCommandRunner.new
-    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops" }) ])
-    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops" }, { "id" => 2, "name" => "Ops" } ])
-
-    assert_empty poller(runner, projects: [ "Ops" ]).rooms
-    assert_match(/project Ops has no Campfire/, @logs.string)
-  end
-
-  # Discovery settled which bucket the room is in; polling by that id keeps
-  # the CLI from resolving the token a second time, its own way.
-  def test_rooms_are_polled_by_the_bucket_discovery_found
+  # Rooms carry the project's id, which is what `chat messages` is given.
+  def test_rooms_are_polled_by_the_project_id
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash ])
-    runner.stub "projects list", stdout: envelope([ { "id" => 222, "name" => "A" } ])
     runner.stub "chat messages", stdout: empty_envelope
 
-    poller(runner, projects: [ "A" ]).poll
+    poller(runner).poll
 
     assert_equal 1, runner.commands_matching(/chat messages --project 222 --room 333/).length
-  end
-
-  # Ambiguity covers nothing rather than guessing between two projects.
-  def test_a_name_two_projects_share_covers_neither
-    runner = FakeCommandRunner.new
-    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 1, "name" => "Ops" }),
-      chat_hash("id" => 444, "bucket" => { "id" => 2, "name" => "Ops" }) ])
-    runner.stub "projects list", stdout: envelope([ { "id" => 1, "name" => "Ops" }, { "id" => 2, "name" => "Ops" } ])
-
-    assert_empty poller(runner, projects: [ "Ops" ]).rooms
-    assert_match(/project Ops has no Campfire/, @logs.string)
   end
 
   # A 500 says nothing about whether the project has a Campfire, so the

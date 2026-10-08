@@ -128,46 +128,28 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     # timestamp leaves discovery due again on the very next poll.
     def refresh
       chats = @basecamp_cli.chats
-      projects = @projects.all? { |project| id_in(project) } ? [] : @basecamp_cli.projects
-      @rooms = @projects.flat_map { |project| rooms_in(project, chats, project_id(project, projects)) }
+      @rooms = @projects.flat_map { |project| rooms_in(project, chats) }
       @refreshed_at = @clock.call
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       note_rate_limit(error)
       log "could not list chats: #{error.message}"
     end
 
-    def rooms_in(project, chats, bucket_id)
-      found = bucket_id.nil? ? [] : chats \
-        .select { |chat| chat.dig("bucket", "id").to_s == bucket_id.to_s }
-        .map { |chat| Room.new(project: bucket_id, chat_id: chat["id"], title: chat["title"]) }
+    # Projects arrive as ids, resolved once at launch (see Basecamp::Projects).
+    def rooms_in(project, chats)
+      found = chats \
+        .select { |chat| chat.dig("bucket", "id").to_s == project.to_s }
+        .map { |chat| Room.new(project: project, chat_id: chat["id"], title: chat["title"]) }
 
       if found.empty? && !@chatless_projects.include?(project)
         @chatless_projects << project
-        log "project #{project} has no Campfire the operator can see (chat is switched off there, or no project " \
-          "goes by exactly that name); checking again every #{REDISCOVER_AFTER}s"
+        log "project #{project} has no Campfire the operator can see (chat is switched off there, or the " \
+          "operator can't see the project); checking again every #{REDISCOVER_AFTER}s"
       elsif found.any?
         @chatless_projects.delete(project)
       end
 
       found
-    end
-
-    # A --project token names its project by URL (the bucket id in it), by
-    # id, or by exact name. A name is looked up among every project the
-    # operator can see, not among the ones the chat listing happens to hold:
-    # a watched project with chat switched off is absent there, so matching
-    # against the listing would settle on a namesake, or on a name that only
-    # resembles it. Exactly, and only one: the CLI's case-insensitive and
-    # substring fallbacks are a convenience that would pick a project by
-    # guess. nil when nothing, or more than one project, matches.
-    def project_id(project, projects)
-      named = projects.select { |candidate| candidate["name"] == project.to_s }
-      id_in(project) || (named.first["id"] if named.length == 1)
-    end
-
-    def id_in(project)
-      id = project.to_s[%r{/(?:buckets|projects)/(\d+)}, 1] || project.to_s[/\A\d+\z/]
-      id&.to_i
     end
 
     # The loop is the only chat thread there is; an exception that escapes a

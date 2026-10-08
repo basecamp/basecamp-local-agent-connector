@@ -128,7 +128,7 @@ class BasecampAgentConnector::Connector
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
         "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
-      parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
+      parser.on("--project PROJECT", "Basecamp project exact name, URL, or ID, resolved to its id at launch (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--gh-operator LOGIN", "GitHub login whose PR approvals are actionable (default: the login `gh` is authenticated as)") do |value|
@@ -294,7 +294,7 @@ class BasecampAgentConnector::Connector
 
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer(operator, agent), agent: agent,
-        projects: @options.projects, types: @options.types,
+        projects: resolve_projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
         basecamp_cli: basecamp_cli, emitter: emitter
@@ -325,6 +325,14 @@ class BasecampAgentConnector::Connector
       abort "No usable local Basecamp profile '#{@options.agent}'.\n" \
         "Create it with `basecamp profile create #{@options.agent}` if it does not exist yet, then run " \
         "`basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
+    end
+
+    def resolve_projects
+      BasecampAgentConnector::Basecamp::Projects.resolve(@options.projects, basecamp_cli: basecamp_cli)
+    rescue BasecampAgentConnector::Basecamp::Projects::Unresolved => error
+      abort "Could not tell which project to watch. #{error.message}"
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      abort "Could not list projects to resolve a --project name: #{error.message}"
     end
 
     def resolve_operator
