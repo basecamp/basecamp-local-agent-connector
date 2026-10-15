@@ -251,6 +251,27 @@ class ChatPollerTest < Minitest::Test
     assert_equal 1, runner.commands_matching(/chat messages/).length
   end
 
+  # The live failure, on HEY² (48806025): its dock still listed, as enabled,
+  # a Campfire since moved to another project. `chat list --project` fetches
+  # every enabled dock entry by its id and fails the whole listing on the
+  # first 404, so it answered not_found for a project with two working
+  # Campfires, and discovery read that as chat being switched off and stopped
+  # covering the project for the run. The account's listing names only the
+  # rooms that are live, each under the project that holds it now.
+  def test_a_project_whose_dock_still_lists_a_moved_campfire_is_covered
+    runner = FakeCommandRunner.new
+    runner.stub "chat list --project", exit_status: 2, stdout: error_envelope("not_found", "Not Found", retryable: false)
+    runner.stub "chat list", stdout: envelope([ chat_hash, chat_hash("id" => 444, "title" => "Nightly Builds"),
+      chat_hash("id" => 555, "title" => "Moved", "bucket" => { "id" => 999, "name" => "Elsewhere" }) ])
+    runner.stub "chat messages", stdout: empty_envelope
+
+    poller(runner).poll
+
+    polled = runner.commands_matching(/chat messages/).map { |command| command.join(" ")[/--room (\d+)/, 1] }
+    assert_equal %w[333 444], polled
+    refute_match(/no Campfire/, @logs.string)
+  end
+
   def test_polls_every_chat_in_a_project
     runner = FakeCommandRunner.new
     runner.stub "chat list", stdout: envelope([ chat_hash, chat_hash("id" => 444, "title" => "Ops") ])
@@ -551,56 +572,55 @@ class ChatPollerTest < Minitest::Test
     assert_match(/chat window overflow/, @logs.string)
   end
 
-  def test_one_projects_failing_listing_does_not_relist_healthy_projects
-    now = Time.now
+  def test_one_listing_covers_every_watched_project
     runner = FakeCommandRunner.new
-    runner.stub "chat list --project A", stdout: envelope([ chat_hash ])
-    runner.stub "chat list --project B", exit_status: 4, stdout: error_envelope("forbidden", "Access denied")
+    runner.stub "chat list", stdout: envelope([ chat_hash,
+      chat_hash("id" => 444, "title" => "Ops", "bucket" => { "id" => 223, "name" => "B" }) ])
     runner.stub "chat messages", stdout: empty_envelope
-    poller = poller(runner, projects: [ "A", "B" ], clock: -> { now })
+    poller = poller(runner, projects: [ "222", "223" ])
 
     poller.poll
     poller.poll
 
-    # B is retried each poll; A was listed once and left alone until its own
-    # refresh comes due.
-    assert_equal 1, runner.commands_matching(/chat list --project A/).length
-    assert_equal 2, runner.commands_matching(/chat list --project B/).length
+    assert_equal 1, runner.commands_matching(/chat list/).length
+    assert_equal 2, runner.commands_matching(/chat messages --project 222 --room 333/).length
+    assert_equal 2, runner.commands_matching(/chat messages --project 223 --room 444/).length
   end
 
-  # The live noise this rule removes: one of twelve watched projects had chat
-  # disabled, and every 15s tick relisted it and logged the same six-line
-  # refusal — 16 of them in the first 8 minutes of a run that goes overnight.
-  def test_a_project_whose_chat_is_disabled_is_dropped_after_one_failure_and_said_once
+  # The live noise the once-only line prevents: one of twelve watched
+  # projects had chat switched off, and every 15s tick logged it again.
+  # Switched off is just no room in the listing: it is said once, and the
+  # next refresh looks again, so chat switched back on is picked up.
+  def test_a_project_with_no_campfire_is_said_once_and_looked_for_again
+    now = Time.now
     runner = FakeCommandRunner.new
-    runner.stub "chat list --project A", exit_status: 2, stdout: chat_disabled_envelope("A")
-    runner.stub "chat list --project B", stdout: envelope([ chat_hash ])
+    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 223, "name" => "B" }) ]), once: true
+    runner.stub "chat list", stdout: envelope([ chat_hash("bucket" => { "id" => 223, "name" => "B" }),
+      chat_hash("id" => 444, "title" => "Back") ])
     runner.stub "chat messages", stdout: empty_envelope
-    poller = poller(runner, projects: [ "A", "B" ])
+    poller = poller(runner, projects: [ "222", "223" ], clock: -> { now })
 
     3.times { poller.poll }
 
-    assert_equal 1, runner.commands_matching(/chat list --project A/).length
-    assert_equal 1, @logs.string.lines.grep(/project A has no Campfire/).length
-    assert_match(/will not be polled for chat again this run/, @logs.string)
+    assert_equal 1, @logs.string.lines.grep(/project 222 has no Campfire/).length
+    assert_empty runner.commands_matching(/chat messages --project 222/)
+
+    now += BasecampAgentConnector::Basecamp::ChatPoller::REDISCOVER_AFTER
+    poller.poll
+
+    assert_equal 1, runner.commands_matching(/chat messages --project 222 --room 444/).length
     refute_match(/could not list chats/, @logs.string)
   end
 
-  def test_a_dropped_project_leaves_a_working_campfire_alone
+  # Rooms carry the project's id, which is what `chat messages` is given.
+  def test_rooms_are_polled_by_the_project_id
     runner = FakeCommandRunner.new
-    runner.stub "chat list --project A", exit_status: 2, stdout: chat_disabled_envelope("A")
-    runner.stub "chat list --project B", stdout: envelope([ chat_hash ])
-    runner.stub "chat messages", stdout: empty_envelope, once: true
-    runner.stub "chat messages", stdout: envelope([ chat_line ])
-    runner.stub "chat line ", stdout: envelope(chat_line)
-    poller = poller(runner, projects: [ "A", "B" ])
+    runner.stub "chat list", stdout: envelope([ chat_hash ])
+    runner.stub "chat messages", stdout: empty_envelope
 
-    poller.poll
-    poller.poll
+    poller(runner).poll
 
-    assert_equal 2, runner.commands_matching(/chat messages --project B/).length
-    assert_equal 1, @output.string.lines.length
-    assert_equal 91001, JSON.parse(@output.string)["event_id"]
+    assert_equal 1, runner.commands_matching(/chat messages --project 222 --room 333/).length
   end
 
   # A 500 says nothing about whether the project has a Campfire, so the
@@ -670,14 +690,6 @@ class ChatPollerTest < Minitest::Test
   end
 
   private
-    # What the CLI answers for a project whose chat room is switched off
-    # (verified live against project 45144734): a refusal Basecamp reached a
-    # verdict on, stamped not_found and not retryable.
-    def chat_disabled_envelope(project)
-      error_envelope "not_found", "chat room not found: #{project}",
-        retryable: false, hint: "Chat room is disabled for this project"
-    end
-
     # Baseline poll sees an empty room; the next poll finds the mention line,
     # corroborated by a matching `chat line` fetch.
     def corroborating_runner
@@ -692,7 +704,7 @@ class ChatPollerTest < Minitest::Test
     # The canonical chat_line is created at 12:00; the default clock starts the
     # poller before that, so fetched lines count as live traffic. Tests about
     # history/baselining override the clock to after 12:00 instead.
-    def poller(runner, projects: [ "A" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) },
+    def poller(runner, projects: [ "222" ], wait: ->(_seconds) { flunk "no waiting in direct-poll tests" }, clock: -> { Time.utc(2026, 6, 28, 11, 0, 0) },
       interval: BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL)
       cli = build_cli(runner)
 

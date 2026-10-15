@@ -140,7 +140,7 @@ class BasecampAgentConnector::Connector
         "[--trust MODE] [--allow EMAIL]... [--allow-domain DOMAIN]... [--allow-project] " \
         "[--allow-assignments-from-authorized] [--types TYPES] [--chat-poll SECONDS] [--boost-poll SECONDS] [--no-boosts] " \
         "[--webhook-check SECONDS] [--events EVENTS] [--port PORT]"
-      parser.on("--project PROJECT", "Basecamp project name, URL, or ID (repeatable)") { |value| projects << value }
+      parser.on("--project PROJECT", "Basecamp project exact name, URL, or ID, resolved to its id at launch (repeatable)") { |value| projects << value }
       parser.on("--repo OWNER/REPO", "GitHub repo to watch for reviews (repeatable)") { |value| repos << value }
       parser.on("--operator PROFILE", "Profile whose user is allowed to trigger (default: CLI default profile)") { |value| operator = value }
       parser.on("--gh-operator LOGIN", "GitHub login whose PR approvals are actionable (default: the login `gh` is authenticated as)") do |value|
@@ -150,19 +150,21 @@ class BasecampAgentConnector::Connector
         gh_operator = login
       end
       parser.on("--trust MODE", TRUST_MODES, "Who may trigger the agent: #{TRUST_MODES.join(", ")} (default: operator only; " \
-        "value flags below imply their mode)") do |value|
+        "value flags below imply their mode; domain and project admit participants, and combine with --allow)") do |value|
         raise ArgumentError, "--trust given twice with different modes (#{trust} then #{value})" if !trust.nil? && trust != value.to_sym
 
         trust = value.to_sym
       end
-      parser.on("--allow EMAIL", "Also trust this author email (repeatable or comma-separated; implies --trust allowlist)") \
+      parser.on("--allow EMAIL", "Also trust this author email as an operator (repeatable or comma-separated; " \
+        "implies --trust allowlist unless a participant set is given too)") \
         { |value| allowed_emails.concat(comma_list(value)) }
-      parser.on("--allow-domain DOMAIN", "Trust any author whose email is at this domain (repeatable or comma-separated; " \
+      parser.on("--allow-domain DOMAIN", "Admit any author whose email is at this domain as a participant (repeatable or comma-separated; " \
         "implies --trust domain; --trust domain alone defaults to #{BasecampAgentConnector::Basecamp::Authorizer::DEFAULT_TRUSTED_DOMAIN})") \
         { |value| allowed_domains.concat(comma_list(value)) }
-      parser.on("--allow-project", "Trust any corroborated non-client author of a recording the operator can read (implies --trust project)") { allow_project = true }
-      parser.on("--allow-assignments-from-authorized", "Let any authorized author trigger via assignment too " \
-        "(default: assignments are operator-only in every mode)") { allow_assignments = true }
+      parser.on("--allow-project", "Admit any corroborated non-client author of a recording the operator can read as a participant " \
+        "(implies --trust project)") { allow_project = true }
+      parser.on("--allow-assignments-from-authorized", "Let the --allow operators trigger via assignment too " \
+        "(default: assignments are the operator's only; participants never trigger by assignment)") { allow_assignments = true }
       parser.on("--types TYPES", "Comma-separated Basecamp event types (Chat::Line = Campfire coverage, via polling)") { |value| types = value }
       parser.on("--chat-poll SECONDS", Integer, "Campfire poll interval " \
         "(default: #{BasecampAgentConnector::Basecamp::ChatPoller::DEFAULT_INTERVAL}s; chat has no webhooks)") do |value|
@@ -224,23 +226,28 @@ class BasecampAgentConnector::Connector
       column_moves: column_moves || column_move_except.any?, column_move_except: column_move_except)
   end
 
-  # `--trust MODE` picks the mode explicitly; otherwise the value flags imply
-  # it (`--allow` => allowlist, `--allow-domain` => domain, `--allow-project`
-  # => project) and no flags at all means operator-only. Mixing flags that
-  # imply different modes, or a value flag contradicting `--trust`, is refused
-  # rather than guessed at.
+  # Two sets, resolved separately. Operators are the operator plus every
+  # `--allow` email, in any mode. Participants come from at most one rule:
+  # `--allow-domain` (domain), `--allow-project` (project), or `--trust` naming
+  # either. The mode reported is the participant rule when there is one, else
+  # `allowlist` when operators were named, else `operator`. Flags that
+  # contradict each other — two participant rules, or `--trust operator` with
+  # anyone named — are refused rather than guessed at.
   def self.resolve_trust(explicit, emails:, domains:, project:)
     implied = []
-    implied << :allowlist if emails.any?
     implied << :domain if domains.any?
     implied << :project if project
 
-    raise ArgumentError, "pick one trust mode: --allow, --allow-domain, and --allow-project imply different modes" if implied.length > 1
-    raise ArgumentError, "--trust #{explicit} conflicts with --allow#{"-domain" if implied == [ :domain ]}#{"-project" if implied == [ :project ]}" \
-      if !explicit.nil? && implied.any? && implied != [ explicit ]
+    raise ArgumentError, "pick one participant set: --allow-domain and --allow-project are different rules" if implied.length > 1
+    raise ArgumentError, "--trust operator conflicts with --allow, --allow-domain and --allow-project" \
+      if explicit == :operator && (emails.any? || implied.any?)
+    raise ArgumentError, "--trust allowlist names operators only; drop it to add --allow-#{implied.first}" \
+      if explicit == :allowlist && implied.any?
+    raise ArgumentError, "--trust #{explicit} conflicts with --allow-#{implied.first}" \
+      if %i[domain project].include?(explicit) && implied.any? && implied != [ explicit ]
     raise ArgumentError, "--trust allowlist needs at least one --allow EMAIL" if explicit == :allowlist && emails.empty?
 
-    explicit || implied.first || :operator
+    explicit || implied.first || (emails.any? ? :allowlist : :operator)
   end
 
   def self.comma_list(value)
@@ -321,7 +328,7 @@ class BasecampAgentConnector::Connector
 
       BasecampAgentConnector::Basecamp::Bridge.new \
         authorizer: authorizer(operator, agent), agent: agent,
-        projects: @options.projects, types: @options.types,
+        projects: resolve_projects, types: @options.types,
         chat_poll_interval: @options.chat_poll, boost_poll_interval: @options.boost_poll,
         webhook_check_interval: @options.webhook_check,
         column_moves: @options.column_moves, column_move_except: @options.column_move_except,
@@ -351,7 +358,16 @@ class BasecampAgentConnector::Connector
       BasecampAgentConnector::Basecamp::Identity.resolve(basecamp_cli: basecamp_cli, profile: @options.agent)
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       abort "No usable local Basecamp profile '#{@options.agent}'.\n" \
-        "Run `basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
+        "Create it with `basecamp profile create #{@options.agent}` if it does not exist yet, then run " \
+        "`basecamp auth login --profile #{@options.agent}` and log in as that user, then retry.\n(#{error.message})"
+    end
+
+    def resolve_projects
+      BasecampAgentConnector::Basecamp::Projects.resolve(@options.projects, basecamp_cli: basecamp_cli)
+    rescue BasecampAgentConnector::Basecamp::Projects::Unresolved => error
+      abort "Could not tell which project to watch. #{error.message}"
+    rescue BasecampAgentConnector::Basecamp::Client::Error => error
+      abort "Could not list projects to resolve a --project name: #{error.message}"
     end
 
     def resolve_operator

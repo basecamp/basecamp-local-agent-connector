@@ -3,6 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if command -v mise >/dev/null 2>&1; then
+  echo "==> Installing Ruby with mise"
+  mise trust --quiet
+  mise install ruby
+  bundle() { mise exec -- bundle "$@"; }
+fi
+
 echo "==> Installing gem dependencies"
 bundle install
 

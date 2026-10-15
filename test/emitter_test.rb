@@ -15,6 +15,15 @@ class EmitterTest < Minitest::Test
     assert_equal 456, parsed["recording"]["id"]
   end
 
+  def test_emits_the_role_it_is_given
+    output = StringIO.new
+    event = BasecampAgentConnector::Basecamp::Event.from_payload(sample_payload)
+
+    BasecampAgentConnector::Emitter.new(output: output).emit(event, role: :participant)
+
+    assert_equal "participant", JSON.parse(output.string)["role"]
+  end
+
   def test_concurrent_emits_never_tear_a_line
     output = StringIO.new
     emitter = BasecampAgentConnector::Emitter.new(output: output)

@@ -9,8 +9,8 @@ class BasecampAgentConnector::Emitter
   # Serialized: webhook deliveries are processed on their own threads and a
   # poller emits from its poll thread, all into one NDJSON stream — an
   # interleaved write would tear a line and break the watcher.
-  def emit(event)
-    line = JSON.generate(event.to_emitted_hash)
+  def emit(event, **attributes)
+    line = JSON.generate(event.to_emitted_hash(**attributes))
 
     @lock.synchronize do
       @output.puts line

@@ -227,7 +227,7 @@ module PayloadHelpers
   end
 
   def chat_hash(overrides = {})
-    { "id" => 333, "title" => "Chat", "type" => "Chat::Transcript" }.merge(overrides)
+    { "id" => 333, "title" => "Chat", "type" => "Chat::Transcript", "bucket" => { "id" => 222, "name" => "A", "type" => "Project" } }.merge(overrides)
   end
 
   def chat_line_payload(line = chat_line)

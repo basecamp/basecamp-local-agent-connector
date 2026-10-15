@@ -39,8 +39,8 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     @logger = logger
     @wait = wait
     @clock = clock
-    @rooms_by_project = {}
-    @refreshed_at = {}
+    @rooms = []
+    @refreshed_at = nil
     @chatless_projects = Set.new
     @seen_line_ids = {}
     # Floored to the whole second because line timestamps may carry only
@@ -102,92 +102,54 @@ class BasecampAgentConnector::Basecamp::ChatPoller
     end
   end
 
-  # Discovery is per project: a project whose listing fails keeps its stale
-  # rooms covered and is retried on the next poll (logged each time — missing
-  # coverage should stay visible), while healthy projects refresh on their own
-  # REDISCOVER_AFTER cadence, untouched by a neighbor's failures. The one
-  # listing failure that is not retried is a project with no Campfire at all
-  # — see chat_disabled?; such a project leaves the poll entirely, rooms and
-  # all, so a neighbour's Campfire is the only thing left to cover.
+  # Every watched project's rooms come from one account-wide listing, the
+  # rooms the operator can see that are live and switched on, each under the
+  # project that holds it now. A project's own listing (`chat list --project`)
+  # is the wrong source: the CLI walks the project's dock and fetches every
+  # enabled chat entry by id, so one stale entry, a Campfire since moved to
+  # another project, which the dock goes on listing, fails the whole listing
+  # with a bare not_found, indistinguishable from chat being switched off.
+  # That is how HEY² (48806025) went unwatched. A failed listing keeps the
+  # rooms already known covered and is retried on the next poll (logged each
+  # time, because missing coverage should stay visible); a project with no
+  # room in the listing is said once and checked again at the next refresh,
+  # so a Campfire switched back on mid-run is picked up without a restart.
   def rooms
-    @projects.flat_map { |project| rooms_for(project) || [] }
+    refresh if due_for_discovery? && !@rate_limited
+    @rooms
   end
 
   private
-    def rooms_for(project)
-      unless @chatless_projects.include?(project)
-        refresh(project) if due_for_discovery?(project) && !@rate_limited
-        @rooms_by_project[project]
-      end
-    end
-
-    def due_for_discovery?(project)
-      !@rooms_by_project.key?(project) || \
-        @clock.call - @refreshed_at.fetch(project) >= REDISCOVER_AFTER
+    def due_for_discovery?
+      @refreshed_at.nil? || @clock.call - @refreshed_at >= REDISCOVER_AFTER
     end
 
     # A failure changes nothing: known rooms stay covered, and the unadvanced
-    # timestamp leaves the project due again on the very next poll.
-    def refresh(project)
-      discovered = discover(project)
-
-      unless discovered.nil?
-        @rooms_by_project[project] = discovered
-        @refreshed_at[project] = @clock.call
-      end
-    end
-
-    def discover(project)
-      @basecamp_cli.chats(project: project).map do |chat|
-        Room.new(project: project, chat_id: chat["id"], title: chat["title"])
-      end
+    # timestamp leaves discovery due again on the very next poll.
+    def refresh
+      chats = @basecamp_cli.chats
+      @rooms = @projects.flat_map { |project| rooms_in(project, chats) }
+      @refreshed_at = @clock.call
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
       note_rate_limit(error)
+      log "could not list chats: #{error.message}"
+    end
 
-      if chat_disabled?(error)
-        drop(project)
-      else
-        log "could not list chats for project #{project}: #{error.message}"
+    # Projects arrive as ids, resolved once at launch (see Basecamp::Projects).
+    def rooms_in(project, chats)
+      found = chats \
+        .select { |chat| chat.dig("bucket", "id").to_s == project.to_s }
+        .map { |chat| Room.new(project: project, chat_id: chat["id"], title: chat["title"]) }
+
+      if found.empty? && !@chatless_projects.include?(project)
+        @chatless_projects << project
+        log "project #{project} has no Campfire the operator can see (chat is switched off there, or the " \
+          "operator can't see the project); checking again every #{REDISCOVER_AFTER}s"
+      elsif found.any?
+        @chatless_projects.delete(project)
       end
 
-      nil
-    end
-
-    # The one listing failure worth remembering. Every other one — a network
-    # blip, a 500, a lost keyring probe, an over-budget account, an access
-    # check that says no today — tells us nothing about whether the project
-    # has a Campfire, so the project keeps its slot and is asked again next
-    # tick. Dropping on any of those would silently stop watching a real
-    # Campfire for the rest of the run, which is far worse than the noise
-    # dropping saves.
-    #
-    # Chat being switched off is the exception: the CLI answers `not_found`
-    # ("chat room not found: <project>", hint "Chat room is disabled for this
-    # project"), and asking again never turns that into a room. Two things
-    # have to hold. The failure has to be Basecamp's answer rather than the
-    # CLI failing to get one — that is exactly the Error/TransientError line
-    # the client already draws, and it is also where a `retryable: true`
-    # envelope ends up, so the flag needs no reading here. And the code has
-    # to be `not_found` precisely: `forbidden` is access that can be granted
-    # back, and `api_error` covers bc3's 5xx as well as its verdicts.
-    #
-    # The drop lasts the run. Chat can be switched back on mid-run, but that
-    # is a person changing a project setting — not something worth a failed
-    # API call and a log line every 15 seconds to notice. Re-checking on the
-    # REDISCOVER_AFTER cadence would only make the same doomed call less
-    # often, and making it silently would hide the coverage failures this
-    # loop logs on purpose. Restarting the connector re-checks every project,
-    # and the line below says so.
-    def chat_disabled?(error)
-      !error.is_a?(BasecampAgentConnector::Basecamp::Client::TransientError) && error.code == "not_found"
-    end
-
-    def drop(project)
-      @chatless_projects << project
-      @rooms_by_project.delete(project)
-      @refreshed_at.delete(project)
-      log "project #{project} has no Campfire (chat is disabled there), so it will not be polled for chat " \
-        "again this run; restart the connector to re-check it"
+      found
     end
 
     # The loop is the only chat thread there is; an exception that escapes a
