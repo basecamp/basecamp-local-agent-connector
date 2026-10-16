@@ -144,6 +144,38 @@ class WebhooksTest < Minitest::Test
   # Someone cleaned up by hand (the README's manual-cleanup recipe on the
   # wrong id, say): Basecamp has nothing to reactivate, so a fresh
   # registration replaces it, and teardown deletes the replacement.
+  # A project that failed to register at startup used to stay unregistered
+  # for the life of the run, listening for deliveries nobody would send.
+  def test_restore_registers_a_project_that_failed_to_register
+    runner = FakeCommandRunner.new
+    refusal = error_envelope("validation", "payload_url: must resolve to an active public IP")
+    runner.stub "webhooks create", exit_status: 1, stdout: refusal, times: 3
+    runner.stub "webhooks create", stdout: envelope("id" => 557)
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+
+    assert_empty webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+    restored = webhooks.restore(url: hook_url, types: "Comment")
+
+    assert_equal [ 557 ], restored.map(&:id)
+    assert_equal [ 557 ], webhooks.registrations.map(&:id)
+    assert_match(/retrying on every webhook check/, logs.string)
+    assert_match(/registered webhook 557 for project 1, which failed to register earlier/, logs.string)
+  end
+
+  def test_restore_keeps_retrying_a_project_that_still_cannot_register
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", exit_status: 1, stdout: error_envelope("validation", "payload_url: must resolve to an active public IP")
+    logs = StringIO.new
+    webhooks = webhooks(runner, logs)
+    webhooks.register_all(projects: [ 1 ], url: hook_url, types: "Comment")
+
+    2.times { assert_empty webhooks.restore(url: hook_url, types: "Comment") }
+
+    assert_equal 9, runner.commands_matching(/webhooks create/).length
+    assert_equal 2, logs.string.scan(/still could not register a webhook for project 1/).length
+  end
+
   def test_restore_re_registers_a_webhook_deleted_out_from_under_it
     runner = FakeCommandRunner.new
     runner.stub "webhooks create", stdout: envelope("id" => 555), once: true

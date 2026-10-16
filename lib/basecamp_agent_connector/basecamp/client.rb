@@ -256,7 +256,7 @@ class BasecampAgentConnector::Basecamp::Client
     # see Error#code and Error#rate_limited?.
     def failure(kind, arguments, result, parsed, tried: 1)
       attempts_note = " on all #{tried} attempts" if tried > 1
-      kind.new "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{attempts_note}: #{detail(result)}",
+      kind.new "`basecamp #{arguments.join(' ')}` #{outcome(result)}#{attempts_note}: #{detail(result, parsed)}",
         envelope: (parsed if envelope?(parsed))
     end
 
@@ -280,9 +280,16 @@ class BasecampAgentConnector::Basecamp::Client
       result.success? ? "returned malformed JSON" : "failed"
     end
 
-    def detail(result)
+    # A refusal Basecamp explained is reported in its own words. Stderr comes
+    # first only when there is no such answer: the CLI writes warnings there
+    # on every call (an unavailable keyring, for one), and preferring them hid
+    # "payload_url: must resolve to an active public IP" behind a keyring
+    # notice.
+    def detail(result, parsed = nil)
       if result.success?
         result.stdout.strip[0, 200]
+      elsif envelope?(parsed) && !parsed["error"].to_s.strip.empty?
+        [ parsed["error"], ("(#{parsed["code"]})" if parsed["code"]) ].compact.join(" ")
       else
         [ result.stderr.strip, result.stdout.strip, "exit status #{result.exit_status}" ].find { |candidate| !candidate.empty? }
       end
