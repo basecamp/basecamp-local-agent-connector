@@ -13,8 +13,12 @@ class BasecampAgentConnector::Session::DispatchingEmitter
     @dispatcher = dispatcher
   end
 
-  def emit(event)
-    @inner.emit event
-    @dispatcher.dispatch event.to_emitted_hash
+  # Takes whatever the pipeline emits with -- the author's `role` today -- and
+  # hands it on to both readers. Accepting only the event made every verified
+  # event raise once the pipeline began passing `role:`, so nothing was printed
+  # or dispatched at all.
+  def emit(event, **attributes)
+    @inner.emit event, **attributes
+    @dispatcher.dispatch event.to_emitted_hash(**attributes)
   end
 end

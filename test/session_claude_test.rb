@@ -630,6 +630,19 @@ class SessionDispatchingEmitterTest < Minitest::Test
     assert_equal 99001, dispatched.first["event_id"]
   end
 
+  # The pipeline emits every verified event with the author's role. Both the
+  # line and the dispatch carry it, and neither may refuse it.
+  def test_the_role_reaches_the_line_and_the_dispatch
+    output = StringIO.new
+    dispatched = []
+    emitter = build(output, ->(event) { dispatched << event })
+
+    emitter.emit event, role: :participant
+
+    assert_equal "participant", JSON.parse(output.string)["role"]
+    assert_equal "participant", dispatched.first["role"].to_s
+  end
+
   def test_the_line_is_written_even_when_the_dispatcher_blows_up
     output = StringIO.new
     emitter = build(output, ->(_event) { raise "boom" })
