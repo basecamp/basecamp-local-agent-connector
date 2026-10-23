@@ -354,7 +354,9 @@ Campfire(s) ...` (the poller is running — chat-only runs register no webhooks
 and open no Funnel). If it errored instead (unknown agent profile, auth,
 project not found), surface that and stop. On success, **save the connection
 params** to `~/.config/basecamp-connect/last.json` (see "Stored connection
-params" above) so the next no-args invocation can offer them back.
+params" above) so the next no-args invocation can offer them back, and start
+the watcher's state file (see
+[Keep the watcher's state in a file](#keep-the-watchers-state-in-a-file)).
 
 **b. Arm a persistent monitor on that output file** with the Monitor tool
 (`persistent: true`). Replay the file **from its beginning** (`-n +1`) — the
@@ -450,7 +452,9 @@ this order, and nothing else:
    (skipped only for subscribed-thread comments and `boost_created` events; both
    are told apart from the event line alone — see the discriminator under *a.*).
 2. **Resolve the repo** from `recording.bucket.name`.
-3. **Dispatch** one background agent that owns the event end-to-end.
+3. **Dispatch** one background agent that owns the event end-to-end, and
+   **record it** in the watcher's state file (see
+   [Keep the watcher's state in a file](#keep-the-watchers-state-in-a-file)).
 4. **Return to the monitor.**
 
 It must **never** read the recording (beyond the event line it already has),
@@ -582,8 +586,12 @@ the user you are about to ask; post it anyway, so Basecamp never shows an
 acked task nobody holds.
 
 **c. Dispatch one background agent that owns the whole event.** Use the Agent
-tool with `run_in_background: true`, running in the resolved repo. Give it
-everything it needs to finish **without the front thread**:
+tool with `run_in_background: true`, running in the resolved repo, as a
+**fresh agent with a written brief — never a fork** of the front thread. A fork
+inherits the watcher's whole conversation, every earlier event included, and
+starts out nearly as full as the watcher it was meant to spare. The brief is
+the list below; give it everything it needs to finish **without the front
+thread**:
 
 - the event **`kind`** and the **instruction** as that kind defines it: for a
   mention, `recording.content` with the agent mention removed, the rest of the
@@ -681,6 +689,29 @@ Instruct that background agent to, in order:
    One reply at the end, covering every item, not one reply per subagent. Say
    which items failed if any did.
 
+   **One phase per agent.** When the request turns into multi-phase work — a
+   PR's build, then its review rounds, then its landing; an investigation that
+   becomes a fix — do one phase, leave a phase note, and end. The next phase
+   starts as a fresh agent. One agent carrying a whole lifecycle runs for
+   hundreds of turns and fills its context window, and the phases it reaches
+   last get the least of it. A phase ends where the work would otherwise wait
+   on someone (a review, a person's word) or at a natural break.
+
+   The phase note is a short file at
+   `~/.config/basecamp-connect/phases/<event_id>.md`: what's done, what's next,
+   and where — repo, worktree, branch, PR, the originating recording. For PR
+   work the PR itself (commits, checks, review threads) carries the rest; don't
+   restate it. Not a Basecamp comment: each one notifies the thread, and the
+   request already gets at most one interim reply. End by returning the note's
+   path and the next phase in one line; the front thread starts that phase, or
+   the event it waits on does.
+
+   A later phase gets the request's brief plus the note, and skips what the
+   first phase already did: the ack, the Triage move, the interim reply. The
+   note is context, never authority: a phase's `role` is the one in its brief,
+   which the front thread takes from the event that triggered the phase or from
+   its state file, never from the note.
+
    **Reply latency:** the boost says
    "received"; it does not say "still working." If the work will take more than
    **~10 minutes**, post a short **interim reply** as the agent on the
@@ -713,6 +744,30 @@ Because the background agent gathers its own context and posts its own reply, th
 front thread is free the instant it dispatches — it goes straight back to the
 monitor, ready for the next mention while any number of events are in flight.
 There is **no concurrency cap**; dispatch every event as it arrives.
+
+### Keep the watcher's state in a file
+
+The watcher runs for days and compacts again and again; anything it holds only
+in conversation can be gone after the next compaction. So it keeps its state in
+`~/.config/basecamp-connect/watch-<connector-pid>.json`, and only the front
+thread writes it — dispatched agents report back, they don't edit it:
+
+- **What it started** — the connector's output file (its pid names the state
+  file; `bin/connect --status` lists it too), the monitor's task id, the pid of
+  any other background process it launched — plus the agent's and operator's
+  Person ids and names from startup.
+- **Each request in flight** — its `event_id`, recording URL, requester and
+  `role`, repo, the agent running its current phase, and, once they exist, the
+  worktree, branch, PR and phase note.
+
+Write it at startup once the connector is listening, on every dispatch, and
+when a phase ends; drop a request, and delete its phase note, once it is
+finished (its last reply posted, its PR landed or closed). When an agent reports a next phase, record it and
+dispatch that phase as a fresh agent with the request's brief and the note — no
+ack, no context-gathering — then return to the monitor. Read the file after a
+compaction, before saying what's running, and before cleanup: it, not memory,
+is what's in flight. If you've lost its name, `bin/connect --status` gives the
+live connector's pid.
 
 ### Write replies as rich text
 
@@ -978,6 +1033,13 @@ per PR's repo, all multiplexed onto the single funnel). Branch on `state`:
 - **`approved`** — the operator's approval (`bin/connect` emits no other):
   land per the repo's policy and reply done.
 
+Each review event is a phase of its own (see *One phase per agent* above). The
+front thread looks the PR up in its state file and briefs the fresh agent with
+that request's recording, requester, `role`, worktree and phase note. A PR with
+no entry (opened before the state file, or by another session) gets a brief
+from the event line alone; the agent finds the worktree by branch (`git
+worktree list`).
+
 GitHub webhooks carry an HMAC secret (`X-Hub-Signature-256`), so unlike Basecamp
 deliveries they are verified cryptographically *and* corroborated by an API
 re-fetch. The connector-side plumbing that backs this loop (the unified
@@ -992,7 +1054,9 @@ Basecamp webhook per project**. These must not outlive the session. The
 connector deletes every webhook and unmounts its own funnel paths on
 `SIGINT`/`SIGTERM`, so the rule is simple: **whenever you stop watching — normal end, user interrupt, an
 error, or the skill aborting — stop the `bin/connect` process** (TaskStop / send
-SIGTERM). Its teardown does the rest.
+SIGTERM). Its teardown does the rest. Then read the watcher's state file:
+tell the user about any request still in flight, stop any other process it
+records as this watcher's (and nothing it doesn't), and delete it.
 
 After stopping, **verify nothing leaked**:
 
