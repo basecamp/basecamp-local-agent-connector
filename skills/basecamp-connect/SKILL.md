@@ -582,8 +582,10 @@ the user you are about to ask; post it anyway, so Basecamp never shows an
 acked task nobody holds.
 
 **c. Dispatch one background agent that owns the whole event.** Use the Agent
-tool with `run_in_background: true`, running in the resolved repo. Give it
-everything it needs to finish **without the front thread**:
+tool with `run_in_background: true`, running in the resolved repo, as a fresh
+agent briefed with the list below, never a fork: a fork inherits the watcher's
+whole conversation, every earlier event included. Give it everything it needs
+to finish **without the front thread**:
 
 - the event **`kind`** and the **instruction** as that kind defines it: for a
   mention, `recording.content` with the agent mention removed, the rest of the
