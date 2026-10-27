@@ -7,6 +7,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
     @attempts = attempts
     @wait = wait
     @registrations = []
+    @unregistered = []
   end
 
   def register_all(projects:, url:, types:)
@@ -49,6 +50,11 @@ class BasecampAgentConnector::Basecamp::Webhooks
   # re-registered under a new id when someone deleted it by hand. Returns the
   # registrations that were restored; one that could not be is left as it was
   # and logged, so the next check tries again.
+  #
+  # A project whose registration failed at startup is tried again here too.
+  # Without that, one failed start -- a funnel whose public name had not
+  # resolved yet, so bc3 refused the payload URL -- left the run listening on a
+  # webhook that did not exist, until somebody restarted it.
   def restore(url:, types:)
     restored = []
 
@@ -58,7 +64,7 @@ class BasecampAgentConnector::Basecamp::Webhooks
       live || registration
     end
 
-    restored
+    restored + register_unregistered(url: url, types: types)
   end
 
   # The registrations as they stand, as a copy: a caller walking them one
@@ -126,7 +132,23 @@ class BasecampAgentConnector::Basecamp::Webhooks
       webhook = create_with_retries(project: project, url: url, types: types)
       @registrations << Registration.new(project: project, id: webhook.fetch("id"))
     rescue BasecampAgentConnector::Basecamp::Client::Error => error
-      log "failed to register webhook for project #{project} after #{@attempts} attempts: #{error.message}"
+      @unregistered << project
+      log "failed to register webhook for project #{project} after #{@attempts} attempts: #{error.message}; " \
+        "nothing reaches this run from it until it registers, retrying on every webhook check"
+    end
+
+    def register_unregistered(url:, types:)
+      @unregistered.dup.filter_map do |project|
+        webhook = create_with_retries(project: project, url: url, types: types)
+        Registration.new(project: project, id: webhook.fetch("id")).tap do |registration|
+          @unregistered.delete(project)
+          @registrations << registration
+          log "registered webhook #{registration.id} for project #{project}, which failed to register earlier"
+        end
+      rescue BasecampAgentConnector::Basecamp::Client::Error => error
+        log "still could not register a webhook for project #{project}: #{error.message}; retrying on the next check"
+        nil
+      end
     end
 
     def create_with_retries(project:, url:, types:)

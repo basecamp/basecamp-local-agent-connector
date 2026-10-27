@@ -118,6 +118,22 @@ class BasecampClientTest < Minitest::Test
     end
   end
 
+  # The CLI warns on stderr on every call where there is no keyring. Reported
+  # ahead of Basecamp's own answer, that warning hid why a webhook was refused.
+  def test_a_refusal_is_reported_in_basecamps_words_not_the_clis_warnings
+    runner = FakeCommandRunner.new
+    runner.stub "webhooks create", exit_status: 1,
+      stderr: "warning: system keyring unavailable, credentials stored in plaintext",
+      stdout: error_envelope("validation", "payload_url: must resolve to an active public IP")
+
+    error = assert_raises(BasecampAgentConnector::Basecamp::Client::Error) do
+      build_cli(runner).create_webhook(url: "https://example.org/hook/x", project: 222, types: "Comment")
+    end
+
+    assert_match(/payload_url: must resolve to an active public IP \(validation\)/, error.message)
+    refute_match(/keyring/, error.message)
+  end
+
   # The keyring-probe race: a concurrent CLI invocation lost its keyring
   # probe, fell back to a stale credentials file, and reported auth_required
   # though the profile is fine. The next attempt, once the neighbours are

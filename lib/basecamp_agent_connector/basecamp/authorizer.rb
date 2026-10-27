@@ -44,6 +44,17 @@ class BasecampAgentConnector::Basecamp::Authorizer
     @allow_assignments = allow_assignments
   end
 
+  # A column move is held to the same operator-only rule as an assignment, and
+  # for the same reason: it is a board gesture that starts work, its author is
+  # not corroborated by the recording's creator, and anyone who can see a board
+  # can drag a card across it. `allow_assignments:` opts a mode's authors into
+  # both together — they are one class of privilege, not two.
+  #
+  # Refusing the agent's own events is also what keeps this from looping. The
+  # agent moves cards itself as work progresses (into In progress when it
+  # starts, into For Review when a PR is open); those moves are authored by the
+  # agent and die on the first branch, so a board gesture it made can never
+  # wake it again.
   def authorizes?(event)
     !role(event).nil?
   end
@@ -55,7 +66,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
     elsif operator_authored?(event)
       :operator
     elsif named_operator?(event)
-      :operator if !event.assignment_changed? || @allow_assignments
+      :operator if !(event.assignment_changed? || event.column_move?) || @allow_assignments
     elsif participant?(event)
       :participant if !participant_only_directive?(event)
     end
@@ -91,7 +102,7 @@ class BasecampAgentConnector::Basecamp::Authorizer
     end
 
     def participant_only_directive?(event)
-      event.assignment_changed? || event.boost?
+      event.assignment_changed? || event.column_move? || event.boost?
     end
 
     # Overridden per participant rule; nobody participates in the base case.
